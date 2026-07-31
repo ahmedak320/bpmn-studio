@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
 
-import { buildSemanticArisDocument, type ArisSourceIndex } from './semanticIndex'
+import { amlColorRefToCss, buildSemanticArisDocument, type ArisSourceIndex } from './semanticIndex'
 import { tokenizeXmlDocument, type XmlNode } from './xmlTokenizer'
 
 const COMPACT_AML = `<?xml version="1.0" encoding="UTF-8"?>
@@ -189,6 +189,63 @@ function expectEveryElementAccountedFor(xml: string): void {
 }
 
 describe('buildSemanticArisDocument', () => {
+  it('decodes AML COLORREF/BGR colors once while retaining the raw source spelling', () => {
+    expect(amlColorRefToCss('339900')).toBe('#009933')
+    expect(amlColorRefToCss('d7c49d')).toBe('#9dc4d7')
+    expect(amlColorRefToCss('dcbbed')).toBe('#edbbdc')
+    expect(amlColorRefToCss('99')).toBe('#990000')
+    expect(amlColorRefToCss('0')).toBe('#000000')
+    expect(amlColorRefToCss('-1')).toBeNull()
+    expect(amlColorRefToCss('not-a-color')).toBeNull()
+
+    const xml = `<AML>
+      <Group Group.ID="Group.Root">
+        <ObjDef ObjDef.ID="ObjDef.1" TypeNum="OT_FUNC">
+          <AttrDef AttrDef.Type="AT_NAME">
+            <AttrValue LocaleId="1033">
+              <StyledElement Color="dcbbed"><PlainText TextValue="Styled" /></StyledElement>
+            </AttrValue>
+          </AttrDef>
+        </ObjDef>
+        <Model Model.ID="Model.1" Model.Type="MT_EEPC" BackColor="d5d5f7">
+          <ObjOcc ObjOcc.ID="ObjOcc.1" ObjDef.IdRef="ObjDef.1" FillColor="d7c49d" Color="339900">
+            <Brush Color="d7c49d" Color2="ff" BrushType="SOLID" />
+            <CxnOcc CxnOcc.ID="CxnOcc.1" CxnDef.IdRef="CxnDef.1" ToObjOcc.IdRef="ObjOcc.1" Color="996600">
+              <Pen Color="996600" Style="0" Width="1" />
+            </CxnOcc>
+          </ObjOcc>
+          <FFTextOcc FFTextDef.IdRef="FFTextDef.1" Color="dcbbed" FillColor="d5d5f7" />
+          <GfxObj>
+            <Pen Color="339900" Style="0" Width="1" />
+            <Brush Color="b6dce9" Color2="0" BrushType="SOLID" />
+          </GfxObj>
+        </Model>
+      </Group>
+      <FFTextDef FFTextDef.ID="FFTextDef.1" />
+      <FontStyleSheet FontSS.ID="FontSS.1">
+        <FontNode LocaleId="1033" Color="dcbbed" />
+      </FontStyleSheet>
+    </AML>`
+    const index = buildSemanticArisDocument(tokenizeXmlDocument(xml)).index
+
+    expect(index.models.get('Model.1')?.parsed.backColor).toBe('#f7d5d5')
+    expect(index.models.get('Model.1')?.rawAttributes.BackColor).toBe('d5d5f7')
+    expect(index.objectOccurrences.get('ObjOcc.1')?.parsed).toMatchObject({
+      fillColor: '#9dc4d7',
+      strokeColor: '#009933'
+    })
+    expect(index.connectionOccurrences.get('CxnOcc.1')?.parsed.color).toBe('#006699')
+    expect(index.freeTextOccurrences[0]?.parsed).toMatchObject({
+      color: '#edbbdc',
+      fillColor: '#f7d5d5'
+    })
+    expect(index.styles.brushes.map((brush) => brush.parsed.color)).toEqual(['#9dc4d7', '#e9dcb6'])
+    expect(index.styles.brushes[0]?.parsed.color2).toBe('#ff0000')
+    expect(index.styles.pens.map((pen) => pen.parsed.color)).toEqual(['#006699', '#009933'])
+    expect(index.styles.fonts[0]?.parsed.color).toBe('#edbbdc')
+    expect(index.attributes[0]?.parsed.values[0]?.runs[0]?.decodedColors.color).toBe('#edbbdc')
+  })
+
   it('indexes core ARIS semantics from a compact AML sample', () => {
     const semantic = buildSemanticArisDocument(tokenizeXmlDocument(COMPACT_AML))
 

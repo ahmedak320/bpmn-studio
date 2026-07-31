@@ -393,14 +393,18 @@ export class ArisCanvasSync {
   }
 
   private syncFreeText(model: ArisModel, desired: Set<string>, dirty: Element[]): void {
+    const catalog = this.store.document.styleCatalog
     for (const text of model.freeText) {
       const id = freeTextElementId(text.id)
       desired.add(id)
-      const businessObject: ArisFreeTextBusinessObject = Object.freeze({
+      const businessObject: ArisFreeTextBusinessObject & {
+        readonly font: ArisLabelFont | null
+      } = Object.freeze({
         kind: 'freeText',
         modelId: model.id,
         freeTextId: text.id,
-        text: readLocalized(text.text, this.displayLocaleId)
+        text: readLocalized(text.text, this.displayLocaleId),
+        font: resolveLabelFont(catalog, text.style.fontStyleSheetId)
       })
       // Real exports write `<FFTextOcc>` with a `Position` and no `Size` at
       // all — ARIS sizes the note to its text. Rendering that literally draws
@@ -446,7 +450,9 @@ export class ArisCanvasSync {
       if (!source || !target) continue
       desired.add(connection.id)
       const definition = definitions.get(connection.definitionId)
-      const businessObject: ArisConnectionBusinessObject = Object.freeze({
+      const businessObject: ArisConnectionBusinessObject & {
+        readonly color: string | null
+      } = Object.freeze({
         kind: 'connection',
         modelId: model.id,
         connectionOccurrenceId: connection.id,
@@ -454,7 +460,8 @@ export class ArisCanvasSync {
         connectionType: definition?.type ?? 'CT_UNKNOWN',
         sourceOccurrenceId: connection.sourceOccurrenceId,
         targetOccurrenceId: connection.targetOccurrenceId,
-        name: readLocalized(definition?.names, this.displayLocaleId)
+        name: readLocalized(definition?.names, this.displayLocaleId),
+        color: connection.style.color
       })
       const waypoints = connectionWaypoints(source.bounds, target.bounds, connection.route, {
         selfLoop: source.id === target.id

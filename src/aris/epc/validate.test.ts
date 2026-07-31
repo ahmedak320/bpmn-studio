@@ -18,6 +18,20 @@ describe('validateEpcGraph — clean baseline', () => {
 })
 
 describe('validateEpcGraph — epc.alternation (checkAlternation)', () => {
+  it('allows the DMT CT_IS_PREDEC_OF_1 Function→Function sequence tuple', () => {
+    const g = graph(
+      'M1',
+      [node('E1', 'OT_EVT'), node('F1', 'OT_FUNC'), node('F2', 'OT_FUNC'), node('E2', 'OT_EVT')],
+      [
+        edge('e1', 'E1', 'F1', 'CT_ACTIV_1'),
+        edge('e2', 'F1', 'F2', 'CT_IS_PREDEC_OF_1'),
+        edge('e3', 'F2', 'E2', 'CT_CRT_1')
+      ]
+    )
+
+    expect(validateEpcGraph(g)).toEqual([])
+  })
+
   it('flags two events connected directly by a flow edge', () => {
     const g = graph(
       'M1',
@@ -27,6 +41,7 @@ describe('validateEpcGraph — epc.alternation (checkAlternation)', () => {
     const findings = validateEpcGraph(g)
     expect(findings).toHaveLength(1)
     expect(findings[0].ruleId).toBe('epc.alternation')
+    expect(findings[0].severity).toBe('error')
     expect(findings[0].edgeIds).toEqual(['e1'])
   })
 
@@ -36,8 +51,8 @@ describe('validateEpcGraph — epc.alternation (checkAlternation)', () => {
       [node('F1', 'OT_FUNC'), node('F2', 'OT_FUNC')],
       [edge('e1', 'F1', 'F2', 'CT_ACTIV_1')]
     )
-    const findings = validateEpcGraph(g)
-    expect(findings.map((f) => f.ruleId)).toContain('epc.alternation')
+    const finding = validateEpcGraph(g).find((candidate) => candidate.ruleId === 'epc.alternation')
+    expect(finding).toMatchObject({ ruleId: 'epc.alternation', severity: 'error' })
   })
 })
 
@@ -204,6 +219,7 @@ describe('validateEpcGraph — epc.connectivity.orphanNode (checkConnectedCompon
     )
     const findings = validateEpcGraph(g).filter((f) => f.ruleId === 'epc.connectivity.orphanNode')
     expect(findings).toHaveLength(3)
+    expect(findings.every((finding) => finding.severity === 'warning')).toBe(true)
     expect(new Set(findings.flatMap((f) => f.nodeIds))).toEqual(new Set(['E3', 'F2', 'E4']))
   })
 })

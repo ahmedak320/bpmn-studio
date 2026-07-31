@@ -28,10 +28,10 @@ import { loadExpectation } from './loadExpectation'
  * the comparator's structured diff (counts and categories) reaches the assertions. The module-load
  * guard below throws if the private fixture is absent — a loud failure, never a skip.
  *
- * BASELINE: see `renewProfile.animalwf.test.ts` for the full rationale (most materially,
- * `CT_IS_PREDEC_OF_1` — this export's direct Function→Function sequence connector — is not yet in
- * `FLOW_CONNECTION_TYPES`). A threshold, never a skip, and — per the holdout contract — not
- * ratcheted by C8's Wave-3 loop; it is re-verified once, deliberately, in Wave 5.
+ * BASELINE: see `renewProfile.animalwf.test.ts` for the full rationale (most materially, the
+ * endpoint-scoped classification of `CT_IS_PREDEC_OF_1` as a direct Function→Function sequence).
+ * A threshold, never a skip, and — per the holdout contract — not ratcheted by C8's Wave-3 loop;
+ * it is re-verified once, deliberately, in Wave 5.
  */
 const ANIMAL_WF_PATH = resolve(process.cwd(), '../reference/AnimalWF/ARISAMLExport.xml')
 if (!existsSync(ANIMAL_WF_PATH)) {

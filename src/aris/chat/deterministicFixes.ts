@@ -42,7 +42,7 @@
  * checked ids at apply time — they never appear in the resulting document.
  */
 
-import { FLOW_CONNECTION_TYPES, OT_EVT, OT_FUNC } from '../epc/constants'
+import { isControlFlowTriple, OT_EVT, OT_FUNC } from '../epc/constants'
 import type { ArisChatGap, ArisChatGapKind } from './gapScanner'
 import { hasArabicName, hasEnglishName } from './locale'
 import type { ArisChatCommand, ArisChatCommandKind } from './patchSchema'
@@ -81,9 +81,9 @@ const START_EVENT_NAME = Object.freeze({ en: 'Process started', ar: 'بدأت ا
 const END_EVENT_NAME = Object.freeze({ en: 'Process completed', ar: 'اكتملت العملية' })
 
 /**
- * Control-flow connection types the start/end proposals author, per the EPC adapter's census
- * (`src/aris/epc/constants.ts` `FLOW_CONNECTION_TYPES`): an event ACTIVATES a function
- * (`CT_ACTIV_1`, OT_EVT→OT_FUNC), a function CREATES an event (`CT_CRT_1`, OT_FUNC→OT_EVT).
+ * Control-flow connection types the start/end proposals author, per the EPC adapter's census:
+ * an event ACTIVATES a function (`CT_ACTIV_1`, OT_EVT→OT_FUNC), and a function CREATES an
+ * event (`CT_CRT_1`, OT_FUNC→OT_EVT).
  */
 const START_CONNECTION_TYPE = 'CT_ACTIV_1'
 const END_CONNECTION_TYPE = 'CT_CRT_1'
@@ -172,6 +172,31 @@ function functionOccurrences(
   )
 }
 
+function isControlFlowConnection(
+  document: ArisChatWorkingDocument,
+  modelId: string,
+  connection: {
+    readonly definitionId: string
+    readonly sourceOccurrenceId: string
+    readonly targetOccurrenceId: string
+  }
+): boolean {
+  const model = document.models.get(modelId)
+  if (!model) return false
+  const connectionType = document.connectionDefinitions.get(connection.definitionId)?.type
+  const sourceOccurrence = model.occurrences.find(
+    (occurrence) => occurrence.id === connection.sourceOccurrenceId
+  )
+  const targetOccurrence = model.occurrences.find(
+    (occurrence) => occurrence.id === connection.targetOccurrenceId
+  )
+  if (!connectionType || !sourceOccurrence || !targetOccurrence) return false
+  const sourceType = document.objectDefinitions.get(sourceOccurrence.definitionId)?.type
+  const targetType = document.objectDefinitions.get(targetOccurrence.definitionId)?.type
+  if (!sourceType || !targetType) return false
+  return isControlFlowTriple(connectionType, sourceType, targetType)
+}
+
 /** The function with no incoming control flow (the entry), tie-broken by occurrence order. */
 function firstFunction(
   document: ArisChatWorkingDocument,
@@ -182,8 +207,9 @@ function firstFunction(
   const model = document.models.get(modelId)!
   const flowTargets = new Set<string>()
   for (const connection of model.connectionOccurrences) {
-    const type = document.connectionDefinitions.get(connection.definitionId)?.type
-    if (type && FLOW_CONNECTION_TYPES.has(type)) flowTargets.add(connection.targetOccurrenceId)
+    if (isControlFlowConnection(document, modelId, connection)) {
+      flowTargets.add(connection.targetOccurrenceId)
+    }
   }
   return functions.find((occurrence) => !flowTargets.has(occurrence.id)) ?? functions[0]!
 }
@@ -198,8 +224,9 @@ function lastFunction(
   const model = document.models.get(modelId)!
   const flowSources = new Set<string>()
   for (const connection of model.connectionOccurrences) {
-    const type = document.connectionDefinitions.get(connection.definitionId)?.type
-    if (type && FLOW_CONNECTION_TYPES.has(type)) flowSources.add(connection.sourceOccurrenceId)
+    if (isControlFlowConnection(document, modelId, connection)) {
+      flowSources.add(connection.sourceOccurrenceId)
+    }
   }
   for (let index = functions.length - 1; index >= 0; index -= 1) {
     if (!flowSources.has(functions[index]!.id)) return functions[index]!

@@ -545,7 +545,7 @@ describe('compareModelToExpectation — gates', () => {
   })
 })
 
-describe('compareModelToExpectation — comparator-local flow, DFS walk, normalization', () => {
+describe('compareModelToExpectation — canonical flow, DFS walk, normalization', () => {
   const evt = (nameEn: string): SpineStep => ({
     kind: 'event',
     nameEn,

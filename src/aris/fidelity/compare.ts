@@ -2,15 +2,12 @@
  * Pure comparator between an `ArisWorkingDocument` model and a hand-authored fidelity
  * expectation.
  *
- * ## Comparator-confined flow classification
- * The spine walk is a geometric depth-first preorder over a COMPARATOR-LOCAL control-flow edge
- * set (`COMPARATOR_FLOW_CONNECTION_TYPES`): the production `FLOW_CONNECTION_TYPES`
- * (`epc/constants.ts`, consumed by validation and the canvas) plus `CT_IS_PREDEC_OF_1` — the
- * AnimalWF export's direct Function→Function sequence connector. This extension lives here, never
- * in `epc/constants.ts`, so production flow classification stays byte-identical. The walk is
- * cycle-tolerant (return-loop XOR cycles never stall it): DFS from every in-degree-0 seed in
- * geometric order `(centerX asc, then centerY asc)`, then from the geometrically-first unvisited
- * node of any remaining cycle-only component.
+ * ## Control-flow classification
+ * The spine walk is a geometric depth-first preorder over the canonical control-flow edges from
+ * `buildFlowGraphIndex`, including DMT's endpoint-scoped `CT_IS_PREDEC_OF_1`
+ * Function→Function sequence. The walk is cycle-tolerant (return-loop XOR cycles never stall it):
+ * DFS from every in-degree-0 seed in geometric order `(centerX asc, then centerY asc)`, then from
+ * the geometrically-first unvisited node of any remaining cycle-only component.
  *
  * ## Normalization
  * All authored and derived text (spine/satellite/gate/note names) is run through `normText`
@@ -31,9 +28,8 @@ import type {
 import { occurrenceColorToCss } from '../canvas/renderer'
 import { readLocalized } from '../canvas/localization'
 import { toEpcGraph } from '../epc/adapter'
-import { buildFlowGraphIndex, isControlFlowEdge, type FlowGraphIndex } from '../epc/flowGraph'
+import { buildFlowGraphIndex, type FlowGraphIndex } from '../epc/flowGraph'
 import { FLOW_NODE_TYPES, classifyRuleSymbol } from '../epc/constants'
-import type { EpcEdge } from '../epc/types'
 import { localeLang } from '../../library/amlParse'
 import type {
   FidelityDiffReport,
@@ -46,21 +42,6 @@ import type {
 } from './expectationTypes'
 
 const NUMBERING_ATTRIBUTE_TYPES = new Set(['AT_PROC_CODE', 'AT_ID'])
-
-/**
- * Control-flow connection types recognised by the COMPARATOR spine walk. Deliberately broader
- * than production `FLOW_CONNECTION_TYPES` (`epc/constants.ts`): it additionally treats
- * `CT_IS_PREDEC_OF_1` (Function→Function sequence) as flow. Kept comparator-local so production
- * flow classification — used by validation and the canvas — is untouched.
- */
-const COMPARATOR_FLOW_CONNECTION_TYPES: ReadonlySet<string> = new Set([
-  'CT_ACTIV_1',
-  'CT_CRT_1',
-  'CT_LEADS_TO_1',
-  'CT_LEADS_TO_2',
-  'CT_IS_EVAL_BY_1',
-  'CT_IS_PREDEC_OF_1'
-])
 
 /** Collapse internal whitespace runs to a single space and trim. Applied to both sides. */
 function normText(value: string): string {
@@ -142,30 +123,7 @@ function buildSpineStep(
 }
 
 /**
- * Comparator-local control-flow edges: every production control-flow edge (both endpoints resolve
- * to flow-node types) plus every `CT_IS_PREDEC_OF_1` edge that directly sequences one function
- * into another. Never mutates the shared index.
- */
-function comparatorFlowEdges(index: FlowGraphIndex): EpcEdge[] {
-  const edges: EpcEdge[] = []
-  for (const edge of index.graph.edges) {
-    if (isControlFlowEdge(edge, index.nodeById)) {
-      edges.push(edge)
-      continue
-    }
-    if (edge.connectionType === 'CT_IS_PREDEC_OF_1') {
-      const source = index.nodeById.get(edge.source)
-      const target = index.nodeById.get(edge.target)
-      if (source && target && source.objectType === 'OT_FUNC' && target.objectType === 'OT_FUNC') {
-        edges.push(edge)
-      }
-    }
-  }
-  return edges
-}
-
-/**
- * Geometric depth-first preorder over the comparator-local flow subgraph. Ordering is
+ * Geometric depth-first preorder over the canonical flow subgraph. Ordering is
  * `(centerX asc, then centerY asc)`; DFS runs from every in-degree-0 seed in that order, then from
  * the geometrically-first unvisited node of any remaining cycle-only component so return-loop XOR
  * cycles (which have no in-degree-0 entry) are still emitted exactly once each.
@@ -197,7 +155,7 @@ function buildSpine(
   const successorsBySource = new Map<string, string[]>()
   const inDegree = new Map<string, number>()
   for (const nodeId of flowNodeIds) inDegree.set(nodeId, 0)
-  for (const edge of comparatorFlowEdges(index)) {
+  for (const edge of index.flowEdges) {
     if (!flowNodeIds.has(edge.source) || !flowNodeIds.has(edge.target)) continue
     const list = successorsBySource.get(edge.source)
     if (list) list.push(edge.target)
@@ -246,9 +204,11 @@ function raciForConnectionType(connectionType: string): 'R' | 'A' | 'C' | 'I' | 
 
 function buildSatellites(
   document: ArisWorkingDocument,
-  model: ArisModel
+  model: ArisModel,
+  index: FlowGraphIndex
 ): Record<string, SatelliteExpectation[]> {
   const satellites: Record<string, SatelliteExpectation[]> = {}
+  const flowEdgeIds = new Set(index.flowEdges.map((edge) => edge.id))
 
   for (const functionOccurrence of model.occurrences) {
     const functionDefinition = document.objectDefinitions.get(functionOccurrence.definitionId)
@@ -261,7 +221,7 @@ function buildSatellites(
     for (const connection of model.connectionOccurrences) {
       const connectionDefinition = document.connectionDefinitions.get(connection.definitionId)
       if (!connectionDefinition) continue
-      if (COMPARATOR_FLOW_CONNECTION_TYPES.has(connectionDefinition.type)) continue
+      if (flowEdgeIds.has(connection.id)) continue
 
       let satelliteOccurrence: ArisObjectOccurrence | null = null
       if (connection.sourceOccurrenceId === functionOccurrence.id) {
@@ -745,7 +705,7 @@ function deriveActual(
 
   return {
     spine: buildSpine(document, model, index),
-    satellites: buildSatellites(document, model),
+    satellites: buildSatellites(document, model, index),
     gates: buildGates(model, index),
     notes: buildNotes(model),
     counts: buildCounts(document, model)

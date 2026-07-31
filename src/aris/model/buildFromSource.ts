@@ -31,6 +31,7 @@ import type {
   ArisStyleCatalog,
   ArisWorkingDocument
 } from './types'
+import { amlColorRefToCss } from '../source/semanticIndex'
 
 const NAME_ATTRIBUTE_TYPES = new Set(['AT_NAME', 'Name'])
 const SUPPORTED_MODEL_TYPES = new Set<ArisModelType>(['MT_EEPC', 'MT_VAL_ADD_CHN_DGM'])
@@ -152,6 +153,16 @@ export interface SourceOccurrencePaint {
 
 const TRANSPARENT_FILL = 'none'
 
+/**
+ * Parsed source colors are already CSS; direct legacy color attributes still come from the raw
+ * attribute map and therefore need the same COLORREF decode here.
+ */
+function sourceColorToCss(raw: string | null | undefined): string | null {
+  if (raw === null || raw === undefined) return null
+  const trimmed = raw.trim()
+  return trimmed.startsWith('#') ? trimmed : amlColorRefToCss(trimmed)
+}
+
 function paintByOwner(index: ArisSourceIndexLike): ReadonlyMap<string, SourceOccurrencePaint> {
   const byOwner = new Map<string, { fillColor: string | null; strokeColor: string | null }>()
   const entryFor = (
@@ -192,8 +203,8 @@ function buildOccurrenceStyle(
     symbol,
     style: Object.freeze({
       symbol,
-      fillColor: source.rawAttributes['FillColor'] ?? paint?.fillColor ?? null,
-      strokeColor: source.rawAttributes['Color'] ?? paint?.strokeColor ?? null,
+      fillColor: sourceColorToCss(source.rawAttributes['FillColor']) ?? paint?.fillColor ?? null,
+      strokeColor: sourceColorToCss(source.rawAttributes['Color']) ?? paint?.strokeColor ?? null,
       strokeWidth: null,
       lineStyle: null,
       fontStyleSheetId: source.rawAttributes['FontSS.IdRef'] ?? null,
@@ -203,10 +214,11 @@ function buildOccurrenceStyle(
 }
 
 function buildConnectionStyle(
-  source: ArisSourceConnectionOccurrenceRecordLike
+  source: ArisSourceConnectionOccurrenceRecordLike,
+  paint: SourceOccurrencePaint | undefined
 ): ArisConnectionOccurrence['style'] {
   return Object.freeze({
-    color: source.rawAttributes['Color'] ?? null,
+    color: sourceColorToCss(source.rawAttributes['Color']) ?? paint?.strokeColor ?? null,
     width: null,
     lineStyle: null,
     srcArrow: source.parsed.srcArrow ?? null,
@@ -246,6 +258,25 @@ function buildDatabase(source: ArisSourceIndexLike['database']): ArisDatabase {
 
 function buildStyleCatalog(source: ArisSourceIndexLike['styles']): ArisStyleCatalog {
   const styles = new Map<string, ArisStyle>()
+  const fonts =
+    (
+      source as ArisSourceIndexLike['styles'] & {
+        readonly fonts?: readonly {
+          readonly parsed: {
+            readonly ownerSourceId: string | null
+            readonly color: string | null
+          }
+        }[]
+      }
+    ).fonts ?? []
+  const textColorByStyleSheet = new Map<string, string>()
+  for (const font of fonts) {
+    const ownerSourceId = font.parsed.ownerSourceId
+    const textColor = sourceColorToCss(font.parsed.color)
+    if (ownerSourceId && textColor && !textColorByStyleSheet.has(ownerSourceId)) {
+      textColorByStyleSheet.set(ownerSourceId, textColor)
+    }
+  }
   for (const [, sheet] of source.fontStyleSheets) {
     const id = sheet.parsed.fontStyleSheetId
     if (!id) continue
@@ -260,7 +291,7 @@ function buildStyleCatalog(source: ArisSourceIndexLike['styles']): ArisStyleCata
         fontFamily: null,
         fontSize: null,
         fontWeight: null,
-        textColor: null,
+        textColor: textColorByStyleSheet.get(id) ?? null,
         zOrder: null
       })
     )
@@ -361,7 +392,8 @@ function buildConnectionDefinition(
 function buildConnectionOccurrence(
   source: ArisSourceConnectionOccurrenceRecordLike,
   routePoints: ArisSourceIndexLike['routePoints'],
-  attributeOccurrences: ArisSourceIndexLike['attributeOccurrences']
+  attributeOccurrences: ArisSourceIndexLike['attributeOccurrences'],
+  paintByOwnerSourceId: ReadonlyMap<string, SourceOccurrencePaint>
 ): ArisConnectionOccurrence {
   const id = source.parsed.connectionOccurrenceId ?? ''
   return Object.freeze({
@@ -371,7 +403,10 @@ function buildConnectionOccurrence(
     sourceOccurrenceId: source.parsed.fromObjectOccurrenceId ?? '',
     targetOccurrenceId: source.parsed.toObjectOccurrenceId ?? '',
     route: buildRoute(id, routePoints),
-    style: buildConnectionStyle(source),
+    style: buildConnectionStyle(
+      source,
+      source.sourceId === null ? undefined : paintByOwnerSourceId.get(source.sourceId)
+    ),
     // `<AttrOcc>` children of a `<CxnOcc>` are the connection's own label placements. They are
     // occurrence-local (plan §8.2): they are keyed off this occurrence's id alone, so they never
     // leak onto the connection definition or onto a sibling occurrence of that definition.
@@ -399,7 +434,8 @@ function buildLane(
 function buildFreeText(
   occurrence: ArisSourceFreeTextOccurrenceRecordLike,
   _definitions: ReadonlyMap<string, ArisSourceFreeTextRecordLike>,
-  attributes: ArisSourceIndexLike['attributes']
+  attributes: ArisSourceIndexLike['attributes'],
+  paintByOwnerSourceId: ReadonlyMap<string, SourceOccurrencePaint>
 ): ArisFreeText {
   const definitionId = occurrence.parsed.freeTextDefinitionId ?? null
   // A real `<FFTextOcc>` never carries an `FFTextOcc.ID` attribute (ARIS free-text occurrences
@@ -416,6 +452,8 @@ function buildFreeText(
   const definitionAttributes = definitionId
     ? buildAttributes(definitionId, attributes)
     : Object.freeze([])
+  const paint =
+    occurrence.sourceId === null ? undefined : paintByOwnerSourceId.get(occurrence.sourceId)
   return Object.freeze({
     id,
     modelId: occurrence.parsed.modelId ?? '',
@@ -430,8 +468,10 @@ function buildFreeText(
     ),
     style: Object.freeze({
       symbol: null,
-      fillColor: null,
-      strokeColor: null,
+      fillColor:
+        sourceColorToCss(occurrence.rawAttributes['FillColor']) ?? paint?.fillColor ?? null,
+      strokeColor:
+        sourceColorToCss(occurrence.rawAttributes['Color']) ?? paint?.strokeColor ?? null,
       strokeWidth: null,
       lineStyle: null,
       fontStyleSheetId: occurrence.rawAttributes['FontSS.IdRef'] ?? null,
@@ -552,7 +592,8 @@ export function buildFromSource(index: ArisSourceIndexLike): ArisWorkingDocument
     const occurrence = buildConnectionOccurrence(
       source,
       index.routePoints,
-      index.attributeOccurrences
+      index.attributeOccurrences,
+      occurrencePaint
     )
     if (!occurrence.id || !occurrence.modelId) continue
     const list = connectionsByModel.get(occurrence.modelId) ?? []
@@ -576,7 +617,7 @@ export function buildFromSource(index: ArisSourceIndexLike): ArisWorkingDocument
 
   const freeTextByModel = new Map<string, ArisFreeText[]>()
   for (const occurrence of index.freeTextOccurrences) {
-    const item = buildFreeText(occurrence, freeTextDefinitions, index.attributes)
+    const item = buildFreeText(occurrence, freeTextDefinitions, index.attributes, occurrencePaint)
     if (!item.id || !item.modelId) continue
     const list = freeTextByModel.get(item.modelId) ?? []
     list.push(item)

@@ -25,14 +25,13 @@ import { loadExpectation } from './loadExpectation'
  * return.
  *
  * BASELINE: the comparator now measures this model at full fidelity. Its spine walk follows the
- * export's direct Function→Function sequence connector (`CT_IS_PREDEC_OF_1`) via a
- * comparator-local control-flow set plus a cycle-tolerant geometric depth-first preorder walk —
- * kept out of production `FLOW_CONNECTION_TYPES` (`src/aris/epc/constants.ts`) so the validator's
- * and canvas's flow classification stays byte-identical — and all authored/derived text is
- * whitespace-normalized and English-locale resolved (`compare.ts`). Every diff category is now 0
- * (exact match against the hand-authored, source-faithful expectation). `BASELINE` is the enforced
- * ceiling: it stays at 0, and RAISING any number here is never permitted — a regression must be
- * fixed in the comparator, never absorbed by loosening this budget.
+ * export's direct Function→Function sequence connector (`CT_IS_PREDEC_OF_1`) through the
+ * canonical endpoint-scoped control-flow classifier and a cycle-tolerant geometric depth-first
+ * preorder walk. All authored/derived text is whitespace-normalized and English-locale resolved
+ * (`compare.ts`). Every diff category is now 0 (exact match against the hand-authored,
+ * source-faithful expectation). `BASELINE` is the enforced ceiling: it stays at 0, and RAISING
+ * any number here is never permitted — a regression must be fixed in the comparator, never
+ * absorbed by loosening this budget.
  */
 const ANIMAL_WF_PATH = resolve(process.cwd(), '../reference/AnimalWF/ARISAMLExport.xml')
 if (!existsSync(ANIMAL_WF_PATH)) {

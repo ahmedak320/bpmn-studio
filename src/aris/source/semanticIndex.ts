@@ -42,7 +42,51 @@ export interface ArisStyledRunRecord {
   readonly path: string
   readonly span: XmlSpan
   readonly rawAttributes: Readonly<Record<string, string>>
+  /** Decoded CSS colors; `rawAttributes` remains byte-for-byte source evidence. */
+  readonly decodedColors: ArisDecodedColorAttributes
   readonly text: string
+}
+
+/** Every AML color spelling a styled/source element can carry, decoded at the source boundary. */
+export interface ArisDecodedColorAttributes {
+  readonly color: string | null
+  readonly color2: string | null
+  readonly fillColor: string | null
+  readonly backColor: string | null
+  readonly textColor: string | null
+}
+
+/**
+ * Decode a Windows COLORREF serialized by AML.
+ *
+ * AML stores the numeric value as an unpadded hexadecimal `0xBBGGRR`. CSS needs `#RRGGBB`, so
+ * the low and high bytes must be exchanged (`d7c49d` → `#9dc4d7`). The raw attribute remains on
+ * each semantic record for lossless round-trip; parsed color fields use only this unambiguous CSS
+ * spelling. `-1` is the Windows "no color" sentinel.
+ */
+export function amlColorRefToCss(raw: string | null | undefined): string | null {
+  if (raw === null || raw === undefined) return null
+  const trimmed = raw.trim()
+  if (trimmed === '' || trimmed === '-1' || !/^[0-9a-fA-F]{1,8}$/u.test(trimmed)) return null
+  const parsed = Number.parseInt(trimmed, 16)
+  if (!Number.isFinite(parsed) || Number.isNaN(parsed) || parsed < 0) return null
+  const colorRef = Math.min(parsed, 0xffffff)
+  const red = colorRef & 0xff
+  const green = (colorRef >>> 8) & 0xff
+  const blue = (colorRef >>> 16) & 0xff
+  return `#${[red, green, blue].map((byte) => byte.toString(16).padStart(2, '0')).join('')}`
+}
+
+function decodeColorAttributes(
+  attributes: Readonly<Record<string, string>>
+): ArisDecodedColorAttributes {
+  return Object.freeze({
+    color: amlColorRefToCss(attributes.Color),
+    color2: amlColorRefToCss(attributes.Color2),
+    fillColor: amlColorRefToCss(attributes.FillColor),
+    backColor: amlColorRefToCss(attributes.BackColor),
+    textColor: amlColorRefToCss(attributes.TextColor)
+  })
 }
 
 export interface ArisAttributeValueRecord {
@@ -212,6 +256,8 @@ export type ArisObjectOccurrenceRecord = ArisSourceRecordBase<{
   readonly dy: number | null
   readonly externalGuid: string | null
   readonly symbolGuid: string | null
+  readonly fillColor: string | null
+  readonly strokeColor: string | null
 }>
 
 export type ArisConnectionDefinitionRecord = ArisSourceRecordBase<{
@@ -241,6 +287,7 @@ export type ArisConnectionOccurrenceRecord = ArisSourceRecordBase<{
   readonly embedding: string | null
   readonly visible: string | null
   readonly routePointCount: number
+  readonly color: string | null
 }>
 
 export type ArisAttributeRecord = ArisSourceRecordBase<{
@@ -266,6 +313,8 @@ export type ArisAttributeOccurrenceRecord = ArisSourceRecordBase<{
   readonly rotation: number | null
   readonly dx: number | null
   readonly dy: number | null
+  readonly color: string | null
+  readonly fillColor: string | null
 }>
 
 export type ArisLaneRecord = ArisSourceRecordBase<{
@@ -300,6 +349,8 @@ export type ArisFreeTextOccurrenceRecord = ArisSourceRecordBase<{
   readonly y: number | null
   readonly dx: number | null
   readonly dy: number | null
+  readonly color: string | null
+  readonly fillColor: string | null
 }>
 
 export type ArisAttachmentRecord = ArisSourceRecordBase<{
@@ -809,6 +860,7 @@ function collectStyledRuns(
         path: childPath,
         span: spanOf(child),
         rawAttributes: attrsOf(child),
+        decodedColors: decodeColorAttributes(attrsOf(child)),
         text: elementText(child, entityMap)
       })
     )
@@ -1062,7 +1114,7 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
             gridSize: parseOptionalInteger(context.attributes.GridSize),
             scale: parseOptionalInteger(context.attributes.Scale),
             printScale: parseOptionalInteger(context.attributes.PrintScale),
-            backColor: context.attributes.BackColor ?? null,
+            backColor: amlColorRefToCss(context.attributes.BackColor),
             curveRadius: parseOptionalInteger(context.attributes.CurveRadius),
             arcRadius: parseOptionalInteger(context.attributes.ArcRadius),
             creator: context.attributes.Creator ?? null,
@@ -1195,7 +1247,9 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
             dx: size.dx,
             dy: size.dy,
             externalGuid: readGuidValue(context, 'ExternalGUID', entityMap),
-            symbolGuid: readGuidValue(context, 'SymbolGUID', entityMap)
+            symbolGuid: readGuidValue(context, 'SymbolGUID', entityMap),
+            fillColor: amlColorRefToCss(context.attributes.FillColor),
+            strokeColor: amlColorRefToCss(context.attributes.Color)
           },
           {
             knownAttributes: [
@@ -1206,7 +1260,9 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
               'Flags',
               'Zorder',
               'Hints',
-              'SequenceNumber'
+              'SequenceNumber',
+              'FillColor',
+              'Color'
             ],
             knownChildren: [
               'Brush',
@@ -1291,7 +1347,8 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
             tgtArrow: context.attributes.TgtArrow ?? null,
             embedding: context.attributes.Embedding ?? null,
             visible: context.attributes.Visible ?? null,
-            routePointCount: directChildren(context, 'Position').length
+            routePointCount: directChildren(context, 'Position').length,
+            color: amlColorRefToCss(context.attributes.Color)
           },
           {
             knownAttributes: [
@@ -1303,7 +1360,8 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
               'SrcArrow',
               'TgtArrow',
               'Embedding',
-              'Visible'
+              'Visible',
+              'Color'
             ],
             knownChildren: ['Pen', 'Position', 'AttrOcc']
           }
@@ -1384,7 +1442,9 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
               offsetY: parseOptionalInteger(context.attributes.OffsetY),
               rotation: parseOptionalInteger(context.attributes.Rotation),
               dx: size.dx,
-              dy: size.dy
+              dy: size.dy,
+              color: amlColorRefToCss(context.attributes.Color),
+              fillColor: amlColorRefToCss(context.attributes.FillColor)
             },
             {
               knownAttributes: [
@@ -1396,7 +1456,9 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
                 'FontSS.IdRef',
                 'OffsetX',
                 'OffsetY',
-                'Rotation'
+                'Rotation',
+                'Color',
+                'FillColor'
               ],
               knownChildren: ['Size']
             }
@@ -1481,7 +1543,9 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
               x: position.x,
               y: position.y,
               dx: size.dx,
-              dy: size.dy
+              dy: size.dy,
+              color: amlColorRefToCss(context.attributes.Color),
+              fillColor: amlColorRefToCss(context.attributes.FillColor)
             },
             {
               knownAttributes: [
@@ -1489,7 +1553,9 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
                 'FontSS.IdRef',
                 'SymbolFlag',
                 'Alignment',
-                'Zorder'
+                'Zorder',
+                'Color',
+                'FillColor'
               ],
               knownChildren: ['Position', 'Size']
             }
@@ -1617,7 +1683,7 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
               italic: context.attributes.Italic ?? null,
               underline: context.attributes.Underline ?? null,
               strikeOut: context.attributes.StrikeOut ?? null,
-              color: context.attributes.Color ?? null,
+              color: amlColorRefToCss(context.attributes.Color),
               sourceTag: node.name
             },
             {
@@ -1656,7 +1722,7 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
               ownerElementName: owner?.node.name ?? null,
               ownerPath: owner?.path ?? null,
               ownerSourceId: owner?.sourceId ?? null,
-              color: context.attributes.Color ?? null,
+              color: amlColorRefToCss(context.attributes.Color),
               style: context.attributes.Style ?? null,
               width: parseOptionalInteger(context.attributes.Width)
             },
@@ -1678,8 +1744,8 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
               ownerElementName: owner?.node.name ?? null,
               ownerPath: owner?.path ?? null,
               ownerSourceId: owner?.sourceId ?? null,
-              color: context.attributes.Color ?? null,
-              color2: context.attributes.Color2 ?? null,
+              color: amlColorRefToCss(context.attributes.Color),
+              color2: amlColorRefToCss(context.attributes.Color2),
               brushType: context.attributes.BrushType ?? null
             },
             {

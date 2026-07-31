@@ -2,7 +2,12 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import type { ArisModel, ArisObjectDefinition, ArisWorkingDocument } from '../model/types'
+import type {
+  ArisConnectionDefinition,
+  ArisModel,
+  ArisObjectDefinition,
+  ArisWorkingDocument
+} from '../model/types'
 import {
   createEmptyArisDocument,
   createEmptyArisModel,
@@ -102,13 +107,16 @@ function bodyOf(occurrenceId: string): Element {
 }
 
 describe('occurrenceColorToCss accepts both spellings that reach the canvas', () => {
-  it('parses an unpadded ARIS hex integer and passes a CSS colour through', () => {
-    // The AML spelling: an unsigned 0xRRGGBB integer serialized without padding.
+  it('byte-swaps an unpadded AML COLORREF and passes CSS/convention colours through', () => {
+    // The AML spelling: an unsigned 0xBBGGRR integer serialized without padding.
     expect(occurrenceColorToCss('cccccc')).toBe('#cccccc')
-    expect(occurrenceColorToCss('99')).toBe('#000099')
-    expect(occurrenceColorToCss('339900')).toBe('#339900')
-    // The details rail's spelling.
+    expect(occurrenceColorToCss('99')).toBe('#990000')
+    expect(occurrenceColorToCss('339900')).toBe('#009933')
+    expect(occurrenceColorToCss('d7c49d')).toBe('#9dc4d7')
+    expect(occurrenceColorToCss('dcbbed')).toBe('#edbbdc')
+    // The details rail and convention catalog spelling is already RGB.
     expect(occurrenceColorToCss('#00ff00')).toBe('#00ff00')
+    expect(occurrenceColorToCss('#339900')).toBe('#339900')
     // A CSS keyword survives rather than being parsed as hex.
     expect(occurrenceColorToCss('transparent')).toBe('transparent')
   })
@@ -122,6 +130,24 @@ describe('occurrenceColorToCss accepts both spellings that reach the canvas', ()
 })
 
 describe('the canvas draws the occurrence style it was given', () => {
+  it('draws decoded AnimalWF app-system, event and function colors without a second swap', () => {
+    harness = bootCanvas({
+      document: documentWith([
+        { id: 'ObjOcc.app', symbol: 'ST_APPL_SYS', fillColor: '#9dc4d7' },
+        { id: 'ObjOcc.event', symbol: 'ST_EV', fillColor: '#edbbdc' },
+        { id: 'ObjOcc.function', symbol: 'ST_FUNC', fillColor: '#009933' },
+        { id: 'ObjOcc.default', symbol: 'ST_FUNC' }
+      ]),
+      modelId: MODEL_ID
+    })
+
+    expect(bodyOf('ObjOcc.app').getAttribute('fill')).toBe('#9dc4d7')
+    expect(bodyOf('ObjOcc.event').getAttribute('fill')).toBe('#edbbdc')
+    expect(bodyOf('ObjOcc.function').getAttribute('fill')).toBe('#009933')
+    // Catalog defaults are authored as RGB and remain byte-for-byte unchanged.
+    expect(bodyOf('ObjOcc.default').getAttribute('fill')).toBe('#339900')
+  })
+
   it('paints a source brush colour over the symbol’s authored fill', () => {
     harness = bootCanvas({
       document: documentWith([{ id: 'ObjOcc.1' }, { id: 'ObjOcc.2', fillColor: 'cccccc' }]),
@@ -149,7 +175,7 @@ describe('the canvas draws the occurrence style it was given', () => {
     const primitives = primitivesOf('ObjOcc.1')
     expect(primitives.length).toBeGreaterThan(1)
     for (const primitive of primitives) {
-      expect(primitive.getAttribute('stroke')).toBe('#339900')
+      expect(primitive.getAttribute('stroke')).toBe('#009933')
       expect(primitive.getAttribute('stroke-width')).toBe('4')
       expect(primitive.getAttribute('stroke-dasharray')).toBe('6 4')
     }
@@ -180,6 +206,66 @@ describe('the canvas draws the occurrence style it was given', () => {
       return `${body.tagName}|${body.getAttribute('x')}|${body.getAttribute('y')}|${body.getAttribute('width')}|${body.getAttribute('height')}`
     }
     expect(shapeOf('ObjOcc.2')).toBe(shapeOf('ObjOcc.1'))
+  })
+})
+
+describe('source connection paint reaches the canvas', () => {
+  it('draws a decoded connection Pen color instead of the renderer fallback', () => {
+    const base = documentWith([
+      { id: 'ObjOcc.1', x: 0 },
+      { id: 'ObjOcc.2', x: 300 }
+    ])
+    const model = base.models.get(MODEL_ID)!
+    const connectionDefinition: ArisConnectionDefinition = Object.freeze({
+      id: 'CxnDef.1',
+      type: 'CT_ACTIV_1',
+      fromObjectDefinitionId: 'ObjDef.1',
+      toObjectDefinitionId: 'ObjDef.1',
+      names: localizedValue(''),
+      attributes: Object.freeze([])
+    })
+    const document: ArisWorkingDocument = Object.freeze({
+      ...base,
+      models: Object.freeze(
+        new Map([
+          [
+            MODEL_ID,
+            Object.freeze({
+              ...model,
+              connectionOccurrences: Object.freeze([
+                Object.freeze({
+                  id: 'CxnOcc.1',
+                  definitionId: connectionDefinition.id,
+                  modelId: MODEL_ID,
+                  sourceOccurrenceId: 'ObjOcc.1',
+                  targetOccurrenceId: 'ObjOcc.2',
+                  route: Object.freeze([]),
+                  style: Object.freeze({
+                    color: '#006699',
+                    width: null,
+                    lineStyle: null,
+                    srcArrow: null,
+                    tgtArrow: null,
+                    fontStyleSheetId: null,
+                    zOrder: null
+                  }),
+                  attributeOccurrences: Object.freeze([]),
+                  rawAttributes: Object.freeze({})
+                })
+              ])
+            })
+          ]
+        ])
+      ),
+      connectionDefinitions: Object.freeze(
+        new Map([[connectionDefinition.id, connectionDefinition]])
+      )
+    })
+
+    harness = bootCanvas({ document, modelId: MODEL_ID })
+    const gfx = harness.canvas.elementRegistry.getGraphics('CxnOcc.1')
+    const line = gfx.querySelector<SVGElement>('[data-aris-connection-type]')
+    expect(line?.style.stroke).toBe('rgb(0, 102, 153)')
   })
 })
 

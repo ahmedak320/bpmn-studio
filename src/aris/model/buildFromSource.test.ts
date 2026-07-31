@@ -27,6 +27,40 @@ const NO_ID_FREE_TEXT_AML = `<?xml version="1.0" encoding="UTF-8"?>
   </FFTextDef>
 </AML>`
 
+const SOURCE_COLOR_AML = `<AML>
+  <Group Group.ID="Group.Root">
+    <ObjDef ObjDef.ID="ObjDef.1" TypeNum="OT_FUNC">
+      <CxnDef CxnDef.ID="CxnDef.1" CxnDef.Type="CT_ACTIV_1" ToObjDef.IdRef="ObjDef.2" />
+    </ObjDef>
+    <ObjDef ObjDef.ID="ObjDef.2" TypeNum="OT_EVT" />
+    <Model Model.ID="Model.1" Model.Type="MT_EEPC" BackColor="d5d5f7">
+      <ObjOcc ObjOcc.ID="ObjOcc.1" ObjDef.IdRef="ObjDef.1" SymbolNum="ST_FUNC">
+        <Brush Color="339900" Color2="0" BrushType="SOLID" />
+        <Position Pos.X="0" Pos.Y="0" />
+        <Size Size.dX="100" Size.dY="60" />
+        <CxnOcc CxnOcc.ID="CxnOcc.1" CxnDef.IdRef="CxnDef.1" ToObjOcc.IdRef="ObjOcc.2">
+          <Pen Color="996600" Style="0" Width="1" />
+          <Position Pos.X="100" Pos.Y="30" />
+          <Position Pos.X="200" Pos.Y="30" />
+        </CxnOcc>
+      </ObjOcc>
+      <ObjOcc ObjOcc.ID="ObjOcc.2" ObjDef.IdRef="ObjDef.2" SymbolNum="ST_EV" FillColor="dcbbed">
+        <Position Pos.X="200" Pos.Y="0" />
+        <Size Size.dX="100" Size.dY="60" />
+      </ObjOcc>
+      <FFTextOcc FFTextDef.IdRef="FFTextDef.1" FontSS.IdRef="FontSS.1" FillColor="d7c49d">
+        <Position Pos.X="0" Pos.Y="100" />
+      </FFTextOcc>
+    </Model>
+  </Group>
+  <FFTextDef FFTextDef.ID="FFTextDef.1">
+    <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Note</AttrValue></AttrDef>
+  </FFTextDef>
+  <FontStyleSheet FontSS.ID="FontSS.1">
+    <FontNode LocaleId="1033" Color="dcbbed" />
+  </FontStyleSheet>
+</AML>`
+
 function buildDocumentFromXml(xml: string) {
   const semantic = buildSemanticArisDocument(tokenizeXmlDocument(xml))
   return buildFromSource(semantic.index)
@@ -45,6 +79,20 @@ function occurrenceName(
 }
 
 describe('buildFromSource', () => {
+  it('carries decoded source colors into occurrence, connection, free-text and font paint', () => {
+    const document = buildDocumentFromXml(SOURCE_COLOR_AML)
+    const model = document.models.get('Model.1')
+
+    expect(model?.layout.backColor).toBe('#f7d5d5')
+    expect(model?.occurrences.map((occurrence) => occurrence.style.fillColor)).toEqual([
+      '#009933',
+      '#edbbdc'
+    ])
+    expect(model?.connectionOccurrences[0]?.style.color).toBe('#006699')
+    expect(model?.freeText[0]?.style.fillColor).toBe('#9dc4d7')
+    expect(document.styleCatalog.styles.get('FontSS.1')?.textColor).toBe('#edbbdc')
+  })
+
   it('builds a working document from sanitized AML', async () => {
     const { document } = await buildTestDocument()
 

@@ -45,7 +45,8 @@ export function validateEpcGraph(
 
 /**
  * Classic rule: events and functions must alternate along control flow. Two functions or
- * two events directly connected by a flow edge is a violation (rules sit between them).
+ * two events directly connected by a flow edge is a violation (rules sit between them),
+ * except for DMT's exact `CT_IS_PREDEC_OF_1` Function→Function sequence tuple.
  */
 export function checkAlternation(index: FlowGraphIndex): readonly EpcFinding[] {
   const findings: EpcFinding[] = []
@@ -53,6 +54,13 @@ export function checkAlternation(index: FlowGraphIndex): readonly EpcFinding[] {
     const source = index.nodeById.get(edge.source)
     const target = index.nodeById.get(edge.target)
     if (!source || !target) continue
+    if (
+      edge.connectionType === 'CT_IS_PREDEC_OF_1' &&
+      source.objectType === OT_FUNC &&
+      target.objectType === OT_FUNC
+    ) {
+      continue
+    }
     if (
       source.objectType === target.objectType &&
       (source.objectType === OT_FUNC || source.objectType === OT_EVT)

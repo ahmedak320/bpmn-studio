@@ -1,12 +1,11 @@
 import type { EpcEdge, EpcGraph, EpcNode } from './types'
-import { FLOW_CONNECTION_TYPES, FLOW_NODE_TYPES } from './constants'
+import { isControlFlowTriple } from './constants'
 
 /**
  * A read-only index over an `EpcGraph`: node lookup plus adjacency lists restricted to
- * control-flow edges (see `FLOW_CONNECTION_TYPES` / `FLOW_NODE_TYPES`). Building this once
- * and sharing it between the validator, the XOR classifier, and the return-path detector
- * avoids repeated O(edges) scans and keeps the "which edges count as flow" decision in one
- * place.
+ * control-flow edges (see `isControlFlowTriple`). Building this once and sharing it between
+ * the validator, the XOR classifier, and the return-path detector avoids repeated O(edges)
+ * scans and keeps the "which edges count as flow" decision in one place.
  *
  * Every array exposed here is a fresh copy — nothing aliases the input graph's arrays, and
  * nothing here ever mutates `graph`.
@@ -23,11 +22,10 @@ export interface FlowGraphIndex {
 }
 
 export function isControlFlowEdge(edge: EpcEdge, nodeById: ReadonlyMap<string, EpcNode>): boolean {
-  if (!FLOW_CONNECTION_TYPES.has(edge.connectionType)) return false
   const source = nodeById.get(edge.source)
   const target = nodeById.get(edge.target)
   if (!source || !target) return false
-  return FLOW_NODE_TYPES.has(source.objectType) && FLOW_NODE_TYPES.has(target.objectType)
+  return isControlFlowTriple(edge.connectionType, source.objectType, target.objectType)
 }
 
 function pushInto<K>(map: Map<K, EpcEdge[]>, key: K, edge: EpcEdge): void {

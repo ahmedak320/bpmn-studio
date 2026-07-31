@@ -34,6 +34,7 @@ import type { Connection, Element, Shape } from 'diagram-js/lib/model/Types'
 import { createLine, updateLine } from 'diagram-js/lib/util/RenderUtil'
 
 import { resolveArisSymbol } from '../symbols'
+import { amlColorRefToCss } from '../source/semanticIndex'
 import type { ArisDrawingElement, ArisSymbolDescriptor } from '../symbols/types'
 import {
   arisBusinessObject,
@@ -89,13 +90,13 @@ function round(value: number): number {
 }
 
 /**
- * An ARIS colour (`cccccc`, `99`, `339900` — an unsigned `0xRRGGBB` integer
+ * An AML COLORREF (`cccccc`, `99`, `339900` — an unsigned `0xBBGGRR` integer
  * serialized without padding) or an already-CSS colour, as CSS.
  *
- * Both spellings reach the canvas: an imported occurrence carries the AML
- * spelling verbatim, while the details rail writes what the user typed, which is
- * `#rrggbb`. Anything already carrying a `#`, or naming a CSS keyword, is passed
- * through untouched; a bare hex string is padded to six digits.
+ * Source parsing normally turns AML colors into `#rrggbb` before the canvas sees them. The bare
+ * spelling remains supported for older working documents and is decoded as Windows COLORREF.
+ * Anything already carrying a `#`, including convention-catalog defaults and authoring edits, is
+ * passed through untouched so RGB-authored defaults are never byte-swapped.
  */
 export function occurrenceColorToCss(raw: string | null | undefined): string | undefined {
   if (raw === null || raw === undefined) return undefined
@@ -103,9 +104,7 @@ export function occurrenceColorToCss(raw: string | null | undefined): string | u
   if (trimmed === '' || trimmed === '-1') return undefined
   if (trimmed.startsWith('#')) return trimmed
   if (!/^[0-9a-fA-F]{1,8}$/.test(trimmed)) return trimmed
-  const value = Number.parseInt(trimmed, 16)
-  if (!Number.isFinite(value) || Number.isNaN(value) || value < 0) return undefined
-  return `#${Math.min(value, 0xffffff).toString(16).padStart(6, '0')}`
+  return amlColorRefToCss(trimmed) ?? undefined
 }
 
 const DASHARRAY_BY_LINE_STYLE: Readonly<Record<string, string | null>> = Object.freeze({
@@ -244,14 +243,21 @@ function rtlTextAttrs(text: string): Readonly<Record<string, string>> {
   return isArabicText(text) ? { direction: 'rtl', 'unicode-bidi': 'plaintext' } : {}
 }
 
-function drawCaption(text: string, width: number, height: number): SVGElement {
+function drawCaption(
+  text: string,
+  width: number,
+  height: number,
+  font: ArisLabelFont | null = null
+): SVGElement {
   const node = svgElement('text', {
     x: round(width / 2),
     y: round(height / 2),
     'text-anchor': 'middle',
     'dominant-baseline': 'middle',
-    'font-size': CAPTION_FONT_SIZE,
-    fill: CAPTION_FILL,
+    'font-size': font?.fontSize ?? CAPTION_FONT_SIZE,
+    ...(font?.fontFamily ? { 'font-family': font.fontFamily } : {}),
+    ...(font?.fontWeight ? { 'font-weight': font.fontWeight } : {}),
+    fill: occurrenceColorToCss(font?.textColor) ?? CAPTION_FILL,
     'data-aris-caption': 'true',
     ...rtlTextAttrs(text)
   })
@@ -306,7 +312,7 @@ function drawLabelText(
     'font-size': font?.fontSize ?? CAPTION_FONT_SIZE,
     ...(font?.fontFamily ? { 'font-family': font.fontFamily } : {}),
     ...(font?.fontWeight ? { 'font-weight': font.fontWeight } : {}),
-    fill: font?.textColor ?? CAPTION_FILL,
+    fill: occurrenceColorToCss(font?.textColor) ?? CAPTION_FILL,
     'data-aris-caption': 'true',
     ...rtlTextAttrs(text)
   })
@@ -466,6 +472,9 @@ export class ArisRenderer extends BaseRenderer {
     }
 
     if (businessObject.kind === 'freeText') {
+      const font = (
+        businessObject as typeof businessObject & { readonly font?: ArisLabelFont | null }
+      ).font
       svgAppend(
         group,
         svgElement('rect', {
@@ -478,7 +487,7 @@ export class ArisRenderer extends BaseRenderer {
           'stroke-width': 1
         })
       )
-      svgAppend(group, drawCaption(businessObject.text, shape.width, shape.height))
+      svgAppend(group, drawCaption(businessObject.text, shape.width, shape.height, font ?? null))
       svgAppend(parentGfx, group)
       return group
     }
@@ -509,19 +518,25 @@ export class ArisRenderer extends BaseRenderer {
   }
 
   drawConnection(parentGfx: SVGElement, connection: Connection): SVGElement {
+    const businessObject = arisBusinessObject(connection)
+    const stroke =
+      businessObject?.kind === 'connection'
+        ? (occurrenceColorToCss(
+            (businessObject as typeof businessObject & { readonly color?: string | null }).color
+          ) ?? CONNECTION_STROKE)
+        : CONNECTION_STROKE
     const line = createLine(connection.waypoints, {
-      stroke: CONNECTION_STROKE,
+      stroke,
       strokeWidth: 1.5,
       fill: 'none'
     })
-    const businessObject = arisBusinessObject(connection)
     if (businessObject?.kind === 'connection') {
       line.setAttribute('data-aris-connection-type', businessObject.connectionType)
     }
     // EPC control flow is directed; the arrowhead marks the target end. The marker is shared
     // per stroke colour across the whole diagram (see `ensureArrowMarker`).
     parentGfx.appendChild(line)
-    line.setAttribute('marker-end', `url(#${ensureArrowMarker(parentGfx, CONNECTION_STROKE)})`)
+    line.setAttribute('marker-end', `url(#${ensureArrowMarker(parentGfx, stroke)})`)
     return line
   }
 

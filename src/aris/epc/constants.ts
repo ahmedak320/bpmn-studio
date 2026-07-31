@@ -29,11 +29,9 @@ export const FLOW_NODE_TYPES: ReadonlySet<string> = new Set([OT_FUNC, OT_EVT, OT
  *
  * All other observed connection types in the fixture (CT_SUPP_3, CT_EXEC_1, CT_EXEC_2,
  * CT_CRT_OUT_TO, CT_MUST_BE_INFO_ABT_1, CT_HAS_OUT, CT_IS_INP_FOR, CT_REFS_TO_2, CT_READ_1,
- * CT_AFFECTS, CT_IS_PREDEC_OF_1, CT_IS_PRCS_ORNT_SUPER) connect a control-flow node to a
- * satellite node (OT_APPL_SYS, OT_PERS, OT_ENT_TYPE, OT_REQUIREMENT, OT_POLICY, ...) or, for
- * the VACD-only predecessor/superior types, connect FUNC->FUNC in a value-added chain
- * diagram rather than an EEPC — none of those are control flow and are intentionally
- * excluded here.
+ * CT_AFFECTS, CT_IS_PRCS_ORNT_SUPER) connect a control-flow node to a satellite node
+ * (OT_APPL_SYS, OT_PERS, OT_ENT_TYPE, OT_REQUIREMENT, OT_POLICY, ...), so none of those are
+ * control flow.
  *
  * ADDITION BEYOND THE PLAN: `CT_IS_EVAL_BY_1` is included as control flow only because, in
  * every one of its 19 occurrences in the real fixture, it is the *sole* outgoing edge of an
@@ -42,7 +40,11 @@ export const FLOW_NODE_TYPES: ReadonlySet<string> = new Set([OT_FUNC, OT_EVT, OT
  * make that event a dead end with no way out, which the source model does not intend. If a
  * future fixture uses `CT_IS_EVAL_BY_1` between an entity type and a rule (its more
  * conventional "decision basis" meaning), the endpoint-type guard below excludes it —
- * `isControlFlowEdge` only classifies it as flow when both endpoints are flow-node types.
+ * `isControlFlowTriple` only classifies it as flow when both endpoints are flow-node types.
+ *
+ * `CT_IS_PREDEC_OF_1` is deliberately absent from this type-only set. DMT uses it both for
+ * value-added chains and for direct Function→Function sequencing inside EEPC models. Its
+ * endpoint-sensitive EEPC meaning is represented solely by `isControlFlowTriple`.
  */
 export const FLOW_CONNECTION_TYPES: ReadonlySet<string> = new Set([
   'CT_ACTIV_1',
@@ -51,6 +53,27 @@ export const FLOW_CONNECTION_TYPES: ReadonlySet<string> = new Set([
   'CT_LEADS_TO_2',
   'CT_IS_EVAL_BY_1'
 ])
+
+/**
+ * Canonical EPC control-flow classifier.
+ *
+ * The established flow connection types remain flow whenever both endpoints are EPC flow
+ * nodes. That deliberately keeps malformed Function→Function/Event→Event uses visible to the
+ * alternation validator. DMT's predecessor connector is narrower: only its exact
+ * Function→Function tuple is EEPC flow. Every other predecessor tuple and every connection
+ * with a satellite/missing endpoint type is non-flow.
+ */
+export function isControlFlowTriple(
+  connectionType: string,
+  fromObjectType: string,
+  toObjectType: string
+): boolean {
+  if (!FLOW_NODE_TYPES.has(fromObjectType) || !FLOW_NODE_TYPES.has(toObjectType)) return false
+  if (connectionType === 'CT_IS_PREDEC_OF_1') {
+    return fromObjectType === OT_FUNC && toObjectType === OT_FUNC
+  }
+  return FLOW_CONNECTION_TYPES.has(connectionType)
+}
 
 /** Rule (connector) kinds recognized from `SymbolNum`. */
 export type EpcRuleKind = 'XOR' | 'AND' | 'OR' | 'unknown'

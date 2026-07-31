@@ -209,6 +209,73 @@ describe('buildDeterministicFixPlan — start/end event proposal', () => {
     const secondPlan = planFor(next)
     expect(secondPlan.confirmProposals).toHaveLength(0)
   })
+
+  it('uses CT_IS_PREDEC_OF_1 Function→Function flow to select the chain entry and exit', () => {
+    const modelId = 'M1'
+    const document = buildDocument({
+      models: [
+        {
+          id: modelId,
+          names: names('DMT chain', 'سلسلة'),
+          // Reverse occurrence order makes a type-only miss choose both wrong anchors.
+          occurrences: [
+            { id: 'OC_F2', definitionId: 'OD_F2', modelId, symbol: 'ST_FUNC' },
+            { id: 'OC_F1', definitionId: 'OD_F1', modelId, symbol: 'ST_FUNC' }
+          ],
+          connectionOccurrences: [
+            {
+              id: 'C_FLOW',
+              definitionId: 'CD_FLOW',
+              modelId,
+              sourceOccurrenceId: 'OC_F1',
+              targetOccurrenceId: 'OC_F2'
+            }
+          ]
+        }
+      ],
+      objectDefinitions: [
+        {
+          id: 'OD_F1',
+          type: 'OT_FUNC',
+          names: names('First', 'الأول'),
+          attributes: [],
+          linkedModelIds: []
+        },
+        {
+          id: 'OD_F2',
+          type: 'OT_FUNC',
+          names: names('Second', 'الثاني'),
+          attributes: [],
+          linkedModelIds: []
+        }
+      ],
+      connectionDefinitions: [
+        {
+          id: 'CD_FLOW',
+          type: 'CT_IS_PREDEC_OF_1',
+          fromObjectDefinitionId: 'OD_F1',
+          toObjectDefinitionId: 'OD_F2',
+          names: names(null),
+          attributes: []
+        }
+      ]
+    })
+
+    const plan = planFor(document)
+    const startConnection = plan.confirmProposals
+      .flatMap((proposal) => proposal.commands)
+      .find((command) => command.commandId === 'fix-add-start-conn::M1')
+    const endConnection = plan.confirmProposals
+      .flatMap((proposal) => proposal.commands)
+      .find((command) => command.commandId === 'fix-add-end-conn::M1')
+
+    expect(startConnection?.kind).toBe('addCoreConnection')
+    expect(endConnection?.kind).toBe('addCoreConnection')
+    if (startConnection?.kind !== 'addCoreConnection') throw new Error('missing start connection')
+    if (endConnection?.kind !== 'addCoreConnection') throw new Error('missing end connection')
+    expect(startConnection.payload.targetOccurrenceId).toBe('OC_F1')
+    expect(endConnection.payload.sourceOccurrenceId).toBe('OC_F2')
+  })
 })
 
 describe('buildDeterministicFixPlan — delete proposals resolve their gaps', () => {
