@@ -65,6 +65,7 @@ import { buildPrintFrame, drawPrintFrame } from './printFrame'
 import { derivedRaciLabelText, type ArisRaciTuple } from './raci'
 import { svgAppend, svgElement } from './svg'
 import {
+  ARIS_LABEL_LINE_HEIGHT,
   layoutAnchoredLines,
   layoutLabelLines,
   normalizeLabelParagraphs,
@@ -1075,6 +1076,34 @@ export class ArisRenderer extends BaseRenderer {
         const { anchor } = alignmentAnchor(this.freeTextAlignment(note), 0)
         const lines = wrapLabelLines(businessObject.text, null, fontSize)
         const layout = layoutAnchoredLines(lines, { x: 0, y: 0 }, fontSize)
+        svgAppend(group, drawLineBlockText(layout, anchor, font, { 'data-aris-caption': 'true' }))
+        svgAppend(parentGfx, group)
+        return group
+      }
+      if (note !== undefined && note.bounds.width > 0 && !(note.bounds.height > 0)) {
+        // A note with an explicit `Size.dX>0` but no `Size.dY` (the
+        // Reference-Laws title: `dX=544 dY=0 Alignment=CENTER`) auto-heights
+        // instead of falling into the bordered/fixed-height box below: it
+        // wraps to its own width and top-anchors at `Position`, with no
+        // synthesized border or invented height (Wave 9 P6; fixplan §3.5).
+        // `canvasSync`'s `freeTextBounds` already shifted the drawn shape's
+        // `x` to this note's alignment anchor (CENTER/RIGHT box shift), so
+        // the group's local origin is already the box's own top-left;
+        // anchoring the text inside that box by the SAME alignment (via
+        // `layoutLabelLines`'s box formula, box height = exactly the wrapped
+        // line count so the block sits flush against the top edge) lands the
+        // printed text back on the source `Position` — e.g. CENTER:
+        // box.x + width/2 = (pos.x − dX/2) + dX/2 = pos.x.
+        const alignment = this.freeTextAlignment(note)
+        const { anchor } = alignmentAnchor(alignment, 0)
+        const lines = wrapLabelLines(businessObject.text, shape.width, fontSize)
+        const lineHeight = round(fontSize * ARIS_LABEL_LINE_HEIGHT)
+        const layout = layoutLabelLines(
+          lines,
+          { x: 0, y: 0, width: shape.width, height: lines.length * lineHeight },
+          fontSize,
+          anchorLabel(anchor)
+        )
         svgAppend(group, drawLineBlockText(layout, anchor, font, { 'data-aris-caption': 'true' }))
         svgAppend(parentGfx, group)
         return group

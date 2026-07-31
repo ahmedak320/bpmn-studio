@@ -190,6 +190,26 @@ function positiveOr(value: number | null | undefined, fallback: number): number 
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback
 }
 
+/**
+ * A sized free-text box's left edge for its horizontal `Alignment` (Wave 9
+ * P6; fixplan §3.5). ARIS writes `Position` as the box's top-left only for
+ * `LEFT`; a `CENTER`/`RIGHT` note anchors the box AT `Position` by its
+ * alignment instead — the Reference-Laws title (`Size.dX=544` `CENTER` at
+ * `x=6267`) prints its text centred ON 6267, which only happens if the box
+ * itself starts 272 units (half of 544) to the left of Position, not at it.
+ */
+function sizedFreeTextX(x: number, width: number, alignment: string | null): number {
+  switch ((alignment ?? '').trim().toUpperCase()) {
+    case 'CENTER':
+      return x - width / 2
+    case 'RIGHT':
+      return x - width
+    default:
+      // LEFT, and any other/absent value: Position is already the left edge.
+      return x
+  }
+}
+
 export type ArisLaneOrientation = 'horizontal' | 'vertical'
 
 /**
@@ -215,16 +235,42 @@ export interface ArisRect {
 }
 
 /**
- * A free-text note's drawn rectangle. Position is always the source's; a
- * missing or non-positive size becomes a default box rather than nothing.
+ * A free-text note's drawn rectangle. An unsized note keeps `Position` as the
+ * box's top-left, and a missing or non-positive size becomes a default box
+ * rather than nothing. A note with an explicit `Size.dX>0`, though, anchors
+ * its box BY ITS `Alignment` AT `Position` instead of always reading
+ * `Position` as the top-left (Wave 9 P6; fixplan §3.5): `CENTER` anchors the
+ * box's horizontal centre there, `RIGHT` its right edge, `LEFT` its left edge
+ * (today's behaviour, unchanged). `alignment` defaults to `null` (the LEFT/
+ * top-left reading) for callers with no source record to ask — only the
+ * shape actually drawn on canvas (`syncFreeText`) needs the true anchor;
+ * `modelContentBounds`'s own growth pass keeps reading the box as before.
  */
-export function freeTextBounds(bounds: ArisBounds): ArisRect {
+export function freeTextBounds(bounds: ArisBounds, alignment: string | null = null): ArisRect {
+  const width = positiveOr(bounds.width, FREE_TEXT_DEFAULT_WIDTH)
   return Object.freeze({
-    x: bounds.x,
+    x: bounds.width > 0 ? sizedFreeTextX(bounds.x, width, alignment) : bounds.x,
     y: bounds.y,
-    width: positiveOr(bounds.width, FREE_TEXT_DEFAULT_WIDTH),
+    width,
     height: positiveOr(bounds.height, FREE_TEXT_DEFAULT_HEIGHT)
   })
+}
+
+/**
+ * A free-text note's own `Alignment` attribute, read from the source record
+ * the working note came from (mirrors `renderer.ts`'s private
+ * `freeTextAlignment`, which does the identical lookup from the
+ * `documentStore` handle it has instead of `canvasSync`'s own `this.store`;
+ * neither module can reach the other's handle, so both read
+ * `sourceIndex.freeTextOccurrences` independently). `null` when the note has
+ * no source record (an authored-on-canvas note) or the record carries no
+ * `Alignment`.
+ */
+function freeTextSourceAlignment(document: ArisWorkingDocument, freeTextId: string): string | null {
+  const source = document.sourceIndex.freeTextOccurrences.find(
+    (occurrence) => occurrence.sourceId === freeTextId
+  )
+  return source?.rawAttributes['Alignment'] ?? null
 }
 
 function isUsableBounds(bounds: ArisBounds): boolean {
@@ -513,8 +559,12 @@ export class ArisCanvasSync {
       })
       // Real exports write `<FFTextOcc>` with a `Position` and no `Size` at
       // all — ARIS sizes the note to its text. Rendering that literally draws
-      // a 0x0 box, i.e. nothing at all, so an unset size takes a default.
-      this.upsertShape(id, freeTextBounds(text.bounds), businessObject, dirty)
+      // a 0x0 box, i.e. nothing at all, so an unset size takes a default. A
+      // note WITH an explicit `Size.dX>0` anchors its box by its `Alignment`
+      // at `Position` instead of always reading `Position` as the top-left
+      // (Wave 9 P6; fixplan §3.5).
+      const alignment = freeTextSourceAlignment(this.store.document, text.id)
+      this.upsertShape(id, freeTextBounds(text.bounds, alignment), businessObject, dirty)
     }
   }
 
