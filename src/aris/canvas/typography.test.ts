@@ -8,6 +8,7 @@ import { buildFromSource } from '../model/buildFromSource'
 import {
   ARIS_LABEL_LINE_HEIGHT,
   applyRunOverrides,
+  labelFontWeight,
   layoutAnchoredLines,
   layoutLabelLines,
   normalizeLabelParagraphs,
@@ -49,6 +50,29 @@ describe('wrapLabelLines', () => {
       'a very long single line that never wraps'
     ])
     expect(wrapLabelLines('', 100, 35.278)).toEqual([''])
+  })
+
+  it('defaults to the regular Helvetica table, and measures wider (more wraps) with weight="bold"', () => {
+    const text = 'Approve the User Terms and Conditions'
+    // Un-weighted call keeps today's behavior: regular table, same as passing 'regular'.
+    expect(wrapLabelLines(text, 170, 35.278)).toEqual(wrapLabelLines(text, 170, 35.278, 'regular'))
+    const regularLines = wrapLabelLines(text, 170, 35.278, 'regular')
+    const boldLines = wrapLabelLines(text, 170, 35.278, 'bold')
+    expect(boldLines.length).toBeGreaterThan(regularLines.length)
+    expect(boldLines.join(' ')).toBe(text)
+  })
+})
+
+describe('labelFontWeight', () => {
+  it("reads a resolved CSS font-weight as the wrap engine's two-tier weight", () => {
+    expect(labelFontWeight('700')).toBe('bold')
+    expect(labelFontWeight('600')).toBe('bold')
+    expect(labelFontWeight('bold')).toBe('bold')
+    expect(labelFontWeight('Bold')).toBe('bold')
+    expect(labelFontWeight('400')).toBe('regular')
+    expect(labelFontWeight('normal')).toBe('regular')
+    expect(labelFontWeight(null)).toBe('regular')
+    expect(labelFontWeight(undefined)).toBe('regular')
   })
 })
 

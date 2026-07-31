@@ -34,7 +34,7 @@ import {
   resolveCatalogFont
 } from '../model/fontStyleSheet'
 import type { ArisLocalizedValue, ArisWorkingDocument, ArisStyleFontNode } from '../model/types'
-import { measureTextWidth } from '../renderer/textWrap'
+import { measureTextWidth, type ArisTextWeight } from '../renderer/textWrap'
 import type { ArisLabelFont } from './elements'
 
 /**
@@ -89,19 +89,25 @@ export function normalizeLabelParagraphs(text: string): readonly string[] {
 /**
  * `text` as display lines: explicit paragraphs preserved, each greedily
  * wrapped to `maxWidth` (`null` = no width constraint) at `fontSize` with the
- * deterministic em-width table.
+ * deterministic Helvetica/Arabic-tier width table (`src/aris/renderer/textWrap.ts`).
+ *
+ * `weight` selects the Latin advance table (default `'regular'`, so every
+ * pre-existing caller keeps measuring exactly as before); pass `'bold'` for a
+ * caption whose resolved font is bold (see `labelFontWeight`) so its wrap
+ * decisions measure against the Helvetica-Bold table instead.
  */
 export function wrapLabelLines(
   text: string,
   maxWidth: number | null,
-  fontSize: number
+  fontSize: number,
+  weight: ArisTextWeight = 'regular'
 ): readonly string[] {
   const paragraphs = normalizeLabelParagraphs(text)
   if (paragraphs.length === 0) return Object.freeze([''])
   const width = maxWidth !== null && Number.isFinite(maxWidth) && maxWidth > 0 ? maxWidth : null
   const lines: string[] = []
   for (const paragraph of paragraphs) {
-    lines.push(...wrapParagraphLines(paragraph, width, fontSize))
+    lines.push(...wrapParagraphLines(paragraph, width, fontSize, weight))
   }
   return Object.freeze(lines)
 }
@@ -109,16 +115,17 @@ export function wrapLabelLines(
 function wrapParagraphLines(
   paragraph: string,
   maxWidth: number | null,
-  fontSize: number
+  fontSize: number,
+  weight: ArisTextWeight
 ): readonly string[] {
   if (maxWidth === null) return Object.freeze([paragraph])
-  if (measureTextWidth(paragraph, fontSize) <= maxWidth) return Object.freeze([paragraph])
+  if (measureTextWidth(paragraph, fontSize, weight) <= maxWidth) return Object.freeze([paragraph])
   const words = paragraph.split(/\s+/).filter((word) => word.length > 0)
   const lines: string[] = []
   let current = ''
   for (const word of words) {
     const candidate = current === '' ? word : `${current} ${word}`
-    if (current !== '' && measureTextWidth(candidate, fontSize) > maxWidth) {
+    if (current !== '' && measureTextWidth(candidate, fontSize, weight) > maxWidth) {
       lines.push(current)
       current = word
       continue
@@ -127,6 +134,21 @@ function wrapParagraphLines(
   }
   if (current !== '') lines.push(current)
   return Object.freeze(lines.length === 0 ? [''] : lines)
+}
+
+/**
+ * A resolved CSS `font-weight` (`'700'`, `'bold'`, a numeric string, `null`)
+ * as the wrap engine's two-tier `ArisTextWeight`. `>=600` (the CSS
+ * "semi-bold and up" convention) reads as bold, matching how `applyRunOverrides`
+ * emits `'700'` for a `<Bold/>` run and a resolved sheet's own numeric
+ * `FontNode Weight` (AnimalWF uses `400`/`700`).
+ */
+export function labelFontWeight(fontWeight: string | null | undefined): ArisTextWeight {
+  if (!fontWeight) return 'regular'
+  const normalized = fontWeight.trim().toLowerCase()
+  if (normalized === 'bold') return 'bold'
+  const numeric = Number.parseInt(normalized, 10)
+  return Number.isFinite(numeric) && numeric >= 600 ? 'bold' : 'regular'
 }
 
 export type ArisLabelAnchor = 'start' | 'middle' | 'end'
@@ -500,3 +522,4 @@ export function preferResolvedFont(
 
 /** Deterministic label width estimate, re-exported for the renderer's callers. */
 export { measureTextWidth }
+export type { ArisTextWeight }
