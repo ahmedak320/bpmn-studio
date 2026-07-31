@@ -20,9 +20,12 @@ import { buildArisStudioDocument, type ArisStudioDocument } from './arisStudioDo
 import { createArisXmlSourcePackage } from '../source/sourcePackage'
 import { installJsdomSvgSupport } from '../canvas/testing/jsdomSvg'
 
-// English-only, two-model AML: every definition misses an Arabic name, and each
-// OT_FUNC also misses its process code + owner — so the function occurrences carry
-// several findings while the events carry one, and both models produce markers.
+// English-only, two-model AML: every definition misses an Arabic name. ObjDef.Review
+// records AT_PROC_CODE + AT_PERS_RESP so that deployment vocabulary is in use (the
+// DMT-aware scanner gates both attribute checks on that); ObjDef.Check records neither
+// but has its AT_ID Identifier and an executor person wired with an R connection, so it
+// carries exactly the three advisory warnings — Arabic name, process code, owner, all
+// severity `warning` per the DMT manual — while each event carries one (the Arabic name).
 const TWO_MODEL_AML = `<?xml version="1.0" encoding="UTF-8"?>
 <AML>
   <Header-Info DatabaseName="AnimalWF" UserName="tester" ArisExeVersion="10"/>
@@ -32,15 +35,23 @@ const TWO_MODEL_AML = `<?xml version="1.0" encoding="UTF-8"?>
     </ObjDef>
     <ObjDef ObjDef.ID="ObjDef.Check" TypeNum="OT_FUNC" SymbolNum="ST_FUNC">
       <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Check request</AttrValue></AttrDef>
+      <AttrDef AttrDef.Type="AT_ID"><AttrValue LocaleId="1033">AWF.01.01</AttrValue></AttrDef>
     </ObjDef>
     <ObjDef ObjDef.ID="ObjDef.Done" TypeNum="OT_EVT" SymbolNum="ST_EV">
       <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Request checked</AttrValue></AttrDef>
     </ObjDef>
     <ObjDef ObjDef.ID="ObjDef.Review" TypeNum="OT_FUNC" SymbolNum="ST_FUNC">
       <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Review outcome</AttrValue></AttrDef>
+      <AttrDef AttrDef.Type="AT_ID"><AttrValue LocaleId="1033">AWF.02.01</AttrValue></AttrDef>
+      <AttrDef AttrDef.Type="AT_PROC_CODE"><AttrValue LocaleId="1033">P-002</AttrValue></AttrDef>
+      <AttrDef AttrDef.Type="AT_PERS_RESP"><AttrValue LocaleId="1033">Review team</AttrValue></AttrDef>
+    </ObjDef>
+    <ObjDef ObjDef.ID="ObjDef.Person" TypeNum="OT_PERS" SymbolNum="ST_PERS">
+      <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Intake officer</AttrValue></AttrDef>
     </ObjDef>
     <CxnDef CxnDef.ID="CxnDef.1" CxnDef.Type="CT_ACTIV_1" ToObjDef.IdRef="ObjDef.Check"/>
     <CxnDef CxnDef.ID="CxnDef.2" CxnDef.Type="CT_CRT_1" ToObjDef.IdRef="ObjDef.Done"/>
+    <CxnDef CxnDef.ID="CxnDef.3" CxnDef.Type="CT_EXEC_1" ToObjDef.IdRef="ObjDef.Check"/>
     <Model Model.ID="Model.Intake" Model.Type="MT_EEPC">
       <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Intake process</AttrValue></AttrDef>
       <ObjOcc ObjOcc.ID="ObjOcc.Start" ObjDef.IdRef="ObjDef.Start" SymbolNum="ST_EV" Zorder="1">
@@ -57,6 +68,14 @@ const TWO_MODEL_AML = `<?xml version="1.0" encoding="UTF-8"?>
         <CxnOcc CxnOcc.ID="CxnOcc.2" CxnDef.IdRef="CxnDef.2" ToObjOcc.IdRef="ObjOcc.Done" Zorder="6">
           <Position Pos.X="290" Pos.Y="340"/>
           <Position Pos.X="290" Pos.Y="440"/>
+        </CxnOcc>
+      </ObjOcc>
+      <ObjOcc ObjOcc.ID="ObjOcc.Person" ObjDef.IdRef="ObjDef.Person" SymbolNum="ST_PERS" Zorder="4">
+        <Position Pos.X="520" Pos.Y="270"/>
+        <Size Size.dX="160" Size.dY="60"/>
+        <CxnOcc CxnOcc.ID="CxnOcc.3" CxnDef.IdRef="CxnDef.3" ToObjOcc.IdRef="ObjOcc.Check" Zorder="7">
+          <Position Pos.X="520" Pos.Y="300"/>
+          <Position Pos.X="380" Pos.Y="300"/>
         </CxnOcc>
       </ObjOcc>
       <ObjOcc ObjOcc.ID="ObjOcc.Done" ObjDef.IdRef="ObjDef.Done" SymbolNum="ST_EV" Zorder="3">
@@ -166,7 +185,9 @@ describe('per-element canvas warning markers', () => {
 
     const found = marker as unknown as HTMLElement
     expect(Number(found.getAttribute('data-orbitpm-aris-warning-count'))).toBeGreaterThanOrEqual(1)
-    expect(found.getAttribute('data-orbitpm-aris-warning-severity')).toBe('error')
+    // The DMT manual treats names/optional attributes as advisory, so every finding on
+    // this element is a warning; `error` is reserved for structural violations.
+    expect(found.getAttribute('data-orbitpm-aris-warning-severity')).toBe('warning')
     // Proves `t()` resolution against the real dictionary (no hardcoded prose).
     expect(found.getAttribute('title')).toContain('No Arabic name is recorded.')
 

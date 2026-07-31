@@ -32,6 +32,34 @@
  * below, all against structural document fields and a caller-overridable `ArisGapScanConfig`
  * (the exact ARIS attribute-type/connection-type vocabulary — e.g. `AT_PROC_CODE`,
  * `AT_PERS_RESP` — is a deployment convention, not a hardcoded assumption).
+ *
+ * ## Model-type scope (DMT)
+ *
+ * Checks that encode EPC control-flow semantics — the consumed `validateEpcGraph` findings,
+ * missing inputs/outputs/systems, decision basis, XOR outcomes, and return targets — run
+ * only on EPC models (`MT_EEPC`), matching the scope `buildArisEpcFindings` already enforces
+ * and the DMT convention manual, which documents events, rules, IO/system satellites, and
+ * the R/A/C/I executor wiring as EPC (level-4) concepts only. A value-added chain diagram
+ * has no events and no satellites by design, so applying these checks to one manufactures
+ * findings that are not defects (the AnimalWF VACD alone produced 2 missing-start/end
+ * errors, 13 orphan warnings, and 14 missing-IO warnings before this scoping). A model
+ * whose `type` is absent (the reduced chat shape makes it optional) is treated as unknown
+ * and is still fully checked — only a positively non-EPC type exempts it.
+ *
+ * ## Deployment vocabulary and advisory severities (DMT)
+ *
+ * `missingProcessCode` and `missingOwner` are gated on the configured attribute type being
+ * in use on at least one `OT_FUNC` definition in the document. The DMT convention defines
+ * no process-code or owner ATTRIBUTE on functions — ownership is the RACI executor
+ * connection (already covered by `conv.function.noExecutor`) and the function's mandatory
+ * code is its Identifier `AT_ID` (covered by `conv.function.missingIdentifier`) — so on a
+ * DMT document these checks would flag every function (92+92 false errors on AnimalWF).
+ * Where a deployment does use the vocabulary, the checks stay live and flag the functions
+ * missing it. Both are warnings: the DMT schema marks these attributes optional, and even
+ * the mandatory `AT_ID` is only a warning. Missing English/Arabic names are likewise
+ * warnings — the manual's naming guidance is advisory and mandates no bilingual name —
+ * while structural violations (dangling references, untyped connections, EPC start/end and
+ * alternation findings) remain errors.
  */
 
 import { OT_FUNC, OT_RULE } from '../epc/constants'
@@ -47,7 +75,7 @@ import {
   hasArabicName,
   hasEnglishName
 } from './locale'
-import type { ArisChatSeverity, ArisChatWorkingDocument } from './types'
+import type { ArisChatModel, ArisChatSeverity, ArisChatWorkingDocument } from './types'
 
 export type ArisChatGapKind =
   | 'missingEnglishName'
@@ -163,6 +191,40 @@ export function toChatEpcGraph(document: ArisChatWorkingDocument, modelId: strin
   return toEpcGraph(adapterInput)
 }
 
+/**
+ * The EPC model type the EPC-semantics checks apply to (mirrors `EPC_MODEL_TYPE` in
+ * `../shell/arisEpcFindings`; declared locally because this module deliberately consumes
+ * only the narrow chat document shape).
+ */
+const EPC_MODEL_TYPE = 'MT_EEPC'
+
+/**
+ * `true` when `model` is an EPC — or when its type is unknown (the reduced chat shape makes
+ * `type` optional). Unknown must NOT exempt a model: suppressing checks on un-typed
+ * synthetic documents would hide real findings, so only a positively non-EPC type
+ * (e.g. `MT_VAL_ADD_CHN_DGM`) is exempt.
+ */
+function isEpcModel(model: ArisChatModel): boolean {
+  return model.type === undefined || model.type === EPC_MODEL_TYPE
+}
+
+/**
+ * Deployment-vocabulary gate for the optional-attribute checks (`missingProcessCode`,
+ * `missingOwner`): `true` when at least one `OT_FUNC` definition carries a non-blank value
+ * for `attributeType`, i.e. the document's deployment actually uses that convention. See
+ * the module doc for why the checks go silent otherwise.
+ */
+function isFuncAttributeVocabularyInUse(
+  document: ArisChatWorkingDocument,
+  attributeType: string
+): boolean {
+  for (const definition of document.objectDefinitions.values()) {
+    if (definition.type !== OT_FUNC) continue
+    if (hasAttributeText(definition.attributes, attributeType)) return true
+  }
+  return false
+}
+
 // --- 1/2: missing English/Arabic name ---------------------------------------------------
 
 /**
@@ -172,6 +234,10 @@ export function toChatEpcGraph(document: ArisChatWorkingDocument, modelId: strin
  * meaning comes from the symbol/type, not free text), so requiring a name there would flag
  * well-formed models as incomplete. A connection OCCURRENCE'S own label (e.g. an XOR branch
  * outcome) is a different concern, covered by `checkMissingXorOutcomes`.
+ *
+ * Severity is advisory (`warning`), not an error: the DMT convention manual mandates no
+ * bilingual name and its naming guidance is preferential, so a missing translation is a
+ * completeness hint for the fix flow, never a structural violation.
  */
 function checkMissingNames(
   document: ArisChatWorkingDocument,
@@ -188,13 +254,13 @@ function checkMissingNames(
 
   for (const model of document.models.values()) {
     if (!check(model.names, localeIds)) {
-      gaps.push({ kind, severity: 'error', targetIds: [model.id], messageKey })
+      gaps.push({ kind, severity: 'warning', targetIds: [model.id], messageKey })
     }
   }
   for (const definition of document.objectDefinitions.values()) {
     if (definition.type === OT_RULE) continue
     if (!check(definition.names, localeIds)) {
-      gaps.push({ kind, severity: 'error', targetIds: [definition.id], messageKey })
+      gaps.push({ kind, severity: 'warning', targetIds: [definition.id], messageKey })
     }
   }
   return sortedGaps(gaps)
@@ -202,17 +268,25 @@ function checkMissingNames(
 
 // --- 3: missing process code -------------------------------------------------------------
 
+/**
+ * Fires only when the configured attribute type is in use on at least one `OT_FUNC`
+ * definition (`isFuncAttributeVocabularyInUse`) — the DMT convention defines no
+ * process-code attribute on functions (the mandatory code is the Identifier `AT_ID`),
+ * so an un-gated check flags every function in a DMT document. Severity is a warning:
+ * the attribute is optional in the DMT schema even where the vocabulary is live.
+ */
 function checkMissingProcessCode(
   document: ArisChatWorkingDocument,
   config: ArisGapScanConfig
 ): readonly ArisChatGap[] {
+  if (!isFuncAttributeVocabularyInUse(document, config.processCodeAttributeType)) return []
   const gaps: ArisChatGap[] = []
   for (const definition of document.objectDefinitions.values()) {
     if (definition.type !== OT_FUNC) continue
     if (!hasAttributeText(definition.attributes, config.processCodeAttributeType)) {
       gaps.push({
         kind: 'missingProcessCode',
-        severity: 'error',
+        severity: 'warning',
         targetIds: [definition.id],
         messageKey: 'aris.chat.gap.missingProcessCode'
       })
@@ -223,17 +297,24 @@ function checkMissingProcessCode(
 
 // --- 4: missing owner/responsibility ------------------------------------------------------
 
+/**
+ * Same deployment-vocabulary gate and advisory severity as `checkMissingProcessCode`. In
+ * the DMT convention a function's responsible party is the RACI `R` executor CONNECTION
+ * (checked by `conv.function.noExecutor`), not an attribute — `AT_PERS_RESP` exists only
+ * as an optional EPC MODEL attribute.
+ */
 function checkMissingOwner(
   document: ArisChatWorkingDocument,
   config: ArisGapScanConfig
 ): readonly ArisChatGap[] {
+  if (!isFuncAttributeVocabularyInUse(document, config.ownerAttributeType)) return []
   const gaps: ArisChatGap[] = []
   for (const definition of document.objectDefinitions.values()) {
     if (definition.type !== OT_FUNC) continue
     if (!hasAttributeText(definition.attributes, config.ownerAttributeType)) {
       gaps.push({
         kind: 'missingOwner',
-        severity: 'error',
+        severity: 'warning',
         targetIds: [definition.id],
         messageKey: 'aris.chat.gap.missingOwner'
       })
@@ -244,12 +325,18 @@ function checkMissingOwner(
 
 // --- 5: missing inputs/outputs/systems -----------------------------------------------------
 
+/**
+ * EPC-scoped: input/output/system satellites are EPC (level-4) wiring in the DMT
+ * convention; a value-added chain element never carries them, so non-EPC models are
+ * exempt (the AnimalWF VACD otherwise flags all 14 of its chain elements).
+ */
 function checkMissingInputsOutputsSystems(
   document: ArisChatWorkingDocument,
   config: ArisGapScanConfig
 ): readonly ArisChatGap[] {
   const gaps: ArisChatGap[] = []
   for (const model of document.models.values()) {
+    if (!isEpcModel(model)) continue
     const functionOccurrences = model.occurrences.filter((occurrence) => {
       const definition = document.objectDefinitions.get(occurrence.definitionId)
       return definition?.type === OT_FUNC
@@ -281,12 +368,17 @@ function checkMissingInputsOutputsSystems(
 
 // --- 6: missing decision basis -------------------------------------------------------------
 
+/**
+ * EPC-scoped: a decision basis qualifies an EPC rule (connector) split; rules are an EPC
+ * construct, so non-EPC models are exempt.
+ */
 function checkMissingDecisionBasis(
   document: ArisChatWorkingDocument,
   config: ArisGapScanConfig
 ): readonly ArisChatGap[] {
   const gaps: ArisChatGap[] = []
   for (const [modelId, model] of document.models) {
+    if (!isEpcModel(model)) continue
     const graph = toChatEpcGraph(document, modelId)
     const index = buildFlowGraphIndex(graph)
     for (const node of graph.nodes) {
@@ -327,9 +419,14 @@ function checkMissingDecisionBasis(
 
 // --- 7: missing XOR outcomes -----------------------------------------------------------------
 
+/**
+ * EPC-scoped: XOR/OR branch outcomes are labels on an EPC rule's outgoing control-flow
+ * edges; rules are an EPC construct, so non-EPC models are exempt.
+ */
 function checkMissingXorOutcomes(document: ArisChatWorkingDocument): readonly ArisChatGap[] {
   const gaps: ArisChatGap[] = []
-  for (const modelId of document.models.keys()) {
+  for (const [modelId, model] of document.models) {
+    if (!isEpcModel(model)) continue
     const graph = toChatEpcGraph(document, modelId)
     const index = buildFlowGraphIndex(graph)
     for (const node of graph.nodes) {
@@ -364,9 +461,14 @@ function checkMissingXorOutcomes(document: ArisChatWorkingDocument): readonly Ar
 
 // --- 8: missing return target -----------------------------------------------------------------
 
+/**
+ * EPC-scoped: a return path leads a reject/return-worded EPC outcome back into the control
+ * flow; non-EPC models are exempt.
+ */
 function checkMissingReturnTarget(document: ArisChatWorkingDocument): readonly ArisChatGap[] {
   const gaps: ArisChatGap[] = []
-  for (const modelId of document.models.keys()) {
+  for (const [modelId, model] of document.models) {
+    if (!isEpcModel(model)) continue
     const graph = toChatEpcGraph(document, modelId)
     const results = detectReturnPathOutcomes(graph)
     for (const result of results) {
@@ -406,7 +508,12 @@ function checkEpcFindings(
 ): readonly ArisChatGap[] {
   const gaps: ArisChatGap[] = []
   const knownModelIds = new Set(document.models.keys())
-  for (const modelId of document.models.keys()) {
+  for (const [modelId, model] of document.models) {
+    // The §14.1 rule table describes event-driven process chains; applying it to a
+    // value-added chain diagram manufactures findings that are not defects (the AnimalWF
+    // VACD produced 2 missing-start/end errors and 13 orphan warnings this way) — the
+    // same scope `buildArisEpcFindings` already enforces.
+    if (!isEpcModel(model)) continue
     const graph = toChatEpcGraph(document, modelId)
     const findings = validateEpcGraph(graph, { knownModelIds })
     for (const finding of findings) {

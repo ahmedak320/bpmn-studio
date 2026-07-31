@@ -60,6 +60,10 @@ import type { FileSnapshot, WorkspaceAdapter, WorkspaceEntry } from './workspace
  * definitions and connection definitions in the group, occurrences carrying
  * `Position`/`Size`, and connection occurrences nested inside their source
  * occurrence with their route points as ordered `Position` children.
+ * `ObjDef.Review` records `AT_PERS_RESP` so the owner-attribute vocabulary is
+ * in use — the DMT-aware gap scanner only flags a missing owner attribute when
+ * the deployment actually uses that attribute type — and `ObjDef.Check`, which
+ * records none, keeps its `missingOwner` validation row.
  */
 const TWO_MODEL_AML = `<?xml version="1.0" encoding="UTF-8"?>
 <AML>
@@ -76,6 +80,7 @@ const TWO_MODEL_AML = `<?xml version="1.0" encoding="UTF-8"?>
     </ObjDef>
     <ObjDef ObjDef.ID="ObjDef.Review" TypeNum="OT_FUNC" SymbolNum="ST_FUNC">
       <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Review outcome</AttrValue></AttrDef>
+      <AttrDef AttrDef.Type="AT_PERS_RESP"><AttrValue LocaleId="1033">Review team</AttrValue></AttrDef>
     </ObjDef>
     <ObjDef ObjDef.ID="ObjDef.Owner" TypeNum="OT_PERS" SymbolNum="ST_PERS">
       <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Intake officer</AttrValue></AttrDef>
