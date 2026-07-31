@@ -2,6 +2,8 @@
  * @vitest-environment jsdom
  */
 
+import { inflateSync } from 'node:zlib'
+
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -9,12 +11,15 @@ import {
   arisPdfFileName,
   arisPdfPageGeometry,
   arisSvgToPngDataUrl,
+  arisTextRunsContainArabic,
   buildArisExportSvgMarkup,
   createArisDiagramPdf,
   deterministicArisPdfFileId,
   findArisCanvasSvg,
-  type ArisCanvasLike
+  type ArisCanvasLike,
+  type ArisPdfTextRun
 } from './exportArisPdf'
+import { arisArabicOverlayFont } from './exportArisPdfArabicFont'
 
 /**
  * Ported from the main branch's `src/editor/__tests__/exportPdf.test.ts`
@@ -131,6 +136,135 @@ describe('createArisDiagramPdf', () => {
     // Deterministic across runs, and materially different from the raster-only PDF.
     expect(Array.from(second)).toEqual(Array.from(first))
     expect(first.length).toBeGreaterThan(withoutText.length)
+  })
+})
+
+describe('Arabic selectable-text overlay', () => {
+  const HEADER_AR = 'رمز العملية'
+  const LAW_ROW_AR = 'قرار (46) سنة2021 بشأن تعديل بعض احكام للائحة الرقابة على الحيوانات'
+  const latinRuns: readonly ArisPdfTextRun[] = [
+    { text: 'Register', x: 40, y: 30, fontSize: 12, anchor: 'middle', baseline: 'middle' },
+    { text: '01', x: 10, y: 60, fontSize: 8, anchor: 'start', baseline: 'alphabetic' }
+  ] as const
+  const arabicRuns: readonly ArisPdfTextRun[] = [
+    { text: HEADER_AR, x: 40, y: 30, fontSize: 12, anchor: 'end', baseline: 'middle' },
+    { text: LAW_ROW_AR, x: 40, y: 60, fontSize: 8, anchor: 'end', baseline: 'middle' },
+    { text: '01', x: 10, y: 90, fontSize: 8, anchor: 'start', baseline: 'alphabetic' }
+  ] as const
+  const bytes = (options: Parameters<typeof createArisDiagramPdf>[3]): Uint8Array =>
+    new Uint8Array(createArisDiagramPdf(ONE_PIXEL_PNG, { width: 100, height: 100 }, 'A', options))
+  const asLatin1 = (u: Uint8Array): string => new TextDecoder('latin1').decode(u)
+
+  it('detects Arabic script in the run set', () => {
+    expect(arisTextRunsContainArabic(latinRuns)).toBe(false)
+    expect(arisTextRunsContainArabic(arabicRuns)).toBe(true)
+    expect(arisTextRunsContainArabic(undefined)).toBe(false)
+    expect(arisTextRunsContainArabic([])).toBe(false)
+  })
+
+  it('stays BYTE-IDENTICAL to the Latin-only path when no run is Arabic (font never loaded)', () => {
+    const latinOnly = bytes({ textRuns: latinRuns, contentSize: { width: 100, height: 100 } })
+    // Passing the font makes no difference when there is no Arabic to render:
+    // the Arabic path never activates, so the bytes match the font-less output.
+    const withFontButNoArabic = bytes({
+      textRuns: latinRuns,
+      contentSize: { width: 100, height: 100 },
+      arabicFont: arisArabicOverlayFont
+    })
+    expect(Array.from(withFontButNoArabic)).toEqual(Array.from(latinOnly))
+    // And the font is genuinely absent — no embedded CID font object.
+    expect(asLatin1(latinOnly)).not.toContain('CIDFontType2')
+    expect(asLatin1(latinOnly)).not.toContain(arisArabicOverlayFont.fontName)
+  })
+
+  it('embeds the subset only when it is supplied (font-only-loaded-when-needed)', () => {
+    // Arabic runs but NO font supplied (module not imported): the export must not
+    // embed any font — proving the font is inert until the caller lazy-loads it.
+    const arabicNoFont = bytes({
+      textRuns: arabicRuns,
+      contentSize: { width: 100, height: 100 }
+    })
+    expect(asLatin1(arabicNoFont)).not.toContain('CIDFontType2')
+    // Same runs WITH the font supplied: the subset is embedded and selected.
+    const arabicWithFont = bytes({
+      textRuns: arabicRuns,
+      contentSize: { width: 100, height: 100 },
+      arabicFont: arisArabicOverlayFont
+    })
+    const text = asLatin1(arabicWithFont)
+    expect(text).toContain('CIDFontType2')
+    expect(text).toContain(arisArabicOverlayFont.fontName)
+    // Embedding the font necessarily changes the bytes vs the font-less variant.
+    expect(arabicWithFont.length).toBeGreaterThan(arabicNoFont.length)
+  })
+
+  it('is deterministic for identical Arabic input (fixed font bytes + font-marked file id)', () => {
+    const options = {
+      textRuns: arabicRuns,
+      contentSize: { width: 100, height: 100 },
+      arabicFont: arisArabicOverlayFont
+    }
+    const first = bytes(options)
+    const second = bytes(options)
+    expect(Array.from(second)).toEqual(Array.from(first))
+    expect(new TextDecoder().decode(first.slice(0, 8))).toBe('%PDF-1.3')
+  })
+
+  it('extracts the Arabic runs verbatim in logical order via the embedded ToUnicode map', () => {
+    // Decode the CID glyph stream back through the font's ToUnicode CMap and
+    // confirm every Arabic run round-trips to its exact source string — the
+    // guarantee that copy/paste and search return clean logical-order Unicode.
+    // The content and CMap streams are Flate-compressed, so inflate them first.
+    const raw = Buffer.from(
+      createArisDiagramPdf(ONE_PIXEL_PNG, { width: 100, height: 100 }, 'A', {
+        textRuns: arabicRuns,
+        contentSize: { width: 100, height: 100 },
+        arabicFont: arisArabicOverlayFont
+      })
+    )
+    let inflated = ''
+    let cursor = 0
+    while (true) {
+      const start = raw.indexOf('stream', cursor)
+      if (start === -1) break
+      let dataStart = start + 'stream'.length
+      if (raw[dataStart] === 0x0d) dataStart += 1
+      if (raw[dataStart] === 0x0a) dataStart += 1
+      const end = raw.indexOf('endstream', dataStart)
+      if (end === -1) break
+      const slice = raw.subarray(dataStart, end)
+      try {
+        inflated += inflateSync(slice).toString('latin1')
+      } catch {
+        // Not a Flate stream (e.g. the raster image) — skip it.
+      }
+      cursor = end + 'endstream'.length
+    }
+
+    const gidToUnicode = new Map<number, string>()
+    const hexToStr = (hex: string): string => {
+      let s = ''
+      for (let i = 0; i < hex.length; i += 4) {
+        s += String.fromCharCode(Number.parseInt(hex.slice(i, i + 4), 16))
+      }
+      return s
+    }
+    for (const r of inflated.matchAll(/<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>/g)) {
+      gidToUnicode.set(Number.parseInt(r[1], 16), hexToStr(r[2]))
+    }
+    const decodeRun = (hex: string): string => {
+      let s = ''
+      for (let i = 0; i < hex.length; i += 4) {
+        s += gidToUnicode.get(Number.parseInt(hex.slice(i, i + 4), 16)) ?? '�'
+      }
+      return s
+    }
+    const decoded = Array.from(inflated.matchAll(/<([0-9a-fA-F]+)>\s*Tj/g)).map((r) =>
+      decodeRun(r[1])
+    )
+    // The two Arabic runs survive verbatim; order is logical (not reversed).
+    expect(decoded).toContain(HEADER_AR)
+    expect(decoded).toContain(LAW_ROW_AR)
   })
 })
 

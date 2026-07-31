@@ -26,6 +26,19 @@
  * The overlay is additive and invisible, so it can never alter the visual
  * output; a true vector (svg2pdf) path remains a future refinement.
  *
+ * Latin runs are drawn with the core `helvetica` font (metric-compatible with
+ * Arial, nothing to embed). Arabic runs have no glyphs in any core font, so
+ * their characters could not be encoded into a selectable layer at all — they
+ * were silently dropped. When a capture actually contains Arabic script the
+ * export lazily imports a tiny embedded Noto subset ({@link
+ * exportArisPdfArabicFont}) and switches Arabic runs to it, so the Arabic
+ * header labels and the Reference-Laws rows become selectable/searchable too.
+ * The subset carries only base codepoints and the overlay disables jsPDF's
+ * automatic Arabic shaping + bidi reordering (both invisible-only concerns), so
+ * the stored text is clean logical-order Unicode that extracts verbatim. A
+ * document with zero Arabic runs never loads the font and stays byte-identical
+ * to the Latin-only path.
+ *
  * One bounded page always holds the whole sheet: the page geometry scales the
  * image down to {@link PDF_MAX_SIDE_PT} on its long side, so no ARIS sheet can
  * overflow and multi-page pagination never triggers (the print frame itself is
@@ -33,6 +46,9 @@
  */
 
 import { jsPDF } from 'jspdf'
+
+import { containsArabicScript } from '../renderer/bidi'
+import type { ArisArabicOverlayFont } from './exportArisPdfArabicFont'
 
 export interface ArisPdfImageSize {
   readonly width: number
@@ -116,6 +132,23 @@ export interface ArisDiagramPdfOptions {
    * content 1:1 when it was not downscaled by the raster cap).
    */
   readonly contentSize?: ArisPdfImageSize
+  /**
+   * The embedded Arabic subset, supplied ONLY when the caller has confirmed the
+   * runs contain Arabic (it lazy-imports `exportArisPdfArabicFont` in that case).
+   * When present and at least one run is Arabic, Arabic runs are drawn with this
+   * font so their text is selectable; when absent, the export never touches the
+   * Arabic path and stays byte-identical to the Latin-only output.
+   */
+  readonly arabicFont?: ArisArabicOverlayFont
+}
+
+/** True when any run carries Arabic script — the trigger for embedding the subset. */
+export function arisTextRunsContainArabic(runs: readonly ArisPdfTextRun[] | undefined): boolean {
+  if (!runs) return false
+  for (const run of runs) {
+    if (containsArabicScript(run.text)) return true
+  }
+  return false
 }
 
 /** A short, stable digest of the overlay so identical text layers keep the file id stable. */
@@ -149,10 +182,17 @@ export function createArisDiagramPdf(
     floatPrecision: 16,
     putOnlyUsedFonts: true
   })
+  // The Arabic path only activates when the caller passed the subset AND a run
+  // is actually Arabic. It changes the emitted bytes (an embedded font + font
+  // switches), so the deterministic file id is extended with a fixed font marker
+  // to stay distinct and reproducible — while a no-Arabic document (no
+  // `arabicFont`) keeps the exact original digest and byte-for-byte output.
+  const arabicActive = Boolean(options.arabicFont) && arisTextRunsContainArabic(options.textRuns)
+  const fontMarker = arabicActive ? `\n@font:${options.arabicFont!.marker}` : ''
   document.setCreationDate(FIXED_PDF_DATE)
   document.setFileId(
     deterministicArisPdfFileId(
-      `${normalizedTitle}\n${pngDataUrl}${textRunsDigest(options.textRuns)}`
+      `${normalizedTitle}\n${pngDataUrl}${textRunsDigest(options.textRuns)}${fontMarker}`
     )
   )
   document.setProperties({
@@ -172,8 +212,58 @@ export function createArisDiagramPdf(
     'orbitpm-aris-diagram',
     'FAST'
   )
-  overlayArisTextRuns(document, geometry, options)
+  overlayArisTextRuns(document, geometry, options, arabicActive)
   return document.output('arraybuffer')
+}
+
+/** The minimal shape of jsPDF's internal PubSub we rely on to prune a subscriber. */
+interface JsPdfEventBus {
+  getTopics?: () => Record<string, Record<string, [unknown, boolean]>> | undefined
+  unsubscribe?: (token: string) => boolean
+}
+
+/**
+ * jsPDF auto-runs `processArabic` on every `text()` (a `preProcessText`
+ * subscriber) which rewrites base Arabic codepoints into Presentation-Forms and,
+ * separately, a bidi engine reorders RTL runs to visual order. Both exist to make
+ * *visible* Arabic look right — irrelevant here because the overlay is invisible
+ * and its only job is to store clean, extractable, logical-order Unicode. The
+ * shaped presentation forms have no glyph in the base-only subset (so they would
+ * map to `.notdef` and break extraction), and the bidi reorder would store text
+ * backwards. Bidi is neutralized per-run via the documented
+ * `isInputVisual/isOutputVisual` options (see below); the shaper is removed here.
+ *
+ * `processArabic` is a named jsPDF **API property**, so its reference identity
+ * survives production minification — we unsubscribe exactly that one callback and
+ * leave the UTF-8 escaper untouched. If jsPDF's internals ever move, the guarded
+ * lookup simply no-ops.
+ */
+function disableJsPdfArabicShaping(doc: jsPDF): void {
+  const events = (doc as unknown as { internal?: { events?: JsPdfEventBus } }).internal?.events
+  const processArabic = (doc as unknown as { processArabic?: unknown }).processArabic
+  if (
+    !events ||
+    typeof events.getTopics !== 'function' ||
+    typeof events.unsubscribe !== 'function'
+  ) {
+    return
+  }
+  const preProcess = events.getTopics()?.preProcessText
+  if (!preProcess) return
+  for (const token of Object.keys(preProcess)) {
+    const entry = preProcess[token]
+    if (Array.isArray(entry) && entry[0] === processArabic) {
+      events.unsubscribe(token)
+    }
+  }
+}
+
+/** Register the embedded subset once and return the family name Arabic runs select. */
+function registerArisArabicOverlayFont(doc: jsPDF, font: ArisArabicOverlayFont): string {
+  doc.addFileToVFS(font.vfsFileName, font.base64)
+  doc.addFont(font.vfsFileName, font.fontName, 'normal')
+  disableJsPdfArabicShaping(doc)
+  return font.fontName
 }
 
 /**
@@ -182,11 +272,17 @@ export function createArisDiagramPdf(
  * The core `helvetica` font is metric-compatible with Arial and costs nothing
  * to embed; the runs are never drawn, so the exact glyph shapes are irrelevant
  * — only the copyable/searchable characters and their positions matter.
+ *
+ * When `arabicActive` is set the embedded Arabic subset is registered and every
+ * Arabic-script run switches to it (with bidi neutralized so logical order is
+ * preserved). When it is not, the loop is exactly the original Latin-only path,
+ * so a no-Arabic document stays byte-identical.
  */
 function overlayArisTextRuns(
   document: jsPDF,
   geometry: ArisPdfPageGeometry,
-  options: ArisDiagramPdfOptions
+  options: ArisDiagramPdfOptions,
+  arabicActive: boolean
 ): void {
   const runs = options.textRuns
   if (!runs || runs.length === 0) return
@@ -197,8 +293,17 @@ function overlayArisTextRuns(
   const perUnitX = content.width > 0 ? geometry.imageWidth / content.width : 0
   const perUnitY = content.height > 0 ? geometry.imageHeight / content.height : 0
   if (perUnitX <= 0 || perUnitY <= 0) return
-  document.setFont('helvetica', 'normal')
+
+  const arabicFontName =
+    arabicActive && options.arabicFont
+      ? registerArisArabicOverlayFont(document, options.arabicFont)
+      : null
+  if (arabicFontName === null) {
+    // Latin-only path — unchanged from the original so the bytes match exactly.
+    document.setFont('helvetica', 'normal')
+  }
   document.setTextColor(0, 0, 0)
+
   for (const run of runs) {
     const text = run.text
     if (!text || text.trim().length === 0) continue
@@ -209,12 +314,22 @@ function overlayArisTextRuns(
     if (!(sizePt > 0)) continue
     const px = geometry.imageX + run.x * perUnitX
     const py = geometry.imageY + run.y * perUnitY
+    const useArabic = arabicFontName !== null && containsArabicScript(text)
+    if (arabicFontName !== null) {
+      document.setFont(useArabic ? arabicFontName : 'helvetica', 'normal')
+    }
     document.setFontSize(sizePt)
-    document.text(text, px, py, {
+    const baseOptions = {
       renderingMode: 'invisible',
       align: run.anchor === 'middle' ? 'center' : run.anchor === 'end' ? 'right' : 'left',
       baseline: run.baseline
-    })
+    } as const
+    // Arabic runs are stored in logical order: `isInputVisual === isOutputVisual`
+    // makes jsPDF's bidi engine a no-op, so extraction returns the source string
+    // verbatim rather than a visually-reversed one (verified against the header
+    // labels and the Reference-Laws rows). No effect on Latin runs.
+    const arabicOptions = { ...baseOptions, isInputVisual: true, isOutputVisual: true }
+    document.text(text, px, py, useArabic ? arabicOptions : baseOptions)
   }
 }
 
@@ -532,13 +647,20 @@ export async function exportArisCanvasPdf(
   const capture = captureArisCanvasSvg(container)
   const rasterSize = arisExportRasterSize(capture.size)
   const pngDataUrl = await arisSvgToPngDataUrl(capture.markup, rasterSize, deps)
+  // Only reach for the embedded Arabic subset when the capture actually contains
+  // Arabic script — the dynamic import keeps its bytes off the Latin-only path,
+  // and a no-Arabic export never registers a font (stays byte-identical).
+  const arabicFont = arisTextRunsContainArabic(capture.textRuns)
+    ? (await import('./exportArisPdfArabicFont')).arisArabicOverlayFont
+    : undefined
   // Geometry is derived from `rasterSize` (the PNG's pixel dimensions), so the
   // overlay runs — captured in viewBox units — map through `capture.size` (the
   // content the raster spans) rather than the possibly-downscaled pixel size.
   return {
     bytes: createArisDiagramPdf(pngDataUrl, rasterSize, title, {
       textRuns: capture.textRuns,
-      contentSize: capture.size
+      contentSize: capture.size,
+      arabicFont
     }),
     size: rasterSize
   }
