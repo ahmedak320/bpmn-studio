@@ -1,7 +1,9 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+
+import { clearCanvasPoint, revealOccurrencePoint } from './helpers/canvasOverlay'
 
 // Canvas navigation + interaction regression guard.
 //
@@ -92,6 +94,28 @@ interface WheelProbe {
   ctrl: number
 }
 
+/**
+ * The logical single-line text of an SVG caption. A label wider than its shape
+ * word-wraps into one `<tspan>` per line (authorized typography), and a
+ * `<text>` node's `textContent` concatenates those lines with no separator, so
+ * joining the tspans with a space reconstructs what was typed whether or not it
+ * wrapped.
+ */
+async function expectCaptionText(caption: Locator, expected: string): Promise<void> {
+  await expect
+    .poll(async () =>
+      caption.evaluate((node) => {
+        const tspans = node.querySelectorAll('tspan')
+        const value =
+          tspans.length > 0
+            ? Array.from(tspans, (tspan) => tspan.textContent ?? '').join(' ')
+            : (node.textContent ?? '')
+        return value.replace(/\s+/gu, ' ').trim()
+      })
+    )
+    .toBe(expected)
+}
+
 test('Ctrl+wheel zooms in-canvas and never the page; wheel scrolls; drag pans; palette and selection clicks work', async ({
   page
 }) => {
@@ -134,10 +158,15 @@ test('Ctrl+wheel zooms in-canvas and never the page; wheel scrolls; drag pans; p
   // ARIS_MAX_FIT_SCALE — so the zoom-in below always has headroom).
   await page.getByRole('button', { name: 'Zoom Fit', exact: true }).click()
 
-  // A point on EMPTY canvas: right of the palette, below the hint's old box,
-  // far from the occurrence at (55%, 75%) and from the top-right minimap.
-  const emptyX = canvasBox!.x + canvasBox!.width * 0.35
-  const emptyY = canvasBox!.y + canvasBox!.height * 0.45
+  // A point on EMPTY canvas, resolved at runtime to be clear of every floating
+  // overlay: the authorized DMT-symbol-library palette is now a ~360px rail over
+  // the canvas's leading edge (a fixed left-of-centre fraction would land on it,
+  // and a wheel there scrolls the palette instead of the diagram), so this scans
+  // the trailing side for a background point clear of the palette, the top-right
+  // minimap and the lone occurrence.
+  const empty = await clearCanvasPoint(page)
+  const emptyX = empty.x
+  const emptyY = empty.y
 
   // --- 1. Ctrl+wheel zooms the canvas and is defaultPrevented ------------
   // ZoomScroll binds its wheel listener only after a mouseover reaches the
@@ -215,9 +244,14 @@ test('Ctrl+wheel zooms in-canvas and never the page; wheel scrolls; drag pans; p
   expect(afterPan.scale).toBeCloseTo(beforePan.scale, 5)
 
   // --- 4b. Clicking an existing occurrence selects it --------------------
-  // Re-fit first so the shape is guaranteed on-screen after zoom/scroll/pan.
-  await page.getByRole('button', { name: 'Zoom Fit', exact: true }).click()
+  // Re-fit and pan the shape clear of the ~360px DMT-library palette (which
+  // floats over the canvas's leading edge) so a real pointer reaches it rather
+  // than being intercepted by the palette; `revealOccurrencePoint` returns the
+  // shape's viewport centre once it is verified clear of both overlays.
   const occurrence = occurrences.first()
+  const occurrenceId = await occurrence.getAttribute('data-element-id')
+  expect(occurrenceId).not.toBeNull()
+  const occurrencePoint = await revealOccurrencePoint(page, occurrenceId as string)
   // On firefox the first mouse click that lands on the shape after the
   // preceding zoom/scroll/pan interactions only applies diagram-js's `hover`
   // class — the `element.click` → selection commit is dropped, and a second
@@ -232,7 +266,7 @@ test('Ctrl+wheel zooms in-canvas and never the page; wheel scrolls; drag pans; p
   await expect
     .poll(
       async () => {
-        await occurrence.click()
+        await page.mouse.click(occurrencePoint.x, occurrencePoint.y)
         return (await occurrence.getAttribute('class')) ?? ''
       },
       { timeout: 20_000 }
@@ -289,12 +323,12 @@ test('palette placement opens inline editing, commits an SVG caption, supports d
   await editor.fill('Approve request')
   await editor.press('Enter')
   const caption = occurrence.locator('text[data-aris-caption]')
-  await expect(caption).toHaveText('Approve request')
+  await expectCaptionText(caption, 'Approve request')
 
   await occurrence.dblclick()
   await expect(editor).toBeVisible()
   await expect(editor).toHaveText('Approve request')
   await editor.fill('Approve request and notify')
   await editor.press('Enter')
-  await expect(caption).toHaveText('Approve request and notify')
+  await expectCaptionText(caption, 'Approve request and notify')
 })

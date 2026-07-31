@@ -208,6 +208,13 @@ test('explorer folder tree: new model, folder, move, rename, delete and keyboard
     await expect(kbFolder).toHaveAttribute('aria-expanded', 'true')
     const nestedFile = opfsPage.getByRole('treeitem', { name: /cherry\.aml$/iu })
     await expect(nestedFile).toBeVisible({ timeout: 20_000 })
+    // A file that carries model/process ids is keyed semantically by those ids
+    // (`semanticFileKey` in `src/workspace/processHierarchy.ts`:
+    // `file:[<process ids>]`), not by its path — and the id is generated at
+    // create time, so capture cherry.aml's own live key rather than hard-coding
+    // a `file-path:` value the tree no longer uses for model-bearing files.
+    const cherryKey = await nestedFile.getAttribute('data-tree-key')
+    expect(cherryKey, 'cherry.aml row has no data-tree-key').toBeTruthy()
 
     // The search tree sorts folders before files, so at this point the visible
     // order is: Archive, Banana (expanded), cherry.aml, apple.aml.
@@ -232,7 +239,7 @@ test('explorer folder tree: new model, folder, move, rename, delete and keyboard
       .poll(async () =>
         opfsPage.evaluate(() => document.activeElement?.getAttribute('data-tree-key'))
       )
-      .toBe('file-path:"Banana/cherry.aml"')
+      .toBe(cherryKey)
 
     // Shift+F10 opens the context menu with menuitem roles.
     await opfsPage.keyboard.press('Shift+F10')
@@ -249,7 +256,7 @@ test('explorer folder tree: new model, folder, move, rename, delete and keyboard
       .poll(async () =>
         opfsPage.evaluate(() => document.activeElement?.getAttribute('data-tree-key'))
       )
-      .toBe('file-path:"Banana/cherry.aml"')
+      .toBe(cherryKey)
 
     // ArrowUp moves focus back to the folder; Enter toggles it closed again.
     await opfsPage.keyboard.press('ArrowUp')

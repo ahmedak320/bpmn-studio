@@ -3,6 +3,8 @@ import { readFileSync, statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { selectOccurrenceOnCanvas } from './helpers/canvasOverlay'
+
 /**
  * Plan §21.3 — the details rail's *editing* surface, in a real browser.
  *
@@ -57,8 +59,12 @@ const OCCURRENCE_B = 'ObjOcc.3i-a2j4HRS3-u-L--oQd_Yb3pM-x-L-33-c'
  * carries a raw `FillColor` attribute that would override it), so the canvas
  * — which reads source brush colours from imported AML — shows this colour
  * for both occurrences' fill until a rail edit overrides it.
+ *
+ * ARIS `<Brush>` `Color` is a COLORREF (`0x00BBGGRR`), so the authorized colour
+ * decode (`amlColorRefToCss` in `src/aris/model/buildFromSource.ts`) presents
+ * the source `d7c49d` as the RGB CSS hex `#9dc4d7` in the rail's colour field.
  */
-const OCCURRENCE_SOURCE_FILL_COLOR = 'd7c49d'
+const OCCURRENCE_SOURCE_FILL_COLOR = '#9dc4d7'
 
 test.beforeAll(() => {
   expect(readFileSync(DIST, 'utf8').length).toBeGreaterThan(500_000)
@@ -113,30 +119,27 @@ async function selectModel(page: Page, modelId: string): Promise<void> {
  *
  * The caller must have made the occurrence's owning model active first
  * (`selectModel`), because a canvas click — unlike the old accounting reveal —
- * does not switch models. A large real EPC puts most shapes far apart after Zoom
- * Fit, so if the gfx centre is covered by an overlapping caption or a floating
- * palette/minimap, this falls back to the element's own transparent `.djs-hit`
- * area (a real mouse event, never a synthesized `dispatchEvent`, which diagram-js
- * ignores).
+ * does not switch models. The authorized DMT-symbol-library palette is a ~360px
+ * rail floating over the leading edge of the canvas, so after Zoom Fit a real
+ * occurrence can land underneath it; `selectOccurrenceOnCanvas` wheel-pans the
+ * shape clear of the palette/minimap (as a user would) before clicking it.
  */
 async function selectOccurrence(page: Page, occurrenceId: string): Promise<void> {
-  await page.getByRole('button', { name: 'Zoom Fit', exact: true }).click()
-  const gfx = page.locator(
-    `[data-orbitpm-aris-canvas] g.djs-element[data-element-id="${occurrenceId}"]`
-  )
-  await gfx.scrollIntoViewIfNeeded()
-  try {
-    await gfx.click()
-  } catch {
-    await gfx.locator('.djs-hit').first().click({ force: true })
-  }
+  await selectOccurrenceOnCanvas(page, occurrenceId)
   await expect(page.locator('[data-orbitpm-aris-details]')).toHaveAttribute(
     'data-orbitpm-aris-details-occurrence',
     occurrenceId
   )
 }
 
-/** How many captions in one model's layer read exactly `text`. */
+/**
+ * How many captions in one model's layer read exactly `text`. A caption whose
+ * label is wider than its shape word-wraps into one `<tspan>` per line
+ * (authorized typography, `src/aris/canvas/typography.ts`), and a `<text>`
+ * node's `textContent` concatenates those lines with no separator; joining the
+ * tspans with a space reconstructs the logical single-line caption so the count
+ * is exact whether or not the name happened to wrap.
+ */
 async function captionCount(page: Page, modelId: string, text: string): Promise<number> {
   return page.evaluate(
     ({ modelId: id, text: wanted }) => {
@@ -144,9 +147,15 @@ async function captionCount(page: Page, modelId: string, text: string): Promise<
         `[data-orbitpm-aris-canvas] g[data-element-id="model:${id}"]`
       )
       if (!layer) return -1
-      return Array.from(layer.querySelectorAll('text[data-aris-caption]')).filter(
-        (node) => (node.textContent ?? '') === wanted
-      ).length
+      const normalize = (value: string): string => value.replace(/\s+/gu, ' ').trim()
+      return Array.from(layer.querySelectorAll('text[data-aris-caption]')).filter((node) => {
+        const tspans = node.querySelectorAll('tspan')
+        const value =
+          tspans.length > 0
+            ? Array.from(tspans, (tspan) => tspan.textContent ?? '').join(' ')
+            : (node.textContent ?? '')
+        return normalize(value) === normalize(wanted)
+      }).length
     },
     { modelId, text }
   )

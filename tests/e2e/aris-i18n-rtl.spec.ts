@@ -3,6 +3,8 @@ import { readFileSync, statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { selectOccurrenceOnCanvas } from './helpers/canvasOverlay'
+
 // English/Arabic dialog characterization against the ARIS shell.
 //
 // This replaces the deleted tests/e2e/lite-i18n-rtl.spec.ts, which drove the
@@ -121,16 +123,10 @@ async function selectModel(page: Page, modelId: string): Promise<void> {
  * synthesized `dispatchEvent`, which diagram-js ignores).
  */
 async function selectOccurrence(page: Page, occurrenceId: string, fitLabel: string): Promise<void> {
-  await page.getByRole('button', { name: fitLabel, exact: true }).click()
-  const gfx = page.locator(
-    `[data-orbitpm-aris-canvas] g.djs-element[data-element-id="${occurrenceId}"]`
-  )
-  await gfx.scrollIntoViewIfNeeded()
-  try {
-    await gfx.click()
-  } catch {
-    await gfx.locator('.djs-hit').first().click({ force: true })
-  }
+  // The DMT-symbol-library palette is a ~360px rail over the canvas's leading
+  // edge, so after Zoom Fit a real occurrence can land under it; wheel-pan the
+  // shape clear of the palette/minimap (as a user would) before clicking it.
+  await selectOccurrenceOnCanvas(page, occurrenceId, { fitLabel })
 }
 
 /**

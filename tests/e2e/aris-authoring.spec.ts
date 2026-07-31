@@ -28,18 +28,22 @@ const FILE_URL = pathToFileURL(DIST).toString()
 const REFERENCE_AML = resolve(HERE, '../../../reference/AnimalWF/ARISAMLExport.xml')
 
 /**
- * `src/aris/canvas/vocabulary.ts`'s `ARIS_CANVAS_OBJECT_TYPES`, plus the three
- * rule operators, expressed as the `data-action` ids
- * `ArisPaletteProvider.getPaletteEntries` derives from them. Spelled out rather
- * than imported so a silent shrink of the product's own list cannot silently
- * shrink this test with it.
+ * `src/aris/canvas/vocabulary.ts`'s `ARIS_CANVAS_OBJECT_TYPES` — the object
+ * types the canvas authors — spelled out (not imported) so a silent shrink of
+ * the product's own list cannot silently shrink this test with it.
+ *
+ * In the reworked DMT symbol library (`src/aris/canvas/dmtLibrary.ts` +
+ * `paletteProvider.ts`) the palette derives one *default* create entry per
+ * object type, keyed `create.<objectType lower-cased>`; non-default symbol
+ * presentations get a `.<symbolNum>` suffix. The AND/OR/XOR rule operators are
+ * three OT_RULE symbol variants (`ST_OPR_AND_1` is the default `create.ot_rule`,
+ * OR and XOR its siblings) rather than the retired standalone `create.rule-*`
+ * entries.
  */
-const PALETTE_CREATE_ACTIONS = [
+const PALETTE_DEFAULT_CREATE_ACTIONS = [
   'create.ot_func',
   'create.ot_evt',
-  'create.rule-and',
-  'create.rule-or',
-  'create.rule-xor',
+  'create.ot_rule',
   'create.ot_ent_type',
   'create.ot_info_carr',
   'create.ot_business_rule',
@@ -48,8 +52,25 @@ const PALETTE_CREATE_ACTIONS = [
   'create.ot_pers',
   'create.ot_requirement',
   'create.ot_policy',
-  'create.ot_pers_type'
+  'create.ot_pers_type',
+  'create.ot_org_unit',
+  'create.ot_pos',
+  'create.ot_grp',
+  'create.ot_risk',
+  'create.ot_service'
 ] as const
+
+/** All three rule operators, as the OT_RULE default + its two symbol variants. */
+const PALETTE_RULE_OPERATOR_ACTIONS = [
+  'create.ot_rule', // ST_OPR_AND_1 (default)
+  'create.ot_rule.st_opr_or_1',
+  'create.ot_rule.st_opr_xor_1'
+] as const
+
+/** Lower-cased supported object-type tokens, for the "nothing unsupported" guard. */
+const SUPPORTED_OBJECT_TYPES_LOWER = new Set(
+  PALETTE_DEFAULT_CREATE_ACTIONS.map((action) => action.slice('create.'.length))
+)
 
 test.beforeAll(() => {
   expect(readFileSync(DIST, 'utf8').length).toBeGreaterThan(500_000)
@@ -103,42 +124,56 @@ async function selectModel(page: Page, modelId: string): Promise<void> {
 }
 
 /**
- * The id of an occurrence a person could actually click: big enough to hit,
- * fully inside the canvas box, and clear of the palette and minimap, both of
- * which float above the diagram. The AnimalWF models are large real EPCs, so
- * "the first occurrence in DOM order" is routinely off-screen after Zoom Fit.
+ * The id of an occurrence a person could actually click whose live presentation
+ * is a specific catalog symbol (matched on the renderer's own
+ * `data-aris-catalog-id`, src/aris/canvas/renderer.ts): big enough to hit, fully
+ * inside the canvas box, and clear of the palette and minimap, both of which
+ * float above the diagram. The AnimalWF models are large real EPCs, so "the
+ * first occurrence in DOM order" is routinely off-screen after Zoom Fit. Returns
+ * '' when no occurrence of that symbol is reachable by pointer in this model, so
+ * the caller can move on to the next model — pinning the object type this way
+ * makes the context pad's helper manifest a knowable constant.
  */
-async function clickableOccurrenceId(page: Page, modelId: string): Promise<string> {
+async function clickableOccurrenceIdOfCatalog(
+  page: Page,
+  modelId: string,
+  catalogId: string
+): Promise<string> {
   await page.getByRole('button', { name: 'Zoom Fit', exact: true }).click()
-  const id = await page.evaluate((scope) => {
-    const canvas = document.querySelector('[data-orbitpm-aris-canvas]')
-    if (!canvas) return ''
-    const canvasRect = canvas.getBoundingClientRect()
-    const overlays = ['.djs-palette', '.djs-minimap']
-      .flatMap((selector) => Array.from(canvas.querySelectorAll(selector)))
-      .map((node) => node.getBoundingClientRect())
-    for (const node of Array.from(document.querySelectorAll(scope))) {
-      const rect = node.getBoundingClientRect()
-      const clear =
-        rect.width >= 10 &&
-        rect.height >= 10 &&
-        rect.left >= canvasRect.left &&
-        rect.right <= canvasRect.right &&
-        rect.top >= canvasRect.top &&
-        rect.bottom <= canvasRect.bottom &&
-        overlays.every(
-          (overlay) =>
-            rect.right < overlay.left ||
-            rect.left > overlay.right ||
-            rect.bottom < overlay.top ||
-            rect.top > overlay.bottom
-        )
-      if (clear) return node.getAttribute('data-element-id') ?? ''
+  return page.evaluate(
+    ({ scope, wantedCatalogId }) => {
+      const canvas = document.querySelector('[data-orbitpm-aris-canvas]')
+      if (!canvas) return ''
+      const canvasRect = canvas.getBoundingClientRect()
+      const overlays = ['.djs-palette', '.djs-minimap']
+        .flatMap((selector) => Array.from(canvas.querySelectorAll(selector)))
+        .map((node) => node.getBoundingClientRect())
+      for (const node of Array.from(document.querySelectorAll(scope))) {
+        if (node.querySelector(`[data-aris-catalog-id="${wantedCatalogId}"]`) === null) continue
+        const rect = node.getBoundingClientRect()
+        const clear =
+          rect.width >= 10 &&
+          rect.height >= 10 &&
+          rect.left >= canvasRect.left &&
+          rect.right <= canvasRect.right &&
+          rect.top >= canvasRect.top &&
+          rect.bottom <= canvasRect.bottom &&
+          overlays.every(
+            (overlay) =>
+              rect.right < overlay.left ||
+              rect.left > overlay.right ||
+              rect.bottom < overlay.top ||
+              rect.top > overlay.bottom
+          )
+        if (clear) return node.getAttribute('data-element-id') ?? ''
+      }
+      return ''
+    },
+    {
+      scope: `[data-orbitpm-aris-canvas] g[data-element-id="model:${modelId}"] g.djs-element[data-element-id^="ObjOcc."]`,
+      wantedCatalogId: catalogId
     }
-    return ''
-  }, `[data-orbitpm-aris-canvas] g[data-element-id="model:${modelId}"] g.djs-element[data-element-id^="ObjOcc."]`)
-  expect(id, 'no occurrence is reachable by pointer after Zoom Fit').not.toBe('')
-  return id
+  )
 }
 
 test('every AnimalWF model opens on the real canvas and draws exactly the records the explorer promises', async ({
@@ -173,6 +208,7 @@ test('every AnimalWF model opens on the real canvas and draws exactly the record
 test('the palette offers a create entry for every supported ARIS object type and rule operator, and each one authors a real occurrence', async ({
   page
 }) => {
+  test.setTimeout(180_000)
   await openReferenceExport(page)
   const modelId = await activeModelId(page)
   await selectModel(page, modelId)
@@ -187,26 +223,62 @@ test('the palette offers a create entry for every supported ARIS object type and
     .toBeGreaterThanOrEqual(15)
   await expect(palette.locator('.orbitpm-palette-grip')).toHaveCount(1)
 
-  // Every supported type is offered — and nothing that is not supported is.
-  for (const action of PALETTE_CREATE_ACTIONS) {
+  // Every supported object type is offered as its default create entry…
+  for (const action of PALETTE_DEFAULT_CREATE_ACTIONS) {
     await expect(
       palette.locator(`[data-action="${action}"]`),
       `palette is missing ${action}`
     ).toHaveCount(1)
   }
-  await expect(palette.locator('[data-action^="create."]')).toHaveCount(
-    PALETTE_CREATE_ACTIONS.length + 1 // + the free-text annotation entry
-  )
+  // …the AND/OR/XOR rule operators are all offered as OT_RULE symbol variants…
+  for (const action of PALETTE_RULE_OPERATOR_ACTIONS) {
+    await expect(
+      palette.locator(`[data-action="${action}"]`),
+      `palette is missing rule operator ${action}`
+    ).toHaveCount(1)
+  }
+  // …the free-text annotation is offered…
   await expect(palette.locator('[data-action="create.free-text"]')).toHaveCount(1)
+  // …and nothing outside the supported object-type set is offered as a create
+  // entry (the library may add symbol variants, but never an unsupported type).
+  const createActions = await palette
+    .locator('[data-action^="create."]')
+    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-action') ?? ''))
+  // The exact create.* count is a knowable constant, not a loose lower bound:
+  // `dmtLibraryItems('MT_EEPC')` is the frozen 34-presentation EEPC inventory
+  // (src/aris/canvas/dmtLibrary.ts), and `paletteProvider.getPaletteEntries()`
+  // emits exactly one `create.*` per row plus one `create.free-text`
+  // ⇒ 34 + 1 = 35. Spelled out (not imported) so a silent loss of any of the 17
+  // non-default symbol presentations (system-function, process-interface,
+  // committee-team, SLA, law-regulation, internal/external person, risk, …) is
+  // caught here instead of hiding behind a `> 17` tolerance.
+  const EEPC_CREATE_ENTRY_COUNT = 35
+  expect(createActions.length).toBe(EEPC_CREATE_ENTRY_COUNT)
+  await expect(palette.locator('[data-action^="create."]')).toHaveCount(EEPC_CREATE_ENTRY_COUNT)
+  for (const action of createActions) {
+    if (action === 'create.free-text') continue
+    const objectType = action.slice('create.'.length).split('.')[0]
+    expect(
+      SUPPORTED_OBJECT_TYPES_LOWER.has(objectType),
+      `palette offers create action for unsupported object type: ${action}`
+    ).toBe(true)
+  }
 
   const canvasBox = await page.locator('[data-orbitpm-aris-canvas]').boundingBox()
   expect(canvasBox).not.toBeNull()
-  // Drop point: inside the canvas, clear of the palette (leading edge) and of
-  // the minimap (trailing top corner).
-  const dropX = canvasBox!.x + canvasBox!.width * 0.55
+  // Drop point: inside the canvas, clear of the ~360px DMT-library palette
+  // (leading edge) and of the minimap (trailing top corner).
+  const dropX = canvasBox!.x + canvasBox!.width * 0.6
   const dropY = canvasBox!.y + canvasBox!.height * 0.75
 
-  for (const action of PALETTE_CREATE_ACTIONS) {
+  // Every default object-type entry, plus the two non-default rule operators,
+  // authors exactly one real occurrence and undoes cleanly.
+  const authoringActions = [
+    ...PALETTE_DEFAULT_CREATE_ACTIONS,
+    'create.ot_rule.st_opr_or_1',
+    'create.ot_rule.st_opr_xor_1'
+  ]
+  for (const action of authoringActions) {
     const before = await occurrencesOf(page, modelId).count()
     await palette.locator(`[data-action="${action}"]`).click()
     await page.mouse.move(dropX, dropY)
@@ -222,12 +294,42 @@ test('the palette offers a create entry for every supported ARIS object type and
   }
 })
 
-test('the context pad appends, connects and deletes on the real canvas, and undo restores the document', async ({
+test('the context pad quick-connects a typed peer and deletes on the real canvas, and undo restores the document', async ({
   page
 }) => {
+  test.setTimeout(180_000)
   await openReferenceExport(page)
-  const modelId = await activeModelId(page)
-  await selectModel(page, modelId)
+
+  // Pin the selected object type so the pad's quick-connect manifest is a
+  // knowable constant. An EPC *event* (catalog `epc.event`, OT_EVT) has an exact,
+  // deduped four-helper manifest in `contextPadProvider.helpersFor()`:
+  //   • outgoing CT_ACTIV_1  → OT_FUNC   (event activates a function)
+  //   • incoming CT_CRT_1    ← OT_FUNC   (function creates this event)
+  //   • incoming CT_LEADS_TO_2 ← OT_RULE (a rule leads to this event)
+  //   • outgoing CT_IS_EVAL_BY_1 → OT_RULE (this event is evaluated by a rule)
+  // `dmtConnectionHelpers` yields these once each after the pad de-dupes on
+  // direction+peer-type+connection-type — so the count is exactly 4, and a
+  // regression that dropped any legal event affordance would break this.
+  const EVENT_QUICK_CONNECT_HELPER_COUNT = 4
+
+  // Find a model that actually draws a pointer-reachable event occurrence. Seven
+  // of the eight AnimalWF models are EPCs, so this resolves on the first EPC.
+  const modelButtons = page.locator('[data-orbitpm-aris-model]')
+  const modelButtonCount = await modelButtons.count()
+  let modelId = ''
+  let targetId = ''
+  for (let index = 0; index < modelButtonCount && targetId === ''; index += 1) {
+    const candidate = (await modelButtons.nth(index).getAttribute(
+      'data-orbitpm-aris-model'
+    )) as string
+    await selectModel(page, candidate)
+    const found = await clickableOccurrenceIdOfCatalog(page, candidate, 'epc.event')
+    if (found !== '') {
+      modelId = candidate
+      targetId = found
+    }
+  }
+  expect(targetId, 'no clickable event occurrence found in any AnimalWF model').not.toBe('')
 
   const occurrences = occurrencesOf(page, modelId)
   const connections = modelLayer(page, modelId).locator('g.djs-connection[data-element-id]')
@@ -239,53 +341,84 @@ test('the context pad appends, connects and deletes on the real canvas, and undo
     )
   )
 
-  // Append is only offered for object occurrences, and the target has to be
-  // reachable by a real pointer after Zoom Fit.
-  const targetId = await clickableOccurrenceId(page, modelId)
+  const allOccurrenceIds = async (): Promise<string[]> =>
+    occurrences.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-element-id') ?? ''))
+
+  // The append/connect gestures were reworked (§11.4): the standalone
+  // `connect` + `append.function`/`append.event` entries are replaced by
+  // "quick-connect" helpers (`src/aris/canvas/contextPadProvider.ts`) — each one
+  // appends a legal, typed peer AND the connection to it in a single gesture,
+  // chosen from the exact connection-rule catalog for the selected object type.
   const target = modelLayer(page, modelId).locator(`g[data-element-id="${targetId}"]`)
   await target.click()
 
   const contextPad = page.locator('[data-orbitpm-aris-canvas] .djs-context-pad')
   await expect(contextPad).toBeVisible()
 
-  // Every §11.4 gesture the pad is contractually required to offer for an
-  // object occurrence is present on the real element.
-  for (const action of ['connect', 'append.function', 'append.event', 'delete']) {
-    await expect(contextPad.locator(`[data-action="${action}"]`)).toBeVisible()
-  }
+  // The pad offers delete plus the EXACT set of legal quick-connect helpers for
+  // an event — not merely "at least one".
+  await expect(contextPad.locator('[data-action="delete"]')).toBeVisible()
+  const helpers = contextPad.locator('[data-action^="quick-connect."]')
+  await expect.poll(async () => helpers.count()).toBe(EVENT_QUICK_CONNECT_HELPER_COUNT)
 
-  // -- create + connect: append allocates a new occurrence AND the typed
-  //    connection to it, in one gesture. The pad stays open on the result, so
-  //    the second append chains off it without a re-select (clicking an already
-  //    selected element toggles the selection off and closes the pad).
-  await contextPad.locator('[data-action="append.function"]').click()
+  // Both a known outgoing affordance (event → function) and a known incoming one
+  // (function → event) must be present; the helper id's trailing ordinal is left
+  // unpinned via the prefix match.
+  const outgoingToFunction = contextPad.locator(
+    '[data-action^="quick-connect.outgoing.ct-activ-1.epc-function."]'
+  )
+  const incomingFromFunction = contextPad.locator(
+    '[data-action^="quick-connect.incoming.ct-crt-1.epc-function."]'
+  )
+  await expect(outgoingToFunction).toHaveCount(1)
+  await expect(incomingFromFunction).toHaveCount(1)
+
+  // -- quick-connect (gesture 1, outgoing): one gesture allocates a new
+  //    occurrence AND the typed connection to it.
+  await outgoingToFunction.click()
   await expect.poll(async () => occurrences.count(), { timeout: 20_000 }).toBe(shapesBefore + 1)
   await expect.poll(async () => connections.count()).toBe(connectionsBefore + 1)
 
+  // -- quick-connect (gesture 2, incoming): the pad stays attached to the source
+  //    event, so a second, differently-typed helper drives another typed append
+  //    — this time an incoming peer wired INTO the event.
   await expect(contextPad).toBeVisible()
-  await contextPad.locator('[data-action="append.event"]').click()
+  await incomingFromFunction.click()
   await expect.poll(async () => occurrences.count(), { timeout: 20_000 }).toBe(shapesBefore + 2)
   await expect.poll(async () => connections.count()).toBe(connectionsBefore + 2)
 
-  const idsAfter = await occurrences.evaluateAll((nodes) =>
-    nodes.map((node) => node.getAttribute('data-element-id') ?? '')
-  )
-  expect(idsAfter.filter((id) => !idsBefore.has(id))).toHaveLength(2)
+  const appendedIds = (await allOccurrenceIds()).filter((id) => !idsBefore.has(id))
+  expect(appendedIds.length, 'the two quick-connect gestures created two new occurrences').toBe(2)
 
-  // -- delete: the pad removes the occurrence it is currently attached to ----
+  // -- delete: the pad stays attached to the source occurrence after the
+  //    quick-connects, so its delete removes that one source occurrence (and
+  //    every connection hanging off it — both new quick-connect edges plus any
+  //    imported flow edges). The source itself was part of the baseline, and the
+  //    two appended peers survive, so the net occurrence count is baseline + 2 − 1
+  //    = baseline + 1, and every connection that touched the source is gone (so
+  //    the count drops below connectionsBefore + 2). Exact restoration is proved
+  //    by the full-undo-to-baseline id-set check below.
   await expect(contextPad).toBeVisible()
+  await expect(contextPad.locator('[data-action="delete"]')).toBeVisible()
   await contextPad.locator('[data-action="delete"]').click()
   await expect.poll(async () => occurrences.count(), { timeout: 20_000 }).toBe(shapesBefore + 1)
+  await expect.poll(async () => connections.count()).toBeLessThan(connectionsBefore + 2)
+  const afterDeleteIds = await allOccurrenceIds()
+  expect(afterDeleteIds).not.toContain(targetId)
+  for (const appended of appendedIds) expect(afterDeleteIds).toContain(appended)
 
-  // -- undo: every one of those gestures sits on one command stack ----------
+  // -- undo: every one of those gestures sits on the product's own command
+  //    stack; undoing back to the imported baseline restores the document
+  //    exactly — same occurrence count, same connection count, same ids — and
+  //    empties the stack (the import itself is not undoable).
   const undo = page.locator('[data-orbitpm-aris-undo]')
-  await undo.click() // undo the delete
-  await expect.poll(async () => occurrences.count()).toBe(shapesBefore + 2)
-  await undo.click() // undo the second append
-  await undo.click() // undo the first append
+  for (let step = 0; step < 30 && !(await undo.isDisabled()); step += 1) {
+    await undo.click()
+  }
+  await expect(undo).toBeDisabled()
   await expect.poll(async () => occurrences.count()).toBe(shapesBefore)
   await expect.poll(async () => connections.count()).toBe(connectionsBefore)
-  await expect(undo).toBeDisabled()
+  expect(new Set(await allOccurrenceIds())).toEqual(idsBefore)
 })
 
 /**

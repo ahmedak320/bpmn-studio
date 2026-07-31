@@ -253,7 +253,11 @@ async function openMinimalSource(page: Page): Promise<void> {
       mimeType: 'application/xml',
       buffer: Buffer.from(minimalAml())
     })
-  await expect(page.locator('[data-orbitpm-aris-model]')).toHaveCount(1, { timeout: 30_000 })
+  // A single-model source renders no model picker: `ArisExplorerPane` shows the
+  // model-explorer list only for sources with more than one model (Wave 2), so
+  // the lone model opens directly as its own studio tab rather than a picker
+  // button. Wait on that tab (and the create panel this test drives).
+  await expect(page.getByRole('tab', { name: 'minimal.aml' })).toBeVisible({ timeout: 30_000 })
   await expect(createPanel(page)).toBeVisible()
 }
 

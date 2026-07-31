@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { strToU8, zipSync } from 'fflate'
 
 import { buildMinimalValidDraft } from '../../src/aris/ai/testFixtures'
+import { revealOccurrencePoint, selectOccurrenceOnCanvas } from './helpers/canvasOverlay'
 
 // Retargeted from the pre-ARIS BPMN Lite shell (plan §5.3 removed the
 // folder-workspace "Process catalog" UI, the "Details…"/"Source" dialogs, and
@@ -276,9 +277,17 @@ async function openArisSource(
       mimeType: 'application/xml',
       buffer: Buffer.from(xml, 'utf8')
     })
-  await expect(page.locator('[data-orbitpm-aris-model]')).toHaveCount(expectedModelCount, {
-    timeout: 30_000
-  })
+  if (expectedModelCount > 1) {
+    await expect(page.locator('[data-orbitpm-aris-model]')).toHaveCount(expectedModelCount, {
+      timeout: 30_000
+    })
+  } else {
+    // A single-model source renders no model picker: `ArisExplorerPane` shows the
+    // model-explorer list only for sources with more than one model (Wave 2), so
+    // the lone model opens directly as its own studio tab. Wait on that tab
+    // instead of a model-explorer button that never renders.
+    await expect(page.getByRole('tab', { name: fileName })).toBeVisible({ timeout: 30_000 })
+  }
   await page
     .locator('[data-orbitpm-aris-canvas] [data-element-id^="ObjOcc."]')
     .first()
@@ -313,8 +322,99 @@ function occurrenceNode(page: Page, occurrenceId: string): Locator {
 }
 
 async function selectOccurrence(page: Page, occurrenceId: string): Promise<void> {
-  await page.getByRole('button', { name: 'Zoom Fit', exact: true }).click()
-  await occurrenceNode(page, occurrenceId).click()
+  // The DMT-symbol-library palette is a ~360px rail over the canvas's leading
+  // edge, so after Zoom Fit a shape can land under it; wheel-pan it clear (as a
+  // user would) before clicking.
+  await selectOccurrenceOnCanvas(page, occurrenceId)
+}
+
+/**
+ * Asserts a shape's caption contains `phrase`, tolerant of word-wrap: a label
+ * wider than its shape wraps into one `<tspan>` per line (authorized
+ * typography), and a `<text>` node's `textContent` concatenates the lines with
+ * no separator, so join the tspans with a space to reconstruct the logical
+ * caption before matching.
+ */
+async function expectOccurrenceCaption(
+  page: Page,
+  occurrenceId: string,
+  phrase: string
+): Promise<void> {
+  const caption = occurrenceNode(page, occurrenceId).locator('text[data-aris-caption]').first()
+  await expect
+    .poll(
+      async () =>
+        caption.evaluate((node) => {
+          const tspans = node.querySelectorAll('tspan')
+          const value =
+            tspans.length > 0
+              ? Array.from(tspans, (tspan) => tspan.textContent ?? '').join(' ')
+              : (node.textContent ?? '')
+          return value.replace(/\s+/gu, ' ').trim()
+        }),
+      { timeout: 10_000 }
+    )
+    .toContain(phrase)
+}
+
+/**
+ * Asserts some shape caption on the visible canvas reads exactly `phrase`,
+ * tolerant of the authorized word-wrap that splits a wide label across
+ * `<tspan>` lines (a `<text>` node's `textContent` then loses the inter-word
+ * spaces). Scoped to `text[data-aris-caption]`, so the print frame's identical
+ * Process-Name row-value is never a false match.
+ */
+async function expectCanvasCaption(page: Page, phrase: string): Promise<void> {
+  await expect
+    .poll(
+      async () =>
+        page.evaluate((wanted) => {
+          const canvas =
+            [...document.querySelectorAll<HTMLElement>('[data-orbitpm-aris-canvas]')].find(
+              (node) => node.getBoundingClientRect().width > 0
+            ) ?? document.querySelector('[data-orbitpm-aris-canvas]')
+          if (!canvas) return false
+          const normalize = (value: string): string => value.replace(/\s+/gu, ' ').trim()
+          return [...canvas.querySelectorAll('text[data-aris-caption]')].some((node) => {
+            const tspans = node.querySelectorAll('tspan')
+            const value =
+              tspans.length > 0
+                ? Array.from(tspans, (tspan) => tspan.textContent ?? '').join(' ')
+                : (node.textContent ?? '')
+            return normalize(value) === normalize(wanted)
+          })
+        }, phrase),
+      { timeout: 10_000 }
+    )
+    .toBe(true)
+}
+
+/**
+ * Selects a generated shape by its caption text and returns its element id,
+ * panning it clear of the palette first. The caption may word-wrap into one
+ * `<tspan>` per line (authorized typography) — a `<text>` node's `textContent`
+ * then concatenates the words with no separator — so the shape is matched with a
+ * whitespace-flexible pattern rather than the literal spaced phrase.
+ */
+async function selectShapeByCaption(page: Page, phrase: string): Promise<string> {
+  const pattern = new RegExp(
+    phrase
+      .split(/\s+/u)
+      .map((word) => word.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'))
+      .join('\\s*')
+  )
+  const shape = page
+    .locator('[data-orbitpm-aris-canvas]:visible g.djs-element', { hasText: pattern })
+    .first()
+  await expect(shape).toBeVisible()
+  const id = await shape.getAttribute('data-element-id')
+  expect(id, `shape "${phrase}" has no data-element-id`).not.toBeNull()
+  // Pan the shape clear of the leading-edge palette and click a point verified
+  // to be on its own gfx (its centre can be crossed by an attached connection's
+  // hit-stroke, so the reveal helper picks an uncovered spot on the shape).
+  const point = await revealOccurrencePoint(page, id as string, { fit: false })
+  await page.mouse.click(point.x, point.y)
+  return id as string
 }
 
 async function openDetailsTab(
@@ -526,7 +626,7 @@ test('TR1/TR2/TR3: AML import surfaces wrong-language and missing bilingual fiel
   await expect(wrongArField).toHaveValue('مراجعة الطلب')
   // The canvas caption is unaffected (it was always reading the English slot),
   // proving the repair landed on the Arabic slot alone.
-  await expect(occurrenceNode(page, 'ObjOcc.WrongAr')).toContainText('Review request')
+  await expectOccurrenceCaption(page, 'ObjOcc.WrongAr', 'Review request')
 
   // TR-02: an English-only definition (`ObjDef.EnOnly`) has an explicit, empty
   // Arabic slot — never a silently blank or fabricated value.
@@ -545,7 +645,7 @@ test('TR1/TR2/TR3: AML import surfaces wrong-language and missing bilingual fiel
   // fabricated English value, and — because there is nothing else to fall
   // back to — the canvas caption for it is ACTUAL Arabic script glyphs, not a
   // placeholder, mojibake, or blank shape.
-  await expect(occurrenceNode(page, 'ObjOcc.ArOnly')).toContainText('تسجيل نتيجة المراجعة')
+  await expectOccurrenceCaption(page, 'ObjOcc.ArOnly', 'تسجيل نتيجة المراجعة')
   await selectOccurrence(page, 'ObjOcc.ArOnly')
   await openDetailsTab(page, 'Names')
   const arOnlyEn = nameField(page, 'definition', 'en')
@@ -557,7 +657,7 @@ test('TR1/TR2/TR3: AML import surfaces wrong-language and missing bilingual fiel
   // Once an English value exists, the canvas prefers it (same fallback chain
   // as every other definition in this shell) — this is the explicit,
   // human-driven repair, not an automatic translation.
-  await expect(occurrenceNode(page, 'ObjOcc.ArOnly')).toContainText('Record review outcome')
+  await expectOccurrenceCaption(page, 'ObjOcc.ArOnly', 'Record review outcome')
 })
 
 // ---------------------------------------------------------------------------
@@ -585,7 +685,7 @@ test('TR4/TR8/TR10: mixed values, neutral terms, branch labels and attribute det
   )
   await commitField(mixedAr, 'مراجعة الطلب الثانية')
   await expect(mixedAr).toHaveValue('مراجعة الطلب الثانية')
-  await expect(occurrenceNode(page, 'ObjOcc.Mixed')).toContainText('Review request two')
+  await expectOccurrenceCaption(page, 'ObjOcc.Mixed', 'Review request two')
 
   // TR-04 neutral term: an identical value on both sides (`ObjDef.Neutral`,
   // "API"/"API") is real content, not a missing-Arabic gap, and is left
@@ -662,7 +762,7 @@ test('TR5: native ARIS import preserves an explicit Arabic repair through derive
   // feature reachable in this shell (see file header GAP note).
   const untouchedBytes = await exportDerivedAml(page)
   await openArisSource(page, untouchedBytes.toString('utf8'), 'bilingual-matrix.roundtrip.aml', 1)
-  await expect(occurrenceNode(page, 'ObjOcc.Start')).toContainText('Request received')
+  await expectOccurrenceCaption(page, 'ObjOcc.Start', 'Request received')
   await selectOccurrence(page, 'ObjOcc.ArOnly')
   await openDetailsTab(page, 'Names')
   await expect(nameField(page, 'definition', 'ar')).toHaveValue('تسجيل نتيجة المراجعة')
@@ -744,14 +844,12 @@ test('TR5/TR7: AI text, DOCX, PDF, PNG and Excel use their real generation/impor
   await expect(
     page.getByRole('status').filter({ hasText: 'Created 2 models, 4 objects, 3 relations' })
   ).toBeVisible({ timeout: 30_000 })
-  // The generated bilingual content actually reached the new tab's canvas.
-  await expect(
-    page.locator('[data-orbitpm-aris-canvas]:visible').getByText('Approve request', { exact: true })
-  ).toBeVisible()
-  const approveShape = page
-    .locator('[data-orbitpm-aris-canvas]:visible g.djs-element', { hasText: 'Approve request' })
-    .first()
-  await approveShape.click()
+  // The generated bilingual content actually reached the new tab's canvas as a
+  // shape. Scope to the shape (`g.djs-element`) rather than a bare text query:
+  // the authorized print frame renders the model's Process Name row-value with
+  // the same text, so an unscoped `getByText` would match two nodes. The shape
+  // can sit under the leading-edge palette, so pan it clear before selecting.
+  await selectShapeByCaption(page, 'Approve request')
   await openDetailsTab(page, 'Names')
   await expect(nameField(page, 'definition', 'ar')).toHaveValue('الموافقة على الطلب')
 
@@ -835,17 +933,11 @@ test('TR5/TR7: AI text, DOCX, PDF, PNG and Excel use their real generation/impor
     .poll(async () => page.getByRole('tab').count(), { timeout: 60_000 })
     .toBe(tabsBeforeExcel + 1)
   await expect(page.locator('[data-orbitpm-aris-excel-issues]')).toHaveCount(0)
-  await expect(
-    page
-      .locator('[data-orbitpm-aris-canvas]:visible')
-      .getByText('Leave request submitted', { exact: true })
-  ).toBeVisible()
-  const submittedShape = page
-    .locator('[data-orbitpm-aris-canvas]:visible g.djs-element', {
-      hasText: 'Leave request submitted'
-    })
-    .first()
-  await submittedShape.click()
+  // The Excel content reached the new tab's canvas as a shape whose caption reads
+  // the imported English name (`selectShapeByCaption` scopes to `g.djs-element`,
+  // so the print frame's identical Process-Name row-value is not a false match).
+  const submittedId = await selectShapeByCaption(page, 'Leave request submitted')
+  await expectOccurrenceCaption(page, submittedId, 'Leave request submitted')
   await openDetailsTab(page, 'Names')
   await expect(nameField(page, 'definition', 'ar')).toHaveValue('تم تقديم طلب الإجازة')
   expect(excelOffending).toEqual([])
@@ -991,10 +1083,7 @@ test('TR6/TR9: AI provider 429 retry, transport exhaustion, cancellation and man
 
   // --- manual edit: independent of any provider outcome, a human can always
   // repair a bilingual field directly through the details rail -------------
-  const approveShape = page
-    .locator('[data-orbitpm-aris-canvas]:visible g.djs-element', { hasText: 'Approve request' })
-    .first()
-  await approveShape.click()
+  await selectShapeByCaption(page, 'Approve request')
   await openDetailsTab(page, 'Names')
   const arField = nameField(page, 'definition', 'ar')
   await expect(arField).toHaveValue('الموافقة على الطلب')
@@ -1109,18 +1198,18 @@ test('TR-content-toggle: toolbar content-language switch flips canvas labels and
   await expect(undo).toBeDisabled()
 
   // Default: English labels are drawn.
-  await expect(canvas.getByText('Request received', { exact: true }).first()).toBeVisible()
+  await expectCanvasCaption(page, 'Request received')
 
   // Switch canvas labels to Arabic.
   await langButton.click()
-  await expect(canvas.getByText('تم استلام الطلب', { exact: true }).first()).toBeVisible()
+  await expectCanvasCaption(page, 'تم استلام الطلب')
 
   // The English-only element keeps its English fallback — it is never blank.
-  await expect(canvas.getByText('Record decision', { exact: true }).first()).toBeVisible()
+  await expectCanvasCaption(page, 'Record decision')
 
   // Toggle back restores English.
   await langButton.click()
-  await expect(canvas.getByText('Request received', { exact: true }).first()).toBeVisible()
+  await expectCanvasCaption(page, 'Request received')
 
   // Switch the app header language to Arabic: the content-language toggle
   // follows by default (it only overrides when the toolbar is clicked).
@@ -1272,7 +1361,11 @@ test('TR-auto-translate: generated models fill missing labels silently unless op
       mimeType: 'application/xml',
       buffer: Buffer.from(BILINGUAL_MATRIX_AML, 'utf8')
     })
-  await expect(offPage.locator('[data-orbitpm-aris-model]')).toHaveCount(1, { timeout: 30_000 })
+  // A single-model source renders no model picker (Wave 2: `ArisExplorerPane`
+  // shows it only for >1 models), so wait on the imported source's studio tab.
+  await expect(offPage.getByRole('tab', { name: 'bilingual-matrix.aml' })).toBeVisible({
+    timeout: 30_000
+  })
   await offPage
     .locator('[data-orbitpm-aris-canvas] [data-element-id^="ObjOcc."]')
     .first()
@@ -1294,11 +1387,44 @@ test('TR-auto-translate: generated models fill missing labels silently unless op
   ).toBeVisible()
 })
 
+/**
+ * A well-formed EPC (legal `CT_ACTIV_1`/`CT_CRT_1` control flow) plus one object
+ * definition — `ObjDef.Orphan` — that is defined but never drawn, so the fix
+ * scanner reports it as an `unusedDefinition` gap. Per the deterministic fix
+ * tiering (`src/aris/chat/deterministicFixes.ts`, Tier B) an unused OBJECT
+ * definition yields exactly one confirm-gated delete proposal
+ * (`fix-delete-definition::ObjDef.Orphan`) — the structural delete this flow
+ * exercises. The reference export is now structurally clean (no confirm-tier
+ * proposals), so this purpose-built source provides the one the test needs.
+ */
+const FIX_FLOW_AML = `<?xml version="1.0" encoding="UTF-8"?>
+<AML>
+  <Header-Info DatabaseName="Fix flow fixture" CreateDate="2026-07-29" CreateTime="09:00:00" UserName="tester" ArisExeVersion="0.1.0"/>
+  <Group Group.ID="Group.Root">
+    <Model Model.ID="Model.Fix" Model.Type="MT_EEPC" GridSize="10" Scale="100" PrintScale="100" BackColor="16777215">
+      <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Fix flow</AttrValue></AttrDef>
+      <ObjOcc ObjOcc.ID="ObjOcc.Start" ObjDef.IdRef="ObjDef.Start" SymbolNum="ST_EV" Zorder="1">
+        <Position Pos.X="40" Pos.Y="200"/><Size Size.dX="60" Size.dY="60"/>
+        <CxnOcc CxnOcc.ID="CxnOcc.S2C" CxnDef.IdRef="CxnDef.S2C" ToObjOcc.IdRef="ObjOcc.Check" SrcArrow="0" TgtArrow="1"><Position Pos.X="100" Pos.Y="230"/><Position Pos.X="220" Pos.Y="230"/></CxnOcc>
+      </ObjOcc>
+      <ObjOcc ObjOcc.ID="ObjOcc.Check" ObjDef.IdRef="ObjDef.Check" SymbolNum="ST_FUNC" Zorder="2">
+        <Position Pos.X="220" Pos.Y="190"/><Size Size.dX="130" Size.dY="80"/>
+        <CxnOcc CxnOcc.ID="CxnOcc.C2D" CxnDef.IdRef="CxnDef.C2D" ToObjOcc.IdRef="ObjOcc.Done" SrcArrow="0" TgtArrow="1"><Position Pos.X="350" Pos.Y="230"/><Position Pos.X="470" Pos.Y="230"/></CxnOcc>
+      </ObjOcc>
+      <ObjOcc ObjOcc.ID="ObjOcc.Done" ObjDef.IdRef="ObjDef.Done" SymbolNum="ST_EV" Zorder="3"><Position Pos.X="470" Pos.Y="200"/><Size Size.dX="60" Size.dY="60"/></ObjOcc>
+    </Model>
+    <ObjDef ObjDef.ID="ObjDef.Start" TypeNum="OT_EVT" SymbolNum="ST_EV"><AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Request received</AttrValue></AttrDef><CxnDef CxnDef.ID="CxnDef.S2C" CxnDef.Type="CT_ACTIV_1" ToObjDef.IdRef="ObjDef.Check"/></ObjDef>
+    <ObjDef ObjDef.ID="ObjDef.Check" TypeNum="OT_FUNC" SymbolNum="ST_FUNC"><AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Review request</AttrValue></AttrDef><CxnDef CxnDef.ID="CxnDef.C2D" CxnDef.Type="CT_CRT_1" ToObjDef.IdRef="ObjDef.Done"/></ObjDef>
+    <ObjDef ObjDef.ID="ObjDef.Done" TypeNum="OT_EVT" SymbolNum="ST_EV"><AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Process complete</AttrValue></AttrDef></ObjDef>
+    <ObjDef ObjDef.ID="ObjDef.Orphan" TypeNum="OT_ENT_TYPE" SymbolNum="ST_ENT_TYPE"><AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Orphan entity</AttrValue></AttrDef></ObjDef>
+  </Group>
+</AML>`
+
 test('TR-fix-flow: a confirmed delete proposal drops the issue count and undo restores it', async ({
   page
 }) => {
   test.setTimeout(120_000)
-  await openReferenceExport(page)
+  await openArisSource(page, FIX_FLOW_AML, 'fix-flow.aml', 1)
 
   const badge = page.locator('[data-orbitpm-aris-fix-issues]')
   await expect(badge).toBeVisible({ timeout: 60_000 })

@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { selectOccurrenceOnCanvas } from './helpers/canvasOverlay'
 
 // Lane X3 — New e2e specs: blank-model authoring through the picker fallback.
 //
@@ -105,7 +106,12 @@ test('picker fallback: new EPC model, palette authoring, undo/redo, rename and p
   await expect.poll(async () => occurrences.count(), { timeout: 20_000 }).toBe(1)
 
   // Details-rail rename: select the occurrence and edit its definition name.
-  await occurrences.first().click()
+  // Fit + pan the occurrence clear of the DMT-library palette before selecting —
+  // firefox's stricter hit-testing drops the click when the shape sits under the
+  // palette overlay, so the details rail never populates the Names tab.
+  const placedOccurrenceId = await occurrences.first().getAttribute('data-element-id')
+  expect(placedOccurrenceId, 'placed occurrence has no element id').toBeTruthy()
+  await selectOccurrenceOnCanvas(page, placedOccurrenceId!, { fitLabel: 'Zoom Fit' })
   await page.getByRole('tab', { name: 'Names', exact: true }).click()
   const nameField = page.locator('[data-orbitpm-aris-name-input="definition:en"]')
   await expect(nameField).toBeVisible()

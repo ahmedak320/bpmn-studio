@@ -5,6 +5,8 @@ import type { AddressInfo } from 'node:net'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { clearCanvasPoint } from './helpers/canvasOverlay'
+
 // Lane E1 — Wave 4 e2e: nested processes.
 //
 // A Function occurrence can be linked to a model living in a DIFFERENT
@@ -106,10 +108,12 @@ async function placeFunction(page: Page, caption: string): Promise<string> {
   const entryBox = await functionEntry.boundingBox()
   expect(entryBox).not.toBeNull()
   await page.mouse.click(entryBox!.x + 4, entryBox!.y + 4)
-  await page.mouse.click(
-    canvasBox!.x + canvasBox!.width * 0.55,
-    canvasBox!.y + canvasBox!.height * 0.7
-  )
+  // The authorized DMT-symbol-library palette is a ~360px rail floating over the
+  // canvas's leading edge, so a fixed left-of-centre drop fraction now lands on
+  // the palette (the placement click is swallowed and no occurrence is created);
+  // resolve a drop point clear of the palette and the minimap instead.
+  const drop = await clearCanvasPoint(page)
+  await page.mouse.click(drop.x, drop.y)
 
   const occurrences = canvas.locator('g.djs-element[data-element-id^="ObjOcc."]')
   await expect.poll(async () => occurrences.count(), { timeout: 20_000 }).toBe(1)
@@ -157,6 +161,10 @@ test('linking a Function to a workspace model nests it in the tree, survives a r
   }
 
   try {
+    // A generous viewport so the workspace tree, the ~360px DMT-library palette
+    // and the canvas all have room (the default 1280×720 leaves the palette
+    // covering nearly the whole narrow canvas).
+    await opfsPage.setViewportSize({ width: 1500, height: 950 })
     await gotoLanding(opfsPage)
 
     // Open a real OPFS ("Browser workspace") connection.
