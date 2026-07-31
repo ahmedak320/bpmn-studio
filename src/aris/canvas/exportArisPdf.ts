@@ -190,7 +190,10 @@ function overlayArisTextRuns(
 ): void {
   const runs = options.textRuns
   if (!runs || runs.length === 0) return
-  const content = options.contentSize ?? { width: geometry.imageWidth, height: geometry.imageHeight }
+  const content = options.contentSize ?? {
+    width: geometry.imageWidth,
+    height: geometry.imageHeight
+  }
   const perUnitX = content.width > 0 ? geometry.imageWidth / content.width : 0
   const perUnitY = content.height > 0 ? geometry.imageHeight / content.height : 0
   if (perUnitX <= 0 || perUnitY <= 0) return

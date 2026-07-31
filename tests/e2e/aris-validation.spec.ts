@@ -265,7 +265,9 @@ const validationRail = '[data-orbitpm-aris-validation]'
 function checkRow(page: Page, kind: string): Locator {
   return page
     .locator(validationRail)
-    .locator(`[data-orbitpm-aris-validation-issue="${kind}"][aria-label="Select ObjOcc.Check on the canvas"]`)
+    .locator(
+      `[data-orbitpm-aris-validation-issue="${kind}"][aria-label="Select ObjOcc.Check on the canvas"]`
+    )
 }
 
 /**
@@ -433,7 +435,9 @@ async function openAttributeFixSource(page: Page): Promise<void> {
       mimeType: 'application/xml',
       buffer: Buffer.from(ATTRIBUTE_FIX_AML, 'utf8')
     })
-  await expect(page.getByRole('tab', { name: 'attribute-fix.aml' })).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByRole('tab', { name: 'attribute-fix.aml' })).toBeVisible({
+    timeout: 30_000
+  })
   await page
     .locator('[data-orbitpm-aris-canvas] [data-element-id^="ObjOcc."]')
     .first()

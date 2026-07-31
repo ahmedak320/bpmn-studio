@@ -2040,7 +2040,7 @@ repair loop handle them.
       `ARIS_AI_SUPPORTED_RULE_SYMBOL_TYPES`, the 2 `ARIS_AI_SUPPORTED_MODEL_TYPES` (from
       `./contract`), confidence `high|medium|low`. 3. The endpoint cheat-sheet from the census table above (all unambiguous rows + the three
       disambiguation rules), e.g. `event→function CT_ACTIV_1; function→event CT_CRT_1; …;
-       application system→function CT_SUPP_3; …`.
+ application system→function CT_SUPP_3; …`.
       Static text only — determinism is preserved by construction (the constants are frozen
       module consts). Budget ≈ +900 prompt tokens (≈ +$0.0003/run at the picks' input rates).
       Tests: extend `promptBuilder.test.ts` "states the core Section 16.5 rules" (`:26-33`) —
@@ -2207,11 +2207,11 @@ repair loop handle them.
       (outside the repo — see below).
       **Rasterization (offline, once, before the live runs; NOT in CI, NOT committed):**
       `bash
-    mkdir -p /home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/png
-    pdftoppm -png -r 150 \
-      /home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/pdf/Register_Animal_Owner_Profile_Draft03.pdf \
-      /home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/png/Register_Animal_Owner_Profile_Draft03
-    `
+mkdir -p /home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/png
+pdftoppm -png -r 150 \
+/home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/pdf/Register_Animal_Owner_Profile_Draft03.pdf \
+/home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/png/Register_Animal_Owner_Profile_Draft03
+`
       → produces `Register_Animal_Owner_Profile_Draft03-1.png` (A3 842×1191 pt @150 dpi ≈
       1754×2481 px). Verify size < 5 MiB (`IMAGE_SIZE_LIMITS.openrouter`, `src/ai/pdf.ts:128-132`);
       if over, re-run at `-r 120`. `pdftoppm` is present at `/usr/bin/pdftoppm`. The `reference/`

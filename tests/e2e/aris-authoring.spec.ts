@@ -319,9 +319,9 @@ test('the context pad quick-connects a typed peer and deletes on the real canvas
   let modelId = ''
   let targetId = ''
   for (let index = 0; index < modelButtonCount && targetId === ''; index += 1) {
-    const candidate = (await modelButtons.nth(index).getAttribute(
-      'data-orbitpm-aris-model'
-    )) as string
+    const candidate = (await modelButtons
+      .nth(index)
+      .getAttribute('data-orbitpm-aris-model')) as string
     await selectModel(page, candidate)
     const found = await clickableOccurrenceIdOfCatalog(page, candidate, 'epc.event')
     if (found !== '') {
@@ -342,7 +342,9 @@ test('the context pad quick-connects a typed peer and deletes on the real canvas
   )
 
   const allOccurrenceIds = async (): Promise<string[]> =>
-    occurrences.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-element-id') ?? ''))
+    occurrences.evaluateAll((nodes) =>
+      nodes.map((node) => node.getAttribute('data-element-id') ?? '')
+    )
 
   // The append/connect gestures were reworked (§11.4): the standalone
   // `connect` + `append.function`/`append.event` entries are replaced by
