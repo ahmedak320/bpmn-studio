@@ -1966,23 +1966,23 @@ tokens a full-fidelity 14-function draft needs, so a good model can truncate int
 Ground truth for M2's cheat-sheet and M4's mapping table. Every (fromType → toType) pair observed
 in the reference maps to exactly ONE connection type except the three flagged rows:
 
-| from → to | CT code | count | note |
-|---|---|---|---|
-| OT_EVT → OT_FUNC | `CT_ACTIV_1` | 36 | control flow |
-| OT_RULE → OT_FUNC | `CT_ACTIV_1` | 14 | control flow |
-| OT_FUNC → OT_EVT | `CT_CRT_1` | 35 | control flow |
-| OT_FUNC → OT_RULE | `CT_LEADS_TO_1` | 16 | control flow |
-| OT_RULE → OT_EVT | `CT_LEADS_TO_2` | 36 | control flow |
-| OT_EVT → OT_RULE | `CT_IS_EVAL_BY_1` | 19 | control flow |
-| OT_FUNC → OT_FUNC | `CT_IS_PREDEC_OF_1` 28 / `CT_IS_PRCS_ORNT_SUPER` 12 | — | **ambiguous**: pick by owning model's `modelType` — `MT_VAL_ADD_CHN_DGM` → `CT_IS_PRCS_ORNT_SUPER`, else `CT_IS_PREDEC_OF_1` |
-| OT_PERS → OT_FUNC | `CT_EXEC_1` 41 / `CT_MUST_BE_INFO_ABT_1` 23 | — | **ambiguous**: default `CT_EXEC_1` (majority, "carries out"), warning notes the assumption |
-| OT_PERS_TYPE → OT_FUNC | `CT_EXEC_2` | 3 | satellite |
-| OT_APPL_SYS → OT_FUNC | `CT_SUPP_3` | 128 | satellite |
-| OT_ENT_TYPE → OT_FUNC | `CT_IS_INP_FOR` | 9 | satellite |
-| OT_FUNC → OT_ENT_TYPE | `CT_HAS_OUT` 21 / `CT_READ_1` 6 | — | **ambiguous**: default `CT_HAS_OUT` (majority), warning notes the assumption |
-| OT_FUNC → OT_INFO_CARR | `CT_CRT_OUT_TO` | 28 | satellite |
-| OT_REQUIREMENT → OT_FUNC | `CT_REFS_TO_2` | 8 | satellite |
-| OT_POLICY → OT_FUNC | `CT_AFFECTS` | 2 | satellite |
+| from → to                | CT code                                             | count | note                                                                                                                         |
+| ------------------------ | --------------------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------- |
+| OT_EVT → OT_FUNC         | `CT_ACTIV_1`                                        | 36    | control flow                                                                                                                 |
+| OT_RULE → OT_FUNC        | `CT_ACTIV_1`                                        | 14    | control flow                                                                                                                 |
+| OT_FUNC → OT_EVT         | `CT_CRT_1`                                          | 35    | control flow                                                                                                                 |
+| OT_FUNC → OT_RULE        | `CT_LEADS_TO_1`                                     | 16    | control flow                                                                                                                 |
+| OT_RULE → OT_EVT         | `CT_LEADS_TO_2`                                     | 36    | control flow                                                                                                                 |
+| OT_EVT → OT_RULE         | `CT_IS_EVAL_BY_1`                                   | 19    | control flow                                                                                                                 |
+| OT_FUNC → OT_FUNC        | `CT_IS_PREDEC_OF_1` 28 / `CT_IS_PRCS_ORNT_SUPER` 12 | —     | **ambiguous**: pick by owning model's `modelType` — `MT_VAL_ADD_CHN_DGM` → `CT_IS_PRCS_ORNT_SUPER`, else `CT_IS_PREDEC_OF_1` |
+| OT_PERS → OT_FUNC        | `CT_EXEC_1` 41 / `CT_MUST_BE_INFO_ABT_1` 23         | —     | **ambiguous**: default `CT_EXEC_1` (majority, "carries out"), warning notes the assumption                                   |
+| OT_PERS_TYPE → OT_FUNC   | `CT_EXEC_2`                                         | 3     | satellite                                                                                                                    |
+| OT_APPL_SYS → OT_FUNC    | `CT_SUPP_3`                                         | 128   | satellite                                                                                                                    |
+| OT_ENT_TYPE → OT_FUNC    | `CT_IS_INP_FOR`                                     | 9     | satellite                                                                                                                    |
+| OT_FUNC → OT_ENT_TYPE    | `CT_HAS_OUT` 21 / `CT_READ_1` 6                     | —     | **ambiguous**: default `CT_HAS_OUT` (majority), warning notes the assumption                                                 |
+| OT_FUNC → OT_INFO_CARR   | `CT_CRT_OUT_TO`                                     | 28    | satellite                                                                                                                    |
+| OT_REQUIREMENT → OT_FUNC | `CT_REFS_TO_2`                                      | 8     | satellite                                                                                                                    |
+| OT_POLICY → OT_FUNC      | `CT_AFFECTS`                                        | 2     | satellite                                                                                                                    |
 
 `OT_PERF`, `OT_BUSINESS_RULE`, and all reverse-direction satellite pairs (e.g. OT_FUNC→OT_PERS)
 have NO census entry → the normalizer leaves them untouched and the (now-teaching) finding +
@@ -1993,38 +1993,32 @@ repair loop handle them.
 - [ ] **M1 — Curated vision models + capability flags + prices.** Owner: opus implementer.
       Files: `src/ai/providersLite.ts`, `src/ai/credits.ts`, `src/ai/__tests__/providersLite.test.ts`,
       `src/ai/__tests__/credits.test.ts` (extend if it asserts PRICES keys).
-      Changes:
-      1. Append to `OPENROUTER_MODELS` (`providersLite.ts:66-74`), AFTER the existing 7 entries so
-         `defaultLiteModelId('openrouter')` stays `z-ai/glm-5.2` (text default unchanged):
-         `{ id: 'google/gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash Lite (Google) — vision, native PDF' }` and
-         `{ id: 'qwen/qwen3-vl-235b-a22b-instruct', label: 'Qwen3-VL 235B Instruct — vision, picture only' }`.
-         (After the A/B, the winner is moved to be the FIRST of these two — see the run procedure.)
-      2. Add a per-model override consulted by `getLiteModelCapabilities` (`:128-148`) BEFORE the
-         `anthropic/`/`google/` prefix heuristic, for reviewed OpenRouter slugs only:
-         `const OPENROUTER_MODEL_CAPABILITY_OVERRIDES: Record<string, { pdf: boolean; images: boolean }> = { 'qwen/qwen3-vl-235b-a22b-instruct': { pdf: false, images: true } }`.
-         Unlisted curated ids keep today's behavior exactly (gemini-3.5-flash-lite needs no entry:
-         the `google/` prefix rule already grants `pdf:true, images:true`). Unreviewed ids still
-         fail closed.
-      3. Add `export const OPENROUTER_STRUCTURED_OUTPUT_MODELS: ReadonlySet<string> = new Set(['google/gemini-3.5-flash-lite', 'qwen/qwen3-vl-235b-a22b-instruct'])`
-         — the models whose selected ZDR endpoints list `structured_outputs` (live-verified
-         2026-07-31; consumed by M5). Deliberately NOT added to `LiteModelCapabilities` (several
-         tests `toEqual` that exact shape).
-      4. Add `export function firstLiteModelForAttachment(providerId: LiteProviderId, kind: 'pdf' | 'image'): string | null`
-         — first curated model of the provider whose `getLiteModelCapabilities` grants that kind
-         (consumed by M7).
-      5. `src/ai/credits.ts` PRICES (`:1479-1501`): add
-         `'google/gemini-3.5-flash-lite': { in: 0.3, out: 2.5 }`,
-         `'qwen/qwen3-vl-235b-a22b-instruct': { in: 0.21, out: 1.9 }`; refresh the stale
-         `'z-ai/glm-5.2'` row `0.8106/2.5476` → `{ in: 1.12, out: 3.52 }` (live catalog
-         2026-07-31); bump `ESTIMATED_PRICE_AS_OF` to the implementation date. Re-verify all three
-         numbers against `GET https://openrouter.ai/api/v1/models` at implementation time (no key
-         needed) and use the live values if they moved.
-      6. Tests: extend `providersLite.test.ts` — qwen route `toMatchObject({ pdf: false, images: true, verified: true })`,
-         gemini-3.5-flash-lite `{ pdf: true, images: true, verified: true }`, and
-         `firstLiteModelForAttachment('openrouter','pdf')`/`('openrouter','image')` return a
-         model whose capabilities actually grant that kind. Fix any list-enumerating assertions
-         that the two new curated entries break (grep: `AiPanelLite.integration.test.tsx`,
-         `arisTranslateController.test.tsx`, `pdf.test.ts`).
+      Changes: 1. Append to `OPENROUTER_MODELS` (`providersLite.ts:66-74`), AFTER the existing 7 entries so
+      `defaultLiteModelId('openrouter')` stays `z-ai/glm-5.2` (text default unchanged):
+      `{ id: 'google/gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash Lite (Google) — vision, native PDF' }` and
+      `{ id: 'qwen/qwen3-vl-235b-a22b-instruct', label: 'Qwen3-VL 235B Instruct — vision, picture only' }`.
+      (After the A/B, the winner is moved to be the FIRST of these two — see the run procedure.) 2. Add a per-model override consulted by `getLiteModelCapabilities` (`:128-148`) BEFORE the
+      `anthropic/`/`google/` prefix heuristic, for reviewed OpenRouter slugs only:
+      `const OPENROUTER_MODEL_CAPABILITY_OVERRIDES: Record<string, { pdf: boolean; images: boolean }> = { 'qwen/qwen3-vl-235b-a22b-instruct': { pdf: false, images: true } }`.
+      Unlisted curated ids keep today's behavior exactly (gemini-3.5-flash-lite needs no entry:
+      the `google/` prefix rule already grants `pdf:true, images:true`). Unreviewed ids still
+      fail closed. 3. Add `export const OPENROUTER_STRUCTURED_OUTPUT_MODELS: ReadonlySet<string> = new Set(['google/gemini-3.5-flash-lite', 'qwen/qwen3-vl-235b-a22b-instruct'])`
+      — the models whose selected ZDR endpoints list `structured_outputs` (live-verified
+      2026-07-31; consumed by M5). Deliberately NOT added to `LiteModelCapabilities` (several
+      tests `toEqual` that exact shape). 4. Add `export function firstLiteModelForAttachment(providerId: LiteProviderId, kind: 'pdf' | 'image'): string | null`
+      — first curated model of the provider whose `getLiteModelCapabilities` grants that kind
+      (consumed by M7). 5. `src/ai/credits.ts` PRICES (`:1479-1501`): add
+      `'google/gemini-3.5-flash-lite': { in: 0.3, out: 2.5 }`,
+      `'qwen/qwen3-vl-235b-a22b-instruct': { in: 0.21, out: 1.9 }`; refresh the stale
+      `'z-ai/glm-5.2'` row `0.8106/2.5476` → `{ in: 1.12, out: 3.52 }` (live catalog
+      2026-07-31); bump `ESTIMATED_PRICE_AS_OF` to the implementation date. Re-verify all three
+      numbers against `GET https://openrouter.ai/api/v1/models` at implementation time (no key
+      needed) and use the live values if they moved. 6. Tests: extend `providersLite.test.ts` — qwen route `toMatchObject({ pdf: false, images: true, verified: true })`,
+      gemini-3.5-flash-lite `{ pdf: true, images: true, verified: true }`, and
+      `firstLiteModelForAttachment('openrouter','pdf')`/`('openrouter','image')` return a
+      model whose capabilities actually grant that kind. Fix any list-enumerating assertions
+      that the two new curated entries break (grep: `AiPanelLite.integration.test.tsx`,
+      `arisTranslateController.test.tsx`, `pdf.test.ts`).
       Acceptance: `npx vitest run src/ai --maxWorkers=2 --retry=0` green; `npm run typecheck` green;
       `getLiteModelCapabilities('openrouter','qwen/qwen3-vl-235b-a22b-instruct').pdf === false`
       (the ZDR-leak gate) asserted in a test.
@@ -2033,23 +2027,20 @@ repair loop handle them.
       Files: `src/aris/ai/promptBuilder.ts`, `src/aris/ai/promptBuilder.test.ts`.
       Changes: extend `SYSTEM_PROMPT` (`:101-113`) — keep every existing line byte-identical, then
       append (importing the constants, never hardcoding a second copy — no import cycle:
-      `typeValidation.ts` imports only `contract`/`findings`):
-      1. A compact `ArisAiDraftV1` field spec making the user turn's claim true: top-level
-         `{version:1, models[], objects[], relations[], attributes[], assignments[], uncertainties[]}`;
-         per-entry required/optional fields exactly as `src/aris/ai/contract.ts` defines them
-         (models: logicalId/modelType/names/confidence; objects: logicalId/modelLogicalId/
-         objectType/names/attributes/confidence + optional symbolType/suggestedOrder/evidence;
-         relations: logicalId/modelLogicalId/sourceLogicalId/targetLogicalId/connectionType/
-         confidence + optional names/returnOutcome; attributes with ownerKind/ownerLogicalId;
-         uncertainties with targetLogicalId/kind/message). State: strict JSON, no extra keys,
-         `names`/`values` carry `en`/`ar` strings.
-      2. Closed vocabularies, each on one line: the 12 `ARIS_AI_SUPPORTED_OBJECT_TYPES`
-         (import from `./typeValidation`), the 17 `ARIS_AI_SUPPORTED_CONNECTION_TYPES`, the 3
-         `ARIS_AI_SUPPORTED_RULE_SYMBOL_TYPES`, the 2 `ARIS_AI_SUPPORTED_MODEL_TYPES` (from
-         `./contract`), confidence `high|medium|low`.
-      3. The endpoint cheat-sheet from the census table above (all unambiguous rows + the three
-         disambiguation rules), e.g. `event→function CT_ACTIV_1; function→event CT_CRT_1; …;
-         application system→function CT_SUPP_3; …`.
+      `typeValidation.ts` imports only `contract`/`findings`): 1. A compact `ArisAiDraftV1` field spec making the user turn's claim true: top-level
+      `{version:1, models[], objects[], relations[], attributes[], assignments[], uncertainties[]}`;
+      per-entry required/optional fields exactly as `src/aris/ai/contract.ts` defines them
+      (models: logicalId/modelType/names/confidence; objects: logicalId/modelLogicalId/
+      objectType/names/attributes/confidence + optional symbolType/suggestedOrder/evidence;
+      relations: logicalId/modelLogicalId/sourceLogicalId/targetLogicalId/connectionType/
+      confidence + optional names/returnOutcome; attributes with ownerKind/ownerLogicalId;
+      uncertainties with targetLogicalId/kind/message). State: strict JSON, no extra keys,
+      `names`/`values` carry `en`/`ar` strings. 2. Closed vocabularies, each on one line: the 12 `ARIS_AI_SUPPORTED_OBJECT_TYPES`
+      (import from `./typeValidation`), the 17 `ARIS_AI_SUPPORTED_CONNECTION_TYPES`, the 3
+      `ARIS_AI_SUPPORTED_RULE_SYMBOL_TYPES`, the 2 `ARIS_AI_SUPPORTED_MODEL_TYPES` (from
+      `./contract`), confidence `high|medium|low`. 3. The endpoint cheat-sheet from the census table above (all unambiguous rows + the three
+      disambiguation rules), e.g. `event→function CT_ACTIV_1; function→event CT_CRT_1; …;
+       application system→function CT_SUPP_3; …`.
       Static text only — determinism is preserved by construction (the constants are frozen
       module consts). Budget ≈ +900 prompt tokens (≈ +$0.0003/run at the picks' input rates).
       Tests: extend `promptBuilder.test.ts` "states the core Section 16.5 rules" (`:26-33`) —
@@ -2072,33 +2063,26 @@ repair loop handle them.
       Files: NEW `src/aris/ai/normalizeDraft.ts`, NEW `src/aris/ai/normalizeDraft.test.ts`,
       `src/aris/shell/arisAiGeneration.ts`, `src/aris/shell/arisAiGeneration.test.ts`,
       `src/aris/ai/index.ts` (barrel export).
-      Module contract (`normalizeDraft.ts`, ~120 lines incl. the census table as comments):
-      - `export const NORMALIZED_CONNECTION_FINDING_CODE = 'normalized-connection-type'`
-      - `export function normalizeArisAiDraft(raw: unknown): { value: unknown; rewrites: ArisAiValidationFinding[] }`
-      - Defensive, never throws, copy-on-write (never mutates `raw`; clones only the relation
-        entries it changes plus the containers on the path to them). Preconditions per step —
-        anything not matching passes through untouched for the validators to report:
-        1. `raw` must be a plain object whose `models`/`objects`/`relations` are arrays; build
-           `logicalId → objectType` from object entries that are plain objects with string
-           `logicalId`+`objectType`, and `logicalId → modelType` from model entries likewise.
-        2. For each relation entry that is a plain object with string `connectionType`,
-           `sourceLogicalId`, `targetLogicalId`:
-           a. `connectionType` already in `ARIS_AI_SUPPORTED_CONNECTION_TYPES` → untouched.
-           b. **Case-fold alias**: `connectionType.trim().toUpperCase()` equals a supported code →
-              rewrite to the canonical casing (endpoint types not required).
-           c. **Endpoint census**: resolve both endpoints' object types; look up the pair in the
-              census mapping table above. OT_FUNC→OT_FUNC picks by the owning model's `modelType`
-              (via the relation's `modelLogicalId`; missing/unknown model → default
-              `CT_IS_PREDEC_OF_1`). OT_PERS→OT_FUNC defaults `CT_EXEC_1`; OT_FUNC→OT_ENT_TYPE
-              defaults `CT_HAS_OUT`. Mapping found → rewrite.
-           d. No mapping / unresolved endpoint / non-flow-nor-census pair → untouched.
-        3. Every rewrite emits one warning finding:
-           `finding(NORMALIZED_CONNECTION_FINDING_CODE, '$.relations[<i>].connectionType', 'Rewrote unsupported connection type "<old>" to "<new>" based on <srcType>→<tgtType> endpoints.')`
-           (append `' Assumed the majority mapping; CT_READ_1/CT_MUST_BE_INFO_ABT_1/CT_IS_PRCS_ORNT_SUPER are the alternatives.'`
-           for the three ambiguous defaults).
-      - The rewrite targets are hardcoded `CT_*` literals from the supported set — the normalizer
-        can never introduce forbidden content, and `scanForForbiddenContent` still runs on the
-        normalized value afterwards.
+      Module contract (`normalizeDraft.ts`, ~120 lines incl. the census table as comments): - `export const NORMALIZED_CONNECTION_FINDING_CODE = 'normalized-connection-type'` - `export function normalizeArisAiDraft(raw: unknown): { value: unknown; rewrites: ArisAiValidationFinding[] }` - Defensive, never throws, copy-on-write (never mutates `raw`; clones only the relation
+      entries it changes plus the containers on the path to them). Preconditions per step —
+      anything not matching passes through untouched for the validators to report: 1. `raw` must be a plain object whose `models`/`objects`/`relations` are arrays; build
+      `logicalId → objectType` from object entries that are plain objects with string
+      `logicalId`+`objectType`, and `logicalId → modelType` from model entries likewise. 2. For each relation entry that is a plain object with string `connectionType`,
+      `sourceLogicalId`, `targetLogicalId`:
+      a. `connectionType` already in `ARIS_AI_SUPPORTED_CONNECTION_TYPES` → untouched.
+      b. **Case-fold alias**: `connectionType.trim().toUpperCase()` equals a supported code →
+      rewrite to the canonical casing (endpoint types not required).
+      c. **Endpoint census**: resolve both endpoints' object types; look up the pair in the
+      census mapping table above. OT_FUNC→OT_FUNC picks by the owning model's `modelType`
+      (via the relation's `modelLogicalId`; missing/unknown model → default
+      `CT_IS_PREDEC_OF_1`). OT_PERS→OT_FUNC defaults `CT_EXEC_1`; OT_FUNC→OT_ENT_TYPE
+      defaults `CT_HAS_OUT`. Mapping found → rewrite.
+      d. No mapping / unresolved endpoint / non-flow-nor-census pair → untouched. 3. Every rewrite emits one warning finding:
+      `finding(NORMALIZED_CONNECTION_FINDING_CODE, '$.relations[<i>].connectionType', 'Rewrote unsupported connection type "<old>" to "<new>" based on <srcType>→<tgtType> endpoints.')`
+      (append `' Assumed the majority mapping; CT_READ_1/CT_MUST_BE_INFO_ABT_1/CT_IS_PRCS_ORNT_SUPER are the alternatives.'`
+      for the three ambiguous defaults). - The rewrite targets are hardcoded `CT_*` literals from the supported set — the normalizer
+      can never introduce forbidden content, and `scanForForbiddenContent` still runs on the
+      normalized value afterwards.
       Wiring (`arisAiGeneration.ts`): in the loop after `raw = parseArisAiResponseJson(text)`
       succeeds (`:230`), insert `const normalized = normalizeArisAiDraft(raw)` and validate
       `normalized.value` instead of `raw`; on the success return (`:254-262`) surface
@@ -2127,42 +2111,29 @@ repair loop handle them.
       `src/aris/ai/draftJsonSchema.test.ts`, `src/ArisGenerationPanel.tsx`,
       `src/ai/__tests__/payloadBuilders.test.ts`, `src/ai/__tests__/requestPrivacy.test.ts`
       (extend if request-shape assertions break).
-      Transport (`browserAi.ts`):
-      1. `BuildOpts` (`:92-98`) gains `responseSchema?: { name: string; schema: Record<string, unknown> }`.
-      2. `buildOpenRouterRequest` (`:579-614`): replace the `:596` line with —
-         `if (opts.responseSchema) body.response_format = { type: 'json_schema', json_schema: { name: opts.responseSchema.name, strict: true, schema: opts.responseSchema.schema } }`
-         `else if (opts.jsonMode) body.response_format = { type: 'json_object' }`.
-         Also add `body.usage = { include: true }` unconditionally (OpenRouter accounting field;
-         returns authoritative `usage.cost` that `extractUsage` at `credits.ts:1640` already
-         reads — makes the M8 cost assertion real instead of estimated).
-      3. `buildAnthropicRequest`/`buildGeminiRequest` IGNORE `responseSchema` (documented in a
-         comment — direct-vendor adapters are out of scope this wave).
-      4. `makeBrowserCallLLM` `extra` (`:829-833`) gains `responseSchema?`, threaded into the
-         `buildRequest` call at `:842` for EVERY attempt of the run (first + repair turns — the
-         draft shape is identical on repair).
+      Transport (`browserAi.ts`): 1. `BuildOpts` (`:92-98`) gains `responseSchema?: { name: string; schema: Record<string, unknown> }`. 2. `buildOpenRouterRequest` (`:579-614`): replace the `:596` line with —
+      `if (opts.responseSchema) body.response_format = { type: 'json_schema', json_schema: { name: opts.responseSchema.name, strict: true, schema: opts.responseSchema.schema } }`
+      `else if (opts.jsonMode) body.response_format = { type: 'json_object' }`.
+      Also add `body.usage = { include: true }` unconditionally (OpenRouter accounting field;
+      returns authoritative `usage.cost` that `extractUsage` at `credits.ts:1640` already
+      reads — makes the M8 cost assertion real instead of estimated). 3. `buildAnthropicRequest`/`buildGeminiRequest` IGNORE `responseSchema` (documented in a
+      comment — direct-vendor adapters are out of scope this wave). 4. `makeBrowserCallLLM` `extra` (`:829-833`) gains `responseSchema?`, threaded into the
+      `buildRequest` call at `:842` for EVERY attempt of the run (first + repair turns — the
+      draft shape is identical on repair).
       Schema module (`draftJsonSchema.ts`): `export function buildArisAiDraftJsonSchema(): Record<string, unknown>`
       — a hand-written JSON Schema mirroring `contract.ts` EXACTLY (no new dependency; do NOT add
       zod-to-json-schema). Every object: `additionalProperties: false`. `required` arrays mirror
       zod optionality precisely — **optional fields are omitted from `required` and are NOT
       nullable** (zod `.optional()` rejects explicit `null`, so a nullable schema would produce
-      drafts the validator rejects):
-      - draft: required `[version, models, objects, relations, attributes, assignments, uncertainties]`; `version: {const: 1}`.
-      - model: required `[logicalId, modelType, names, confidence]`; `modelType` enum = `ARIS_AI_SUPPORTED_MODEL_TYPES`.
-      - object: required `[logicalId, modelLogicalId, objectType, names, attributes, confidence]`;
-        `objectType` enum = `ARIS_AI_SUPPORTED_OBJECT_TYPES`; `symbolType` stays a FREE string —
-        deliberate deviation from the research note: `buildAmlFromArisAiDraft`
-        (`src/aris/shell/arisAiCreate.ts:133,197`) uses `object.symbolType ?? DEFAULT_SYMBOLS[…]`
-        for ALL object types, so locking it to the 3 rule operators would destroy legitimate
-        satellite symbol choices; the rule-symbol vocabulary is still enforced for OT_RULE by
-        `typeValidation.ts`.
-      - relation: required `[logicalId, modelLogicalId, sourceLogicalId, targetLogicalId, connectionType, confidence]`;
-        **`connectionType` enum = `ARIS_AI_SUPPORTED_CONNECTION_TYPES`** (the point of the lane —
-        `CT_FLOW` becomes unrepresentable on schema-enforcing routes).
-      - attribute: required `[logicalId, ownerKind, ownerLogicalId, attributeType, values, confidence]`; `ownerKind` enum.
-      - assignment: required `[logicalId, assignmentType, objectLogicalId, assignedModelLogicalId, confidence]`; `assignmentType` enum `['linked-model']`.
-      - uncertainty: required `[targetLogicalId, kind, message]`; `kind` enum = `ARIS_AI_UNCERTAINTY_KINDS`.
-      - localized text (`names`/`values`): properties `en`/`ar` (`type: 'string', minLength: 1`), no `required`, `additionalProperties: false`.
-      - confidence everywhere: enum `['high','medium','low']`.
+      drafts the validator rejects): - draft: required `[version, models, objects, relations, attributes, assignments, uncertainties]`; `version: {const: 1}`. - model: required `[logicalId, modelType, names, confidence]`; `modelType` enum = `ARIS_AI_SUPPORTED_MODEL_TYPES`. - object: required `[logicalId, modelLogicalId, objectType, names, attributes, confidence]`;
+      `objectType` enum = `ARIS_AI_SUPPORTED_OBJECT_TYPES`; `symbolType` stays a FREE string —
+      deliberate deviation from the research note: `buildAmlFromArisAiDraft`
+      (`src/aris/shell/arisAiCreate.ts:133,197`) uses `object.symbolType ?? DEFAULT_SYMBOLS[…]`
+      for ALL object types, so locking it to the 3 rule operators would destroy legitimate
+      satellite symbol choices; the rule-symbol vocabulary is still enforced for OT_RULE by
+      `typeValidation.ts`. - relation: required `[logicalId, modelLogicalId, sourceLogicalId, targetLogicalId, connectionType, confidence]`;
+      **`connectionType` enum = `ARIS_AI_SUPPORTED_CONNECTION_TYPES`** (the point of the lane —
+      `CT_FLOW` becomes unrepresentable on schema-enforcing routes). - attribute: required `[logicalId, ownerKind, ownerLogicalId, attributeType, values, confidence]`; `ownerKind` enum. - assignment: required `[logicalId, assignmentType, objectLogicalId, assignedModelLogicalId, confidence]`; `assignmentType` enum `['linked-model']`. - uncertainty: required `[targetLogicalId, kind, message]`; `kind` enum = `ARIS_AI_UNCERTAINTY_KINDS`. - localized text (`names`/`values`): properties `en`/`ar` (`type: 'string', minLength: 1`), no `required`, `additionalProperties: false`. - confidence everywhere: enum `['high','medium','low']`.
       Panel wiring (`ArisGenerationPanel.tsx` `buildSend`, `:534-557`): compute
       `const responseSchema = providerId === 'openrouter' && OPENROUTER_STRUCTURED_OUTPUT_MODELS.has(modelId.trim()) ? { name: 'aris_ai_draft_v1', schema: buildArisAiDraftJsonSchema() } : undefined`
       and pass it in the `makeBrowserCallLLM` extra. All other routes keep today's `json_object`.
@@ -2235,72 +2206,63 @@ repair loop handle them.
       `src/aris/ai/createFromPdf.seq2.test.ts`; OFFLINE step in `reference/AnimalWF/png/`
       (outside the repo — see below).
       **Rasterization (offline, once, before the live runs; NOT in CI, NOT committed):**
-      ```bash
-      mkdir -p /home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/png
-      pdftoppm -png -r 150 \
-        /home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/pdf/Register_Animal_Owner_Profile_Draft03.pdf \
-        /home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/png/Register_Animal_Owner_Profile_Draft03
-      ```
+      `bash
+    mkdir -p /home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/png
+    pdftoppm -png -r 150 \
+      /home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/pdf/Register_Animal_Owner_Profile_Draft03.pdf \
+      /home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/png/Register_Animal_Owner_Profile_Draft03
+    `
       → produces `Register_Animal_Owner_Profile_Draft03-1.png` (A3 842×1191 pt @150 dpi ≈
       1754×2481 px). Verify size < 5 MiB (`IMAGE_SIZE_LIMITS.openrouter`, `src/ai/pdf.ts:128-132`);
       if over, re-run at `-r 120`. `pdftoppm` is present at `/usr/bin/pdftoppm`. The `reference/`
       tree lives outside the git repo, so committing it is structurally impossible from
       `desktop/` — still, never copy the PNG into the repo.
-      Fixture changes:
-      - KEEP `SEQ2_OPENROUTER_MODEL_ID = 'z-ai/glm-5.2'` (`:32`) — it names the RECORDED
-        fixture's model; mocked tests stay pinned to it (deterministic, env-free).
-      - Add `export const SEQ2_VISION_MODEL_ID = process.env.SEQ2_VISION_MODEL ?? 'google/gemini-3.5-flash-lite'`
-        (live-mode arm selector), `export const SEQ2_LIVE_SOFT_TARGET = 0.65`,
-        `export const SEQ2_LIVE_MAX_COST_USD = 0.1`.
-      Test changes:
-      - `SEQ2_MAX_TOKENS` (`:69`) → `16_000` with a comment tying it to the panel's
-        `MAX_ATTACHMENT_TOKENS` (M6); update the mocked `max_tokens` assertion (`:185`).
-      - `makeSeq2Send(apiKey, modelId = SEQ2_OPENROUTER_MODEL_ID)` — pass the model through to
-        `makeBrowserCallLLM`; when `OPENROUTER_STRUCTURED_OUTPUT_MODELS.has(modelId)` also pass
-        `responseSchema: { name: 'aris_ai_draft_v1', schema: buildArisAiDraftJsonSchema() }`
-        (exactly mirroring the panel's M5 wiring).
-      - Update the two existing mocked request-shape assertions for the M5 transport additions
-        (`usage: {include:true}`; glm-5.2 still gets `response_format: {type:'json_object'}`).
-      - NEW mocked test "json_schema request shape for structured-output vision models": send via
-        `makeSeq2Send('k', 'google/gemini-3.5-flash-lite')` (literal, NOT the env-dependent
-        const), replay the recorded body, assert `response_format.type === 'json_schema'`,
-        `json_schema.name === 'aris_ai_draft_v1'`, `json_schema.strict === true`, and
-        `json_schema.schema.properties.relations.items.properties.connectionType.enum` equals
-        `ARIS_AI_SUPPORTED_CONNECTION_TYPES`; pipeline still returns the recorded draft.
-      - NEW mocked test "invented connection types are normalized without a repair turn": replay a
-        variant of the recorded body with `rel-trigger-login` set to `CT_FLOW` (evt→func) and one
-        func→evt relation set to `CT_SEQ` → expect `ok:true`, `requestsSent === 1`,
-        `semanticAttemptsUsed === 0`, exactly 2 `normalized-connection-type` warnings, and the
-        final draft carrying `CT_ACTIV_1`/`CT_CRT_1`.
-      - Live PDF test (existing, reshaped): model = `SEQ2_VISION_MODEL_ID`; keep the in-body
-        `OPENROUTER_API_KEY` early return FIRST; then a capability mirror-guard —
-        `if (!getLiteModelCapabilities('openrouter', SEQ2_VISION_MODEL_ID).pdf) { console.warn('…image-only model; PDF arm skipped by the same gate the product enforces'); return }`
-        (this is how the qwen sweep legally skips the PDF cell — never send qwen a PDF).
-        Usage capture: wrap the real `fetch` (`const realFetch = globalThis.fetch` +
-        `vi.stubGlobal('fetch', …)` pass-through) — for calls to
-        `https://openrouter.ai/api/v1/chat/completions`, `res.clone()`, parse JSON, run
-        `extractUsage('openrouter', json)`, accumulate `providerCostUsd ?? estimateCostUsd(SEQ2_VISION_MODEL_ID, inputTokens, outputTokens)`
-        (PRICES rows exist per M1) and the request count; return the untouched original response.
-        `afterEach` already unstubs.
-        Assertions (the A/B hard gates): `result.ok`; **`result.semanticAttemptsUsed <= 1`**;
-        `result.warnings.filter(w => w.code === 'normalized-connection-type').length <= 3`
-        (zero `unsupported-connection-type` findings survive by construction on success — the ≤3
-        normalizer bound proves the model mostly speaks the vocabulary rather than being
-        rescued); MT_EEPC + AML assertions unchanged; **`score >= 0.5`** (existing floor) and a
-        SOFT target — `if (breakdown.score < SEQ2_LIVE_SOFT_TARGET) console.warn('below soft target 0.65 …')`
-        (never a hard fail; glm-5.2's OCR-blind runs tuned the 0.5 floor — a model that sees
-        arrows should beat it); **total estimated cost < SEQ2_LIVE_MAX_COST_USD ($0.10)** hard
-        when every request yielded usage, `console.warn` otherwise. Finish with ONE grep-able
-        line: `SEQ2-AB model=<id> mode=pdf score=<s> fn=<..> ev=<..> mix=<..> conn=<..> repairs=<n> requests=<n> normalized=<n> costUsd=<c>`.
-      - NEW live IMAGE test (covers the picture tab the live suite never exercised): same
-        skeleton; read `reference/AnimalWF/png/Register_Animal_Owner_Profile_Draft03-1.png`
-        (accept a no-suffix candidate too, mirroring the PDF candidates pattern `:356-360`);
-        key-gate FIRST, then if the PNG is missing fail loudly with the exact `pdftoppm` command
-        in the message (a keyed run without the raster is an operator error, not a skip);
-        attachment `{ kind:'image', mediaType:'image/png', … }`; prompt mirrors the panel's
-        picture path exactly — `buildArisAiPrompt({ modelName: 'Request to Register Animal Owner Profile', modelType: 'auto-detect', description: buildImageInstruction('Register Animal Owner Profile') })`;
-        model = `SEQ2_VISION_MODEL_ID` (no pdf-capability guard — both arms run this cell); same
-        assertions + `mode=image` summary line; same 900 s timeout.
+      Fixture changes: - KEEP `SEQ2_OPENROUTER_MODEL_ID = 'z-ai/glm-5.2'` (`:32`) — it names the RECORDED
+      fixture's model; mocked tests stay pinned to it (deterministic, env-free). - Add `export const SEQ2_VISION_MODEL_ID = process.env.SEQ2_VISION_MODEL ?? 'google/gemini-3.5-flash-lite'`
+      (live-mode arm selector), `export const SEQ2_LIVE_SOFT_TARGET = 0.65`,
+      `export const SEQ2_LIVE_MAX_COST_USD = 0.1`.
+      Test changes: - `SEQ2_MAX_TOKENS` (`:69`) → `16_000` with a comment tying it to the panel's
+      `MAX_ATTACHMENT_TOKENS` (M6); update the mocked `max_tokens` assertion (`:185`). - `makeSeq2Send(apiKey, modelId = SEQ2_OPENROUTER_MODEL_ID)` — pass the model through to
+      `makeBrowserCallLLM`; when `OPENROUTER_STRUCTURED_OUTPUT_MODELS.has(modelId)` also pass
+      `responseSchema: { name: 'aris_ai_draft_v1', schema: buildArisAiDraftJsonSchema() }`
+      (exactly mirroring the panel's M5 wiring). - Update the two existing mocked request-shape assertions for the M5 transport additions
+      (`usage: {include:true}`; glm-5.2 still gets `response_format: {type:'json_object'}`). - NEW mocked test "json_schema request shape for structured-output vision models": send via
+      `makeSeq2Send('k', 'google/gemini-3.5-flash-lite')` (literal, NOT the env-dependent
+      const), replay the recorded body, assert `response_format.type === 'json_schema'`,
+      `json_schema.name === 'aris_ai_draft_v1'`, `json_schema.strict === true`, and
+      `json_schema.schema.properties.relations.items.properties.connectionType.enum` equals
+      `ARIS_AI_SUPPORTED_CONNECTION_TYPES`; pipeline still returns the recorded draft. - NEW mocked test "invented connection types are normalized without a repair turn": replay a
+      variant of the recorded body with `rel-trigger-login` set to `CT_FLOW` (evt→func) and one
+      func→evt relation set to `CT_SEQ` → expect `ok:true`, `requestsSent === 1`,
+      `semanticAttemptsUsed === 0`, exactly 2 `normalized-connection-type` warnings, and the
+      final draft carrying `CT_ACTIV_1`/`CT_CRT_1`. - Live PDF test (existing, reshaped): model = `SEQ2_VISION_MODEL_ID`; keep the in-body
+      `OPENROUTER_API_KEY` early return FIRST; then a capability mirror-guard —
+      `if (!getLiteModelCapabilities('openrouter', SEQ2_VISION_MODEL_ID).pdf) { console.warn('…image-only model; PDF arm skipped by the same gate the product enforces'); return }`
+      (this is how the qwen sweep legally skips the PDF cell — never send qwen a PDF).
+      Usage capture: wrap the real `fetch` (`const realFetch = globalThis.fetch` +
+      `vi.stubGlobal('fetch', …)` pass-through) — for calls to
+      `https://openrouter.ai/api/v1/chat/completions`, `res.clone()`, parse JSON, run
+      `extractUsage('openrouter', json)`, accumulate `providerCostUsd ?? estimateCostUsd(SEQ2_VISION_MODEL_ID, inputTokens, outputTokens)`
+      (PRICES rows exist per M1) and the request count; return the untouched original response.
+      `afterEach` already unstubs.
+      Assertions (the A/B hard gates): `result.ok`; **`result.semanticAttemptsUsed <= 1`**;
+      `result.warnings.filter(w => w.code === 'normalized-connection-type').length <= 3`
+      (zero `unsupported-connection-type` findings survive by construction on success — the ≤3
+      normalizer bound proves the model mostly speaks the vocabulary rather than being
+      rescued); MT_EEPC + AML assertions unchanged; **`score >= 0.5`** (existing floor) and a
+      SOFT target — `if (breakdown.score < SEQ2_LIVE_SOFT_TARGET) console.warn('below soft target 0.65 …')`
+      (never a hard fail; glm-5.2's OCR-blind runs tuned the 0.5 floor — a model that sees
+      arrows should beat it); **total estimated cost < SEQ2_LIVE_MAX_COST_USD ($0.10)** hard
+      when every request yielded usage, `console.warn` otherwise. Finish with ONE grep-able
+      line: `SEQ2-AB model=<id> mode=pdf score=<s> fn=<..> ev=<..> mix=<..> conn=<..> repairs=<n> requests=<n> normalized=<n> costUsd=<c>`. - NEW live IMAGE test (covers the picture tab the live suite never exercised): same
+      skeleton; read `reference/AnimalWF/png/Register_Animal_Owner_Profile_Draft03-1.png`
+      (accept a no-suffix candidate too, mirroring the PDF candidates pattern `:356-360`);
+      key-gate FIRST, then if the PNG is missing fail loudly with the exact `pdftoppm` command
+      in the message (a keyed run without the raster is an operator error, not a skip);
+      attachment `{ kind:'image', mediaType:'image/png', … }`; prompt mirrors the panel's
+      picture path exactly — `buildArisAiPrompt({ modelName: 'Request to Register Animal Owner Profile', modelType: 'auto-detect', description: buildImageInstruction('Register Animal Owner Profile') })`;
+      model = `SEQ2_VISION_MODEL_ID` (no pdf-capability guard — both arms run this cell); same
+      assertions + `mode=image` summary line; same 900 s timeout.
       Acceptance (CI-safe, no key): `npx vitest run src/aris/ai/createFromPdf.seq2.test.ts --maxWorkers=1 --retry=0`
       green with the live tests early-returning; `npm run check:no-skips` green (in-body returns,
       no `.skip`).
@@ -2315,7 +2277,7 @@ repair loop handle them.
    gemini×pdf, gemini×image, qwen×image; qwen×pdf self-skips via the capability guard):
    - `SEQ2_VISION_MODEL=google/gemini-3.5-flash-lite npx vitest run src/aris/ai/createFromPdf.seq2.test.ts --maxWorkers=1 --retry=0`
    - `SEQ2_VISION_MODEL=qwen/qwen3-vl-235b-a22b-instruct npx vitest run src/aris/ai/createFromPdf.seq2.test.ts --maxWorkers=1 --retry=0`
-   Expected spend ≈ $0.04/cell (gemini) / ≈ $0.03 (qwen), ≤ ~$0.25 total incl. a repair turn.
+     Expected spend ≈ $0.04/cell (gemini) / ≈ $0.03 (qwen), ≤ ~$0.25 total incl. a repair turn.
 4. Copy each `SEQ2-AB …` line into the outcome ledger below. If a cell fails its hard gates,
    diagnose (truncation? schema 400 → M5 config fallback? repair exhaustion?), fix, re-run —
    record every attempt.
@@ -2331,12 +2293,12 @@ repair loop handle them.
 
 ### Wave 8 outcome ledger (fill during step 4; planning-agent template)
 
-| model | mode | score (fn/ev/mix/conn) | repairs | requests | normalized | cost USD | json_schema honored? | hard gates |
-|---|---|---|---|---|---|---|---|---|
-| google/gemini-3.5-flash-lite | pdf | | | | | | | |
-| google/gemini-3.5-flash-lite | image | | | | | | | |
-| qwen/qwen3-vl-235b-a22b-instruct | image | | | | | | | |
-| qwen/qwen3-vl-235b-a22b-instruct | pdf | — capability-gated skip (by design) | | | | | | |
+| model                            | mode  | score (fn/ev/mix/conn)              | repairs | requests | normalized | cost USD | json_schema honored? | hard gates |
+| -------------------------------- | ----- | ----------------------------------- | ------- | -------- | ---------- | -------- | -------------------- | ---------- |
+| google/gemini-3.5-flash-lite     | pdf   |                                     |         |          |            |          |                      |            |
+| google/gemini-3.5-flash-lite     | image |                                     |         |          |            |          |                      |            |
+| qwen/qwen3-vl-235b-a22b-instruct | image |                                     |         |          |            |          |                      |            |
+| qwen/qwen3-vl-235b-a22b-instruct | pdf   | — capability-gated skip (by design) |         |          |            |          |                      |            |
 
 Winner promoted to first vision slot: ______ · schema fallbacks applied: ______ · notes: ______
 
@@ -2347,8 +2309,7 @@ Winner promoted to first vision slot: ______ · schema fallbacks applied: ______
       `ok`, `semanticAttemptsUsed ≤ 1`, score ≥ 0.5 (soft-target 0.65 logged), cost < $0.10/run,
       ≤ 3 normalizer rewrites, zero surviving `unsupported-connection-type` findings.
 - [ ] **The CT_FLOW class is dead twice over**: enum-locked `json_schema` on both A/B routes
-      (or a ledger-recorded config fallback), AND the deterministic normalizer + teaching finding
-      + prompt vocabulary protect every route including non-structured-output ones (mocked
+      (or a ledger-recorded config fallback), AND the deterministic normalizer + teaching finding + prompt vocabulary protect every route including non-structured-output ones (mocked
       coverage in M4/M8 proves the no-repair-turn recovery).
 - [ ] **MAX_TOKENS fix verified**: attachment runs (and their repair turns) request 16_000; the
       mocked request-shape test pins it.
@@ -2359,3 +2320,484 @@ Winner promoted to first vision slot: ______ · schema fallbacks applied: ______
 - [ ] Full verify set green (`typecheck`, `lint`, `npm test`, `check:no-skips`); outcome ledger
       filled; winner promoted; the OpenRouter key and the private `reference/` tree (incl. the
       new `png/`) never appear in any commit.
+
+## Wave 9 — PDF-fidelity pass 2 (deep render + re-baseline)
+
+> **Section authored 2026-07-31 by the Wave-9 planning agent.** Basis: the root-caused diff plan at
+> `/home/ahmed/.claude/jobs/501f0ce4/tmp/pdf-fidelity-fixplan.md` (all §-references below are into
+> that file; its §0 "Measured ground truth" table is the calibration source for every number in
+> this wave) and the evidence crops at `/home/ahmed/.claude/jobs/501f0ce4/tmp/pdf-fidelity-crops/`
+> (`cmp-*.png` = ORIGINAL left / GENERATED right; `crop.py`/`crop2.py`/`crop3.py` in that dir are
+> reusable). All file/line anchors re-verified against the working tree at `fd763d2`.
+>
+> **What pass 1 already shipped (commits `44e94bc` / `a92acb5` — do NOT re-do):** selectable Latin
+> text via an invisible jsPDF text overlay (`exportArisPdf.ts` `overlayArisTextRuns` +
+> `collectArisExportTextRuns`), stripped invisible `<Lane>` frames from the export
+> (`EXPORT_STRIP_SELECTOR` + `canvasSync.externalNamePlacement` guard), event-glyph convex
+> geometry + vertical 25 % divider (`shapes.ts` `eventShape`), Requirements duplicate-caption
+> suppression. Pass 1 deliberately kept the IMPORTED RENDER byte-stable so `test:aris:animalwf`
+> stayed green untouched. **Pass 2 is the opposite contract: every lane below changes the imported
+> render on purpose, so every lane carries its own authorized re-baseline.**
+>
+> **Deliberately OUT of this wave** (recorded now so nobody "helpfully" folds them in): the
+> svg2pdf true-vector export (fixplan §1 preferred path), A3-portrait page geometry (§2), legend
+> tier-1 restyle (§3.3), header-band styling / model-attribute styled runs (§3.4 + §6.3),
+> Requirements interior text-area anchoring beyond pass-1's suppression (§6.1 fix 2 residual), and
+> the caption vertical clamp (§6.2 fix 2). They are pass-3 candidates; none blocks any lane here.
+
+### Worker routing (task contract for the orchestrator)
+
+Each lane is tagged `[sonnet]` (mechanical / numeric / localized) or `[opus]` (judgment /
+visual-calibration / multi-file / oracle-re-baseline). Dispatch `[sonnet]` lanes to a
+sonnet-medium worker and `[opus]` lanes to opus-4.8, per goal.md's dispatch rules. Lanes execute
+**strictly in order P1 → P11** (they share `renderer.ts` / `shapes.ts` / `canvasSync.ts`;
+sequential execution is the contention contract, exactly like Wave 8's M-lanes). Run each lane's
+verify set before starting the next.
+
+| Order | Lane                                              | Worker |
+| ----- | ------------------------------------------------- | ------ |
+| 1     | P1 arrowhead truth table                          | sonnet |
+| 2     | P2 stroke system (pen unit + marker size)         | sonnet |
+| 3     | P3 XOR operator circle                            | sonnet |
+| 4     | P4 band / content-box / badge geometry            | sonnet |
+| 5     | P5 real font metrics (AFM em-tables)              | sonnet |
+| 6     | P6 Reference-Laws title anchor                    | sonnet |
+| 7     | P7 RACI `Port="NW"` placement calibration         | opus   |
+| 8     | P8 function-green + color-drift adjudication      | opus   |
+| 9     | P9 icon-set redraw (ARIS filled-white originals)  | opus   |
+| 10    | P10 Arabic selectable text in the PDF export      | opus   |
+| 11    | P11 OLE decode tier 1 (DMT logo) + tier-2 verdict | opus   |
+
+### What currently pins the imported render (the oracle inventory)
+
+Binding map — every lane names which of these it re-baselines; anything not named must stay green
+untouched:
+
+1. **Expectation JSONs** (OUTSIDE the repo, never committed):
+   `/home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/expected/{register-owner,renew-profile}.expected.json`
+   (iterate, via `test:aris:animalwf` → `src/aris/fidelity/{registerOwner,renewProfile}.animalwf.test.ts`)
+   and `{transfer-citizens,transfer-citizens-companies}.expected.json` (holdout, via
+   `test:aris:animalwf:holdout`). They pin **topology + text + `symbolNum` + decoded occurrence
+   `fill`** (`compare.ts` reads `occurrence.style.fillColor` through `occurrenceColorToCss`), NOT
+   arrows, pen widths, wraps, icons, or label rects. ⇒ Only **P8** (a fill-value change) can touch
+   them; every other lane leaves all four JSONs byte-identical.
+2. **In-repo animalwf suites** (run via `test:aris:animalwf`):
+   - `src/aris/canvas/attributeLabels.animalwf.test.ts:145-165` — "a marker-end arrowhead on
+     EVERY connection" for both iterate models. **Directly conflicts with P1**; P1 rewrites it.
+   - `src/aris/canvas/connectionLabels.animalwf.test.ts:279-321` — "centres every placement on
+     its route midpoint plus the source offsets" for all 123 placements. **Conflicts with P7**
+     (the `Port="NW"` RACI badges move); P7 splits it by port.
+   - `src/aris/canvas/printFrame.animalwf.test.ts` — header frame/value anchors (:160-195), org
+     block `data-aris-ole-pending === 'true'` (:199-204, **conflicts with P11**), 19-tile legend
+     (:211-229), per-model RACI letter sets (:236-252, letters only — survives P7), Reference-Laws
+     box rect + `stroke #000000` (:259-271), numbering below cards (:278-300).
+   - `src/aris/renderer/animalWfRealData.animalwf.test.ts:86-88` — pins
+     `fidelityByKind['unsupported-ole-rendering'] === 14` (**conflicts with P11**) and
+     `missing-template === 8`.
+   - `src/aris/canvas/typography.animalwf.test.ts` — inequality-based (font sizes, ≥3 multiline,
+     line pitch ×1.15); survives P5 but must be re-run there.
+3. **In-repo unit suites pinning exact render values:**
+   `src/aris/canvas/connectionAppearance.test.ts:85-100` (`strokeWidth '3px'`/`'10px'`, marker
+   ids, explicit `SrcArrow`/`TgtArrow` override behavior), `src/aris/symbols/symbols.test.ts:104`
+   (function accent `'#339900'`) / `:107-130` (36 distinct fingerprints — derived, uniqueness
+   only) / `:150-164,184` (icon identity per catalogId), `src/aris/canvas/legend.test.ts:99-112`
+   (accent `'#339900'`/`'#edbbdc'`, 19 tiles), `src/aris/canvas/renderer.dmt.test.ts` (structural:
+   6-point event surface, 2 function icon polygons, app-window `16/23` rect ratio — the ratio pin
+   conflicts with P9), `src/aris/renderer/textWrap.test.ts` + `typography.test.ts` +
+   `rendererTypography.test.ts` (wrap fixtures — conflict with P5), `freeTextLayout.test.ts`
+   (conflicts with P6), `raci.test.ts` (letters only).
+4. **e2e:** `tests/e2e/aris-sequence-1.spec.ts` — exported-PDF ink-structure similarity
+   `SIMILARITY_THRESHOLD = 0.75` against the reference PDFs (:58,:150-169). Every P-lane moves
+   this score TOWARD the reference; record the per-model score before/after each lane (the spec
+   logs it) and treat any decrease as a lane failure. `aris-fidelity-screenshots.spec.ts` pins
+   only counts, no pixels. No e2e pins stroke widths or arrow presence (worker re-greps to
+   confirm before touching).
+
+### The re-baseline protocol (binding for EVERY lane in this wave)
+
+1. **Implement** the render change (test-first where a pure function allows it).
+2. **Crop-verify against the reference PDF — the arbiter is the original PDF crop, never the old
+   expectation or test value.** Loop (chromium is the pixel oracle):
+
+   ```bash
+   npm run build:aris                                    # rebuilds dist/index.html + release artifact
+   npx playwright test tests/e2e/aris-sequence-1.spec.ts --project=chromium
+   #   → exported PDFs at /home/ahmed/.claude/jobs/501f0ce4/tmp/pdf/seq1/register-owner-chromium.pdf (+ renew-profile)
+   pdftoppm -r 300 -png /home/ahmed/.claude/jobs/501f0ce4/tmp/pdf/seq1/register-owner-chromium.pdf gen
+   # re-crop the SAME regions with crop.py/crop2.py from the crops dir and diff side-by-side vs
+   # /home/ahmed/.claude/jobs/501f0ce4/tmp/pdf-fidelity-crops/orig-*.png / cmp-*.png
+   ```
+
+   The lane report names each crop inspected and the verdict. A lane is not done until its named
+   crops match the original (within print-raster tolerance).
+
+3. **Re-baseline in-repo assertions in the same lane/commit as the code change** — an AUTHORIZED
+   change, not assertion-weakening: update exactly the assertions the lane lists, keep every
+   structural invariant untouched (281 bounds / 269 routes / 123 placements / orthogonality /
+   z-order / counts / letters), and never touch an assertion the lane does not list.
+4. **Oracle JSONs (P8 only).** The four expectation JSONs live outside the repo and are never
+   committed. An authorized value change is applied as a **mechanical, model-independent
+   transform run uniformly over ALL FOUR files** (iterate + holdout together — same rule, no
+   per-model hand edits), the same way Wave 6 V3 re-based expectations onto PDF-correct colors.
+   Example shape (green decision, if P8 changes the value):
+
+   ```bash
+   node -e 'const fs=require("fs");for(const f of process.argv.slice(1)){fs.writeFileSync(f,fs.readFileSync(f,"utf8").replaceAll("\"#009933\"","\"#<NEW>\""))}' \
+     /home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/expected/*.expected.json
+   ```
+
+   The exact command + per-file before/after sha256 go into the Wave-9 ledger. **The orchestrator
+   runs/sanctions the transform** (workers may not edit holdout files); topology/counts/names in
+   the JSONs never change in this wave.
+
+5. **Holdout discipline.** `test:aris:animalwf:holdout` is NOT part of any lane's inner loop. It
+   runs exactly twice in this wave: once immediately after a sanctioned P8 oracle transform (to
+   prove the transform, orchestrator-run), and once at the Wave-9 exit gate. Nothing is ever
+   tuned against a holdout.
+6. **Per-lane gate** (in addition to lane-specific verify commands):
+
+   ```bash
+   npm run test:aris:animalwf        # must be green at the END of every lane — never left red between lanes
+   npx vitest run <lane test paths>
+   npm run typecheck && npm run lint && npm run check:no-skips && npm run check:ui-copy
+   npx prettier --write <touched files>
+   ```
+
+### Lanes (strictly in order; each lists exact change → crop-verify → re-baseline → acceptance)
+
+- [ ] **P1 `[sonnet]` — Arrowhead truth table: prune arrow-less connection types.**
+      Files: `src/aris/canvas/renderer.ts` (`DIRECTED_CONNECTION_TYPES` :94-117),
+      `src/aris/canvas/attributeLabels.animalwf.test.ts` (:145-165 rewrite),
+      `src/aris/canvas/connectionAppearance.test.ts` (extend).
+      Change (fixplan §5.2): all 93 register CxnOcc carry `SrcArrow="0" TgtArrow="0"` (= default),
+      so the default-arrow set IS the render. Prune it to the reference truth table. Seed (verify
+      each against `orig-1.png` / crops before finalizing — enumerate every distinct
+      `CxnDef.Type` across all 8 models first): **KEEP arrow at target** (control flow + outputs + informed) — `CT_ACTIV_1`, `CT_CRT_1`, `CT_LEADS_TO_1`, `CT_LEADS_TO_2`,
+      `CT_IS_EVAL_BY_1`, `CT_IS_PREDEC_OF_1`, `CT_CRT_OUT_TO`, `CT_HAS_OUT`,
+      `CT_MUST_BE_INFO_ABT_1` (arrow visible at fn 14/03 — `cmp-approve14.png`), and align
+      `CT_DECID_ON` + `CT_MUST_BE_CONSLT_ABT_1` with the I-row (0 occurrences in AnimalWF; the
+      manual's RACI family shows the arrow at the Function). **REMOVE** (plain line in the
+      original) — `CT_EXEC_1`, `CT_EXEC_2` (R-role — `cmp-zoom-raci-r.png`), `CT_SUPP_3`
+      (TAMM / Smart Hub / UAE Pass / DED — `cmp-ded.png`), `CT_IS_INP_FOR`, and
+      verify-then-decide `CT_READ_1`, `CT_REFS_TO_2`, `CT_AFFECTS` from the crops
+      (`cmp-ded.png`, `cmp-requirements.png`). Org-chart types (`CT_IS_COMPOUND_OF_1`,
+      `CT_IS_ORG_MANAGER_1`, `CT_IS_TECH_SUPER_1`, `CT_OCCUPIES_1`) have no reference sheet —
+      leave them in the set, marked `// unverified-by-reference` in a comment.
+      Explicit `SrcArrow`/`TgtArrow` occurrence overrides keep winning (`sourceArrow()` fallback
+      logic untouched — `connectionAppearance.test.ts` explicit-override case must stay green
+      unmodified).
+      Crop-verify: `cmp-ded.png` (no arrow into the green box), `cmp-zoom-raci-r.png` (R plain
+      line), `cmp-approve14.png` (I keeps its arrow), `cmp-zoom-funcbadge.png`.
+      Re-baseline: REWRITE `attributeLabels.animalwf.test.ts:145-165` from "marker-end on every
+      connection" into a per-connection-type truth-table test: export the final table (or derive
+      it from `DIRECTED_CONNECTION_TYPES`), walk every connection of BOTH iterate models, assert
+      `marker-end` presence `===` table[type] in both directions, assert ≥ 1 arrow-less type
+      actually occurred (guards the prune took effect), and keep the shared-`<defs>`-marker
+      assertion. Grep `tests/e2e` for arrow-presence assumptions (none known).
+      Acceptance: rewritten suite green for both models; `connectionAppearance` green with the
+      explicit-override case unmodified; `test:aris:animalwf` green; crops match; ledger row
+      records the final truth table (type → arrow yes/no → evidence crop).
+
+- [ ] **P2 `[sonnet]` — Stroke system: `ARIS_PEN_UNIT` + arrowhead size + fallback stroke color.**
+      Files: `src/aris/canvas/renderer.ts` (`drawConnection` :1099-1104, `ensureConnectionArrowMarker`
+      :661-697, `resolvePaint` :240-250, `CONNECTION_STROKE` :87), `src/aris/canvas/printFrame.ts`
+      (`drawGraphicFrames` :526), `src/aris/canvas/connectionAppearance.test.ts`, plus any test a
+      grep for pinned widths surfaces (`occurrenceStyle.test.ts`, `printFrame.test.ts`).
+      Change (fixplan §5.3/§5.4/§5.5): ARIS logical pen width 1 ≈ 0.265 mm ≈ 2.65 canvas units;
+      ours paints 1 unit (≈2.6× too thin), and the marker V is 8×8 units vs the original's ≈16
+      long × 34 across. (1) Export `ARIS_PEN_UNIT = 2.646` from `renderer.ts` and multiply every
+      SOURCE pen width by it: `drawConnection` (`strokeWidth = width * ARIS_PEN_UNIT`,
+      absent/default width 1 → 2.646), `resolvePaint.strokeWidth` (occurrence pen overrides),
+      `printFrame.drawGraphicFrames` (`Math.max(1, (penWidth ?? 1)) * ARIS_PEN_UNIT`);
+      **descriptor-authored primitive widths stay untouched** (already visually calibrated).
+      (2) Marker (`ensureConnectionArrowMarker`): `markerWidth 18`, `markerHeight 36`, `refX 16`,
+      `refY 17`, open path `M0,0 L16,17 L0,34` stroke-width ≈ 2.646, filled path same + `z`;
+      `refX = length` keeps the tip ON the target edge; `markerUnits userSpaceOnUse` stays.
+      (3) `CONNECTION_STROKE` fallback `#475569` → `#000000` (applies only to sources without
+      pens; AnimalWF pens already decode to black — print parity, §5.5).
+      Crop-verify: `cmp-zoom-arrowhead.png` (V ≈ 34 across × 16 along, black, tip at target),
+      `cmp-gate-merge.png`, `cmp-reflaws.png` (frame now ≈0.36 pt at print scale), overview
+      `orig-1-overview.png` vs a fresh gen overview (line weight parity).
+      Re-baseline: `connectionAppearance.test.ts` `'3px'` → `'7.938px'` and `'10px'` → `'26.46px'`
+      (Pen Width 3/10 × 2.646); marker-geometry assertions if any test pins `markerWidth 9`/path
+      `M0,0 L8,4 L0,8` (grep). Screen look thickens slightly — that MATCHES the reference (risk
+      note §5.4); e2e screenshots pin no pixels.
+      Acceptance: both tests + `test:aris:animalwf` green; Seq-1 similarity did not drop; crops
+      match.
+
+- [ ] **P3 `[sonnet]` — XOR/operator circle fills its box; bolder mark; arrow gap closed.**
+      Files: `src/aris/symbols/shapes.ts` (`ruleShape` :782-828), `src/aris/symbols/symbols.test.ts`,
+      `src/aris/canvas/renderer.dmt.test.ts` (only if a grep shows radius/mark pins).
+      Change (fixplan §4.4): original circle fills the 141-box exactly; ours is r 44/100 with a
+      thin small X, and the docked arrow stops at the box edge leaving a 6-unit gap.
+      `circle(50,50,44)` → `circle(50,50,50)` (circle = box, closes the gap since connections dock
+      to the rectangular shape path); X arms `(36,36)-(64,64)` → `(30,30)-(70,70)` with
+      `strokeWidth` 10–12 (calibrate on `cmp-gateway.png`); scale the AND `∧` / OR `∨` marks'
+      stroke to the same weight (family consistency — AND appears on the transfer sheets);
+      `hitPath` → `M 50 0 A 50 50 0 1 1 49.999 0 Z`; `iconBox`/ports unchanged. Grey stays
+      `#999999` (≈ sampled `#9A9A9A` — no change).
+      Crop-verify: `cmp-gateway.png`, `cmp-gate-merge.png` (circle spans the box, arrow tip
+      touches the circle after P2's `refX`), transfer-sheet AND if crops exist.
+      Re-baseline: `symbols.test.ts` fingerprints are derived (uniqueness-only — safe); update any
+      literal `44`/mark-coordinate pins a grep over `src/aris/**/**.test.ts` finds.
+      Acceptance: symbol + renderer suites green; `test:aris:animalwf` green; crops match.
+
+- [ ] **P4 `[sonnet]` — Icon-band widths (25 % → 17 % functions / 21 % satellites), content
+      boxes, top strip, badge size, hairline + corner polish.**
+      Files: `src/aris/symbols/shapes.ts` (`CARD_ICON_BOX`/`CARD_CONTENT_BOX` :14-15, `cardGroups`
+      :323-353, `card` :613-622, `eventShape` contentBox :662, `iconGeometry('double-chevron')`
+      :379-397, `OUTLINE` :11), `src/aris/canvas/renderer.dmt.test.ts` + `symbols.test.ts` (+ any
+      preview/quick-pick snapshot a grep surfaces).
+      Change (fixplan §4.3 + §4.1 remainder; measured: function band = 17 % of width, satellites
+      21 %, caption area x 18 %…98 %, event caption 27.5 %…92 %). (1) Parameterize
+      `cardGroups(accent, icon, bandWidth)` — function + system-function cards band `17`, all
+      other cards band `21` (both currently 25); top strip stays ≈3/60 viewBox units (source
+      ≈10/240); `card()` passes the per-family band and derives the matching `iconBox` (icon
+      centered INSIDE the colored band with today's relative margins — icon shrinks with the
+      band) and `contentBox`: functions `{x:18,y:4,width:80,height:53}`, satellites
+      `{x:23,y:4,width:74,height:53}` (same inset rule vs band 21), event `contentBox`
+      `{x:27.5,y:4,width:64.5,height:53}`. (2) Badge: replace the two large hollow chevron
+      polygons with two SMALL FILLED triangles (≈half current size, e.g. `(6,24)(12,30)(6,36)` +
+      `(13,24)(19,30)(13,36)`, fill WHITE) — keep exactly 2 polygons (`renderer.dmt.test.ts`
+      pins `toHaveLength(2)`), calibrate on `cmp-zoom-funcbadge.png`. (3) `OUTLINE '#c4c7c9'` →
+      `'#c0c0c0'` (measured hairline) and give the card surface slightly rounded outer corners
+      (rx ≈ 2 viewBox units; if the `rect` drawing element lacks rx support, author the surface
+      as a path).
+      Crop-verify: `cmp-func01.png`, `cmp-approve14.png`, `cmp-zoom-funcbadge.png`,
+      `cmp-satellites-red.png`, `cmp-ded.png`, `cmp-terminate-fn.png` (band ratio + caption
+      centring vs the original; wraps are finally judged in P5).
+      Re-baseline: `renderer.dmt.test.ts` caption-x bound (58 % of 670 = 388 > 335 — still green,
+      verify), any literal `27`/`70`/`25` geometry pins a grep finds; `symbols.test.ts` accent-fill
+      pins unchanged (band WIDTH is not pinned). Content-box widening reflows captions — expected;
+      `typography.animalwf.test.ts` inequalities re-run green.
+      Acceptance: suites green; `test:aris:animalwf` green; crops show 17 %/21 % bands + small
+      filled badge; ledger records the derived iconBox/contentBox numbers per family.
+
+- [ ] **P5 `[sonnet]` — Real font metrics: AFM advance-width tables (regular + bold + Arabic
+      tiers) replace the coarse em-class table.**
+      Files: `src/aris/renderer/textWrap.ts` (`charWidthEm` :20-29, `measureTextWidth` :32-38),
+      `src/aris/canvas/typography.ts` (wrap callers pass the resolved weight),
+      `src/aris/renderer/textWrap.test.ts`, `src/aris/canvas/typography.test.ts`,
+      `src/aris/canvas/rendererTypography.test.ts` (+ re-run `typography.animalwf.test.ts`,
+      `freeTextLayout.test.ts`, `directEdit.test.ts` — update only what a wrap-count change
+      breaks).
+      Change (fixplan §6.2 + §3.6; measured: "registration Service" = 291 units at −10 vs the
+      table's 314, +8 % — the systematic over-estimate that wraps every borderline line early).
+      (1) Replace `charWidthEm` with the public-domain Adobe core-14 **Helvetica AFM** advance
+      table (95 printable ASCII, ×1000 units; Arial is metric-compatible) plus the
+      **Helvetica-Bold** table (function captions are bold), selected by a new optional `weight`
+      parameter on `measureTextWidth`/`wrapText` (default regular — every existing caller stays
+      valid); `typography.wrapLabelLines`/caption layout pass the resolved `fontWeight` through;
+      `canvasSync`'s connection-label/attribute-label uses stay regular. (2) Arabic: replace the
+      flat 0.55 em with a deterministic tier table (≈0.28 narrow/joiner, 0.50 medium, 0.62 wide,
+      from Noto Sans Arabic metrics) — closes the Arabic law-row over-wrap (§3.6) together with
+      P4's band fix. (3) Contract preserved: deterministic, no DOM, `buildTextWrapFinding`
+      machinery untouched.
+      Crop-verify (the four named sites, AFTER P4): start event caption **3 lines**
+      (`cmp-start-event.png`), red "owner registration number is valid…" note **5 lines**
+      (`cmp-satellites-red.png`), "Economy License Details" **1 line** (`cmp-ded.png`), Arabic law
+      rows **2–3 lines** (`cmp-reflaws.png`).
+      Re-baseline: `textWrap.test.ts` width/wrap fixtures to the AFM numbers; `typography`/
+      `rendererTypography` wrap fixtures; `connectionLabels.animalwf` stays green by construction
+      (label rects are centre-anchored; only widths change). Assert in a new unit test:
+      `measureTextWidth('registration Service', <−10 EN px size>)` lands within ±2 % of 291
+      canvas units.
+      Acceptance: all listed suites + `test:aris:animalwf` green; the four crop sites match the
+      original line counts; Seq-1 similarity recorded (expected ↑).
+
+- [ ] **P6 `[sonnet]` — Reference-Laws title: CENTER-anchored sized notes (`Position` = anchor,
+      not top-left).**
+      Files: `src/aris/canvas/canvasSync.ts` (`freeTextBounds` :221-228 + its `syncFreeText`
+      caller ≈:514), `src/aris/canvas/renderer.ts` (freeText sized-width/dY=0 path :995-1044),
+      `src/aris/canvas/freeTextLayout.test.ts` (+ re-run `cleanLayoutNotes.animalwf.test.ts`,
+      `printFrame.animalwf.test.ts`).
+      Change (fixplan §3.5; source: `FFTextOcc (6267,551) Size.dX=544 dY=0 Alignment=CENTER`; the
+      original centres the text block ON x=6267 — predicted centre 758.4 pt vs measured 760.2 pt —
+      while we treat Position as top-left and clip out of the 742×747 frame):
+      a note with `Size.dX>0` anchors its box BY ITS ALIGNMENT at `Position`: CENTER →
+      `box.x = pos.x − dX/2`; RIGHT → `pos.x − dX`; LEFT → `pos.x` (today's behavior). `dY=0`
+      means auto-height: wrap to width `dX`, top-anchored at `pos.y`, no invented border/height.
+      Unsized notes (the header's anchored values) are UNTOUCHED — their alignment-anchor path
+      already exists; assert `printFrame.animalwf.test.ts` header-value anchors stay byte-equal.
+      Add the regression test with the source numbers: dX=544 CENTER at x=6267 → box.x 5995, wrap
+      width 544, text centre 6267 (the Reference-Laws title's exact record).
+      Crop-verify: `cmp-reflaws.png` — both title lines centred INSIDE the black frame, zero
+      clipping (frame weight itself came from P2).
+      Re-baseline: `freeTextLayout.test.ts` sized-note fixtures; re-run
+      `cleanLayoutNotes.animalwf.test.ts` (imported sized CENTER notes shift by −dX/2 — update
+      only assertions that pin the OLD top-left reading, as authorized).
+      Acceptance: suites + `test:aris:animalwf` green; crop matches; header anchors unchanged.
+
+- [ ] **P7 `[opus]` — RACI letters honour source `Port="NW"`: above the line, tucked at the role
+      box.** Files: `src/aris/canvas/canvasSync.ts` (`connectionLabelRect` :1067-1105 +
+      `syncConnectionLabels` :625-693 — `placement.port` is already on the business object :676,
+      unused), `src/aris/canvas/raci.test.ts`, `src/aris/canvas/connectionLabels.animalwf.test.ts`
+      (:279-321 split), `src/aris/canvas/connectionLabels.test.ts`.
+      Change (fixplan §5.1): the 28 derived RACI badges are `AT_TYPE_6` placements with
+      `Port="NW"`, Offsets 0, empty value; we centre them on the route midpoint (line strikes
+      through the letter). Honour `Port`: keep `CENTER` (and portless) placements EXACTLY on
+      today's midpoint-centred math; for `NW`, anchor the drawn-extent box above-left of the
+      anchor point. **Calibration is the judgment call** — fixplan §0 measures the R letter's
+      bottom-right ≈20 units left of the ROLE box edge and ≈33 units above the line (pt bbox
+      [192.6,111.8,195.6,116.4] vs line y 117.86, role box left x 1535u), while §5.1's prose says
+      "near the target end"; resolve the contradiction against `cmp-zoom-raci-r.png` +
+      `cmp-func01.png` + `cmp-auto05.png` and encode the winning rule as a pure function of the
+      route + endpoint boxes (no per-connection constants). Seed rule: anchor = the route point
+      where the connection leaves the letter-side box; box bottom-right at
+      `(anchorX − 20u, lineY − 10u)` ⇒ centre-y ≈ lineY − 33 for the measured R.
+      Verify NO NW label rect intersects any occurrence/satellite box (all 28 letters across both
+      iterate models — add that as an assertion, fixplan's stated risk).
+      Crop-verify: `cmp-zoom-raci-r.png` (letter floats above the line, tucked left of the role
+      box), `cmp-func01.png`, `cmp-auto05.png`.
+      Re-baseline: split `connectionLabels.animalwf.test.ts` "centres every placement" by port —
+      CENTER placements keep the exact old assertion; NW placements assert the new formula (write
+      it as the formula, not 28 hand rects); extend `raci.test.ts` with the measured-R numbers;
+      `printFrame.animalwf.test.ts` letter SETS unchanged (positions moved, letters identical).
+      Acceptance: all four suites + `test:aris:animalwf` green; crops match; ledger records the
+      final anchor rule + calibration numbers.
+
+- [ ] **P8 `[opus]` — Function green `#009933` vs `#33993D`: adjudicate byte-order vs print
+      drift; reconcile catalog raw-vs-decoded; oracle transform if (and only if) the value
+      changes.** Files: `src/aris/conventions/catalog.ts` (`defaultFill '#339900'` rows :80,:95,
+      :188,:203 + provenance comments), `src/aris/symbols/shapes.ts` (`bodyFill` fallbacks),
+      `src/aris/symbols/symbols.test.ts:104`, `src/aris/canvas/legend.test.ts:99-112`; oracle:
+      all four `*.expected.json` (orchestrator-run transform, §protocol step 4).
+      Judgment task (fixplan §4.3 note + §4.5): the original prints function green ≈`#33993D`;
+      we render `#009933` (BGR decode of stored `339900` — the decode rule itself is VERIFIED by
+      the header pen `996600`→`#006699`, do NOT flip the codec globally). Every reference color
+      drifts slightly from its decode (pink `#edbbdc`→sampled `#EAADDB`, blue `#9dc4d7`→`#A0C4D4`,
+      red `#c82830`→`#CC2A34`, grey `#999999`→`#9A9A9A`) — consistent with print/CMYK drift — but
+      green's R-channel jump (0x00→0x33, matching the RAW first byte) is too big to wave off.
+      Protocol: sample `orig-1.png` (300 DPI) at ≥3 sites per anchor color; fit the drift model on
+      the KNOWN-correct anchors; invert it for green and pick among `#009933` (keep — expected
+      verdict if drift explains it), `#339933`, `#339900`. Record the evidence table in the ledger
+      either way. **Verdict = keep:** no render change; still fix the REAL inconsistency this
+      lane owns — the legend/palette paint the catalog's RAW `'#339900'` (passes
+      `occurrenceColorToCss` unchanged because it starts with `#`) while imported occurrences
+      render the decoded `#009933`, two different greens on one screen; store decoded sRGB in
+      `catalog.defaultFill` (`'#009933'`), update `symbols.test.ts:104` + `legend.test.ts:109`
+      pins, confirm export still writes authored raw values (`arisDerivedExport` untouched), and
+      sweep the other catalog rows for the same raw-vs-decoded mismatch (`#dcbbed` events etc.);
+      **no oracle change** (JSONs already pin decoded `#009933`). **Verdict = change (e.g.
+      `#339933`):** implement at the paint layer such that BOTH imported occurrences and new
+      objects render the new green, run the protocol-step-4 transform over all four JSONs
+      (`"#009933"` → new value; orchestrator sanctions; one holdout run), update the two test
+      pins + catalog + fallbacks.
+      Also adjudicate (same drift model, same verdict style, likely no-change): event pink
+      `#EDBBDC`→`#EAADDB` (§4.5).
+      Crop-verify: `cmp-func01.png` band color side-by-side after the decision.
+      Acceptance: `test:aris:animalwf` green (post-transform if any); one sanctioned holdout run
+      green if the oracle changed; `symbols`/`legend` suites green; ledger holds the drift-model
+      table + verdict + (if run) the transform command and JSON sha256 before/after.
+
+- [ ] **P9 `[opus]` — Icon-set redraw to the ARIS filled-white originals + mapping splits.**
+      Files: `src/aris/symbols/shapes.ts` (`iconGeometry` :377-598, `DmtIconId` :26-54, descriptor
+      `icon:` fields), `src/aris/conventions/catalog.ts` (icon ids only — colors are P8's),
+      `src/aris/symbols/symbols.test.ts` (:150-164,:184 icon pins),
+      `src/aris/canvas/renderer.dmt.test.ts` (app-window `16/23` ratio pin :~135, sys-func icon),
+      `src/aris/canvas/legend.test.ts` (re-render only — 19 tiles unchanged).
+      Change (fixplan §4.2 + §4.5 person): redraw as filled-white silhouettes matching the
+      original's 34×34 raster set (reference crops: `cmp-satellites-red.png`, `cmp-ded.png`,
+      `cmp-terminate-fn.png`, `cmp-reflaws.png`, `cmp-zoom-eventtip.png`, glyph close-ups liftable
+      from `orig-1.png`): pennant flag = pole + small SOLID triangular pennant (event); split the
+      shared window glyph — `ST_APPL_SYS` → filled window + title dots + small circle badge (NO
+      arrow), NEW `DmtIconId` (e.g. `application-window-down`) for `ST_SYS_FUNC_ACT` → window +
+      **down**-arrow; `ST_INFO_CARR_HANDY` → filled smartphone; `ST_EMAIL_1` → filled envelope + @; `ST_ENT_TYPE` → card/tag (today's grid reads as a printer); `ST_BUSINESS_RULE` (the
+      Reference-Laws rows) → **shield** (the `law-shield` art exists but the law cards resolve the
+      scroll via the canonical business-rule presentation — move the shield onto the presentation
+      the imported occurrences actually resolve, record the swap in the ledger); person → filled
+      head-and-shoulders silhouette; requirement hand stays (already close). Vector paths, not
+      extracted bitmaps (crisper-than-original is the accepted deviation — record it).
+      Crop-verify: EVERY redrawn glyph side-by-side vs its `orig-1.png` crop; re-shoot
+      `cmp-satellites-red/ded/terminate-fn/reflaws/zoom-eventtip`.
+      Re-baseline: `symbols.test.ts` icon-identity pins to the new ids; `renderer.dmt.test.ts`
+      window-ratio + monitor-negative assertions to the new geometry; fingerprint uniqueness (36)
+      must still hold — new `DmtIconId` keeps every pair distinct. Legend tiles re-render from the
+      shared descriptors automatically (count 19 pinned, unchanged).
+      Acceptance: symbol/renderer/legend suites + `test:aris:animalwf` green; per-glyph crop board
+      in the ledger (glyph → verdict).
+
+- [ ] **P10 `[opus]` — Arabic selectable text in the exported PDF (embedded Arabic TTF subset).**
+      Files: `src/aris/canvas/exportArisPdf.ts` (`overlayArisTextRuns` :186-216 + a new
+      lazy-loaded font module, e.g. `src/aris/canvas/exportArisPdfArabicFont.ts` holding the
+      base64 subset), `src/aris/canvas/exportArisPdf.test.ts`; gate: `npm run check:size`
+      (raw 8 MiB / gzip 2.5 MiB budgets in `scripts/check-artifact-size.mjs`).
+      Change (fixplan §1 fallback path, Arabic leg — the raster already paints shaped Arabic
+      pixels; only the invisible overlay lacks Arabic): embed a subset **Noto Sans Arabic** TTF
+      (subset to the Arabic ranges the sheets use, target ≤ ~120 KB base64) via
+      `doc.addFileToVFS`/`doc.addFont`; runs containing Arabic switch to it (jsPDF's TTF pipeline
+      runs `processArabic` contextual shaping); Latin runs keep core `helvetica` (zero regression
+      risk — pass-1 path untouched). Load the font module lazily (`await import()`) ONLY when the
+      captured runs contain Arabic, so the base artifact stays small; measure the bundle delta
+      and record it against `check:size`.
+      Bidi: our runs are logical-order per line (`bidiTextAttrs`); verify extraction/copy order on
+      the 3 Arabic header strings + the Reference-Laws rows; set jsPDF R2L per-run if extraction
+      comes out reversed. The overlay is `renderingMode:'invisible'` — zero visual risk by
+      construction.
+      Determinism: no-Arabic documents stay BYTE-IDENTICAL to pass-1 output (font never loaded);
+      Arabic documents are deterministic for identical input (fixed font bytes; extend the file-id
+      digest with a font marker). Extend `exportArisPdf.test.ts`: byte-identical-without-Arabic,
+      deterministic-with-Arabic, font-only-loaded-when-needed.
+      Verify: `pdffonts` on a fresh register export lists Helvetica + the Arabic subset;
+      `pdftotext` extracts the Arabic header strings; `tests/e2e/aris-sequence-1.spec.ts`
+      (chromium) green including its Arabic-content export case (:304-311); `npm run check:size`
+      green. Fallback verdict (recorded, not silently shipped): if jsPDF shaping fails review,
+      keep the Latin-only overlay and log the tier-2 option (outline paths via opentype.js) in
+      the ledger.
+      Acceptance: export tests + Seq-1 + `check:size` + `test:aris:animalwf` (untouched by this
+      lane — canvas render unchanged) green.
+
+- [ ] **P11 `[opus]` — OLE decode tier 1: DMT logo EMF bitmaps → real `<image>`; legend EMF
+      tier-2 verdict.** Files: NEW `src/aris/canvas/oleImage.ts` (+ `oleImage.test.ts`),
+      `src/aris/canvas/printFrame.ts` (`drawHeader` :428-462 placeholder swap + plumbing the blob
+      bytes into `buildPrintFrame`/its caller), `src/aris/canvas/printFrame.test.ts`,
+      `src/aris/canvas/printFrame.animalwf.test.ts` (:199-204),
+      `src/aris/renderer/animalWfRealData.animalwf.test.ts` (:88), and whatever single seam
+      exposes `index.blobs` to the canvas (named in printFrame.ts's `TODO(V5+ OLE)`).
+      Change (fixplan §3.2): the org title block draws a dashed placeholder although the data is
+      present — the OLEDef `<Blob>` is base64 → ZIP → `aris.dat`, an EMF whose ONLY content is 2
+      `EMR_STRETCHDIBITS` records (embedded DIBs). Implement a narrow extractor: base64 →
+      `fflate` unzip (**already a dependency, 0.8.3 — no new dep**) → walk EMF records
+      (`[u32 type][u32 size]`) → for STRETCHDIBITS lift `BITMAPINFOHEADER` + pixels into a
+      PNG/BMP data URL. Hard limits (decompressed-size cap, dimension cap, record-count cap,
+      reject anything malformed → keep the placeholder); NEVER execute/interpret other EMF
+      records; source bytes stay verbatim for export (`rawAttributes` untouched —
+      `arisDerivedExport` must stay green). `drawHeader` paints `<image>` at the orgBlock bounds
+      (`data-aris-ole-image="true"`) when decode succeeds; the `data-aris-ole-pending`
+      placeholder remains the fallback path (and its i18n key stays registered).
+      **Tier 2 explicitly deferred:** the legend EMF (3241 vector records + 49 bitmaps) is NOT
+      rendered this wave — the catalog-drawn legend stays; record the tier-2 verdict + effort (L)
+      in the ledger.
+      Crop-verify: `cmp-header-right.png` — the DMT bilingual logo + crest appear at
+      `(5403,40) 1194×320` (register) instead of the placeholder text.
+      Re-baseline: `printFrame.animalwf.test.ts` org-block assertion `ole-pending==='true'` → the
+      decoded-image assertion (image node present, href non-empty, placeholder absent) for models
+      whose logo decodes; `animalWfRealData.animalwf.test.ts`
+      `fidelityByKind['unsupported-ole-rendering'] === 14` → the measured post-decode count
+      (decoded logos clear their finding; legend attachments keep theirs — record the count and
+      the per-model split in the ledger); `printFrame.test.ts` keeps the fallback-path unit
+      coverage (malformed blob → placeholder).
+      Acceptance: new + updated suites, `test:aris:animalwf`, and
+      `npx vitest run src/aris/shell/arisDerivedExport.animalwf.test.ts` green; crop matches;
+      decode limits unit-tested with hostile inputs (zip bomb, truncated EMF, oversized DIB).
+
+### Wave 9 exit gate
+
+- [ ] All 11 lane verify sets green in order; `npm run test:aris:animalwf` green at HEAD;
+      **one final sanctioned holdout run** `npm run test:aris:animalwf:holdout` green (plus the
+      one mid-wave run only if P8 transformed the oracle).
+- [ ] Full re-crop board: re-export both iterate models, re-shoot EVERY `cmp-*` region touched by
+      this wave, and record per-region verdicts (original vs new gen) in the ledger. The arbiter
+      for every disagreement is the reference PDF crop.
+- [ ] `tests/e2e/aris-sequence-1.spec.ts` green on chromium + firefox + webkit; per-model
+      similarity scores recorded before/after the wave (expected to RISE from the Wave-7
+      baseline; any decrease is a defect).
+- [ ] `npm test` green, plus `typecheck`, `lint`, `check:no-skips`, `check:ui-copy`,
+      `check:aris-runtime-boundary`, and `check:size` all green; artifact rebuilt
+      (`npm run build:aris`) and committed per goal.md's protocol.
+- [ ] Expectation JSONs: byte-identical to their pre-wave sha256 UNLESS P8's sanctioned transform
+      ran, in which case the ledger holds the transform command + before/after hashes for all
+      four files; nothing under `../reference/` is in any commit.
+- [ ] Wave-9 ledger filled: per lane — worker, verdicts (truth table, RACI anchor rule, green
+      drift table, per-glyph board, OLE finding counts, tier-2/pass-3 deferrals), crop evidence
+      paths, exit codes verbatim.
