@@ -14,6 +14,8 @@ const AML = `<AML>
     <ObjDef ObjDef.ID="ObjDef.A" TypeNum="OT_FUNC" SymbolNum="ST_FUNC">
       <CxnDef CxnDef.ID="CxnDef.visible" CxnDef.Type="CT_ACTIV_1" ToObjDef.IdRef="ObjDef.B" />
       <CxnDef CxnDef.ID="CxnDef.hidden" CxnDef.Type="CT_IS_PRCS_ORNT_SUPER" ToObjDef.IdRef="ObjDef.B" />
+      <CxnDef CxnDef.ID="CxnDef.keptDefault" CxnDef.Type="CT_HAS_OUT" ToObjDef.IdRef="ObjDef.B" />
+      <CxnDef CxnDef.ID="CxnDef.removedDefault" CxnDef.Type="CT_SUPP_3" ToObjDef.IdRef="ObjDef.B" />
     </ObjDef>
     <ObjDef ObjDef.ID="ObjDef.B" TypeNum="OT_EVT" SymbolNum="ST_EV" />
     <Model Model.ID="Model.1" Model.Type="MT_EEPC">
@@ -49,6 +51,28 @@ const AML = `<AML>
         <Size Size.dX="200" Size.dY="80" />
       </ObjOcc>
     </Model>
+    <Model Model.ID="Model.2" Model.Type="MT_EEPC">
+      <ObjOcc ObjOcc.ID="ObjOcc.A2" ObjDef.IdRef="ObjDef.A" SymbolNum="ST_FUNC" Zorder="10">
+        <Position Pos.X="100" Pos.Y="100" />
+        <Size Size.dX="200" Size.dY="80" />
+        <CxnOcc CxnOcc.ID="CxnOcc.keptDefault" CxnDef.IdRef="CxnDef.keptDefault"
+          ToObjOcc.IdRef="ObjOcc.B2" Zorder="5">
+          <Pen Color="0" Style="0" Width="1" />
+          <Position Pos.X="300" Pos.Y="140" />
+          <Position Pos.X="600" Pos.Y="140" />
+        </CxnOcc>
+        <CxnOcc CxnOcc.ID="CxnOcc.removedDefault" CxnDef.IdRef="CxnDef.removedDefault"
+          ToObjOcc.IdRef="ObjOcc.B2" Zorder="6">
+          <Pen Color="0" Style="0" Width="1" />
+          <Position Pos.X="300" Pos.Y="160" />
+          <Position Pos.X="600" Pos.Y="160" />
+        </CxnOcc>
+      </ObjOcc>
+      <ObjOcc ObjOcc.ID="ObjOcc.B2" ObjDef.IdRef="ObjDef.B" SymbolNum="ST_EV" Zorder="20">
+        <Position Pos.X="600" Pos.Y="100" />
+        <Size Size.dX="200" Size.dY="80" />
+      </ObjOcc>
+    </Model>
   </Group>
   <FFTextDef FFTextDef.ID="FFTextDef.1">
     <AttrDef AttrDef.Type="AT_NAME"><AttrValue LocaleId="1033">Note</AttrValue></AttrDef>
@@ -62,10 +86,10 @@ afterEach(() => {
   harness = null
 })
 
-function boot() {
+function boot(modelId = 'Model.1') {
   const index = buildSemanticArisDocument(tokenizeXmlDocument(AML)).index
   const document = buildFromSource(index)
-  harness = bootCanvas({ document, modelId: 'Model.1' })
+  harness = bootCanvas({ document, modelId })
   return { document, canvas: harness.canvas }
 }
 
@@ -93,6 +117,30 @@ describe('source connection appearance', () => {
     expect(hidden.getAttribute('data-aris-visible')).toBe('false')
     expect(hidden.getAttribute('visibility')).toBe('hidden')
     expect(hidden.getAttribute('pointer-events')).toBe('none')
+  })
+
+  it('falls back to the type-driven default arrow only for a truth-table type the reference PDF directs (Wave 9 P1)', () => {
+    // Both connections below carry no SrcArrow/TgtArrow at all — same "no override" input as the
+    // explicit-override case above lacked, but here the DEFAULT is what is under test, i.e.
+    // `DIRECTED_CONNECTION_TYPES` membership alone (see `attributeLabels.animalwf.test.ts` for the
+    // exhaustive per-type real-data version of this same check).
+    boot('Model.2')
+
+    // CT_HAS_OUT is in DIRECTED_CONNECTION_TYPES: the reference PDF draws an arrow into a
+    // function's output (e.g. Owner Registration Number), so the default target arrow is 'open'.
+    const kept = connectionLine('CxnOcc.keptDefault')
+    expect(kept.getAttribute('data-aris-src-arrow')).toBe('none')
+    expect(kept.getAttribute('data-aris-tgt-arrow')).toBe('open')
+    expect(kept.getAttribute('marker-end')).toMatch(/^url\(#aris-arrow-open-end-/u)
+
+    // CT_SUPP_3 was pruned from DIRECTED_CONNECTION_TYPES (Wave 9 lane P1): the reference PDF
+    // draws a plain line for an external application system feeding a function (DED
+    // System/TAMM/Smart Hub/UAE Pass all render arrow-less), so no default arrow and no marker.
+    const removed = connectionLine('CxnOcc.removedDefault')
+    expect(removed.getAttribute('data-aris-src-arrow')).toBe('none')
+    expect(removed.getAttribute('data-aris-tgt-arrow')).toBe('none')
+    expect(removed.getAttribute('marker-end')).toBeNull()
+    expect(removed.getAttribute('marker-start')).toBeNull()
   })
 
   it('keeps imported occurrence bounds and ordered route points byte-for-number exact on canvas', () => {

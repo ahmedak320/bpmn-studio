@@ -91,29 +91,58 @@ const CAPTION_FONT_SIZE = 12
 const ATTRIBUTE_SYMBOL_FILL = '#e2e8f0'
 const ATTRIBUTE_SYMBOL_STROKE = '#475569'
 
+/**
+ * Per-`CxnDef.Type` truth table for the DEFAULT target arrow ARIS paints when a connection
+ * occurrence carries no explicit `SrcArrow`/`TgtArrow` override (every one of the AnimalWF
+ * export's 93 CxnOcc does: `SrcArrow="0" TgtArrow="0"` = default, so this set alone drives what
+ * the reader sees). Verified type-by-type against the rendered ink of the original reference PDF
+ * (`reference/AnimalWF/pdf/Register_Animal_Owner_Profile_Draft03.pdf`) — never against this tool's
+ * own prior output. Membership is per TYPE, not per occurrence: each entry below was confirmed
+ * either from a clean, non-overlapping connector in the original, or — where several connectors
+ * share one ARIS-routed trunk — by elimination against a type already confirmed on that same trunk.
+ *
+ * KEPT (arrow at target): control flow (`CT_ACTIV_1`/`CT_CRT_1`/`CT_LEADS_TO_1`/`CT_LEADS_TO_2`/
+ * `CT_IS_EVAL_BY_1`/`CT_IS_PREDEC_OF_1`), function outputs (`CT_CRT_OUT_TO`/`CT_HAS_OUT`), a
+ * function reading/writing an existing entity record (`CT_READ_1` — confirmed WITH an arrow at
+ * both its AnimalWF instances, "Economy License Details" and "Owner Registration Number"; a
+ * plausible-looking guess before crop-verify would have been the opposite), and the RACI
+ * informed/consulted family (`CT_MUST_BE_INFO_ABT_1` shows an arrow into the function at fn 05/14
+ * in the original; `CT_DECID_ON`/`CT_MUST_BE_CONSLT_ABT_1` have zero AnimalWF occurrences, so are
+ * aligned with that same I-row rather than left to guesswork) plus a business rule/policy driving
+ * a function (`CT_AFFECTS` — the export's one instance shares its target function's entry trunk
+ * with two already-arrow-less `CT_SUPP_3` inputs; the original still paints one arrow into that
+ * function, so by elimination `CT_AFFECTS` — not the `CT_SUPP_3` pair — owns it).
+ *
+ * REMOVED (plain line, no marker): the RACI "R" carries-out role (`CT_EXEC_1`/`CT_EXEC_2`), an
+ * external application system feeding a function (`CT_SUPP_3` — DED System/TAMM/Smart Hub/UAE
+ * Pass, confirmed arrow-less at 4 independent AnimalWF instances), an entity type feeding a
+ * function (`CT_IS_INP_FOR`), and a requirement referencing a function (`CT_REFS_TO_2` — confirmed
+ * arrow-less at both its AnimalWF instances). These read as directional in ARIS's own type naming,
+ * but the reference PDF paints every one of them as a plain, undirected line.
+ *
+ * Org-chart types (`CT_IS_COMPOUND_OF_1`, `CT_IS_ORG_MANAGER_1`, `CT_IS_TECH_SUPER_1`,
+ * `CT_OCCUPIES_1`) have zero occurrences anywhere in the AnimalWF export — there is no reference
+ * ink to confirm or refute them against — so they stay in the set unverified-by-reference rather
+ * than guessed at.
+ */
 const DIRECTED_CONNECTION_TYPES = new Set([
   'CT_ACTIV_1',
   'CT_AFFECTS',
   'CT_CRT_1',
   'CT_CRT_OUT_TO',
   'CT_DECID_ON',
-  'CT_EXEC_1',
-  'CT_EXEC_2',
   'CT_HAS_OUT',
-  'CT_IS_COMPOUND_OF_1',
+  'CT_IS_COMPOUND_OF_1', // unverified-by-reference: 0 AnimalWF occurrences
   'CT_IS_EVAL_BY_1',
-  'CT_IS_INP_FOR',
-  'CT_IS_ORG_MANAGER_1',
+  'CT_IS_ORG_MANAGER_1', // unverified-by-reference: 0 AnimalWF occurrences
   'CT_IS_PREDEC_OF_1',
-  'CT_IS_TECH_SUPER_1',
+  'CT_IS_TECH_SUPER_1', // unverified-by-reference: 0 AnimalWF occurrences
   'CT_LEADS_TO_1',
   'CT_LEADS_TO_2',
   'CT_MUST_BE_CONSLT_ABT_1',
   'CT_MUST_BE_INFO_ABT_1',
-  'CT_OCCUPIES_1',
-  'CT_READ_1',
-  'CT_REFS_TO_2',
-  'CT_SUPP_3'
+  'CT_OCCUPIES_1', // unverified-by-reference: 0 AnimalWF occurrences
+  'CT_READ_1'
 ])
 
 const CONNECTION_DASHARRAY_BY_STYLE: Readonly<Record<string, string | null>> = Object.freeze({
@@ -657,6 +686,11 @@ function arrowMarkerRoot(node: SVGElement): SVGElement {
  * Connection markers are keyed by source style, end, and color. The default DMT point is an open
  * chevron as shown in the process PDFs; an explicit `ST_ARROW_FILLED_*` occurrence override gets
  * the filled point instead.
+ *
+ * Geometry is calibrated against the measured original (pixel-probed at 300 DPI): an open stick-V
+ * ≈34 units across the line × 16 units along it, tip touching the target edge. `refX` equals the
+ * path's tip-length so the marker's reference point — where `marker-end`/`marker-start` place it —
+ * lands exactly on the endpoint rather than short of or past it.
  */
 function ensureConnectionArrowMarker(
   node: SVGElement,
@@ -675,18 +709,18 @@ function ensureConnectionArrowMarker(
   }
   const marker = svgElement('marker', {
     id,
-    markerWidth: 9,
-    markerHeight: 9,
-    refX: 8,
-    refY: 4,
+    markerWidth: 18,
+    markerHeight: 36,
+    refX: 16,
+    refY: 17,
     orient: 'auto-start-reverse',
     markerUnits: 'userSpaceOnUse'
   })
   marker.appendChild(
     arrow === 'filled'
-      ? svgElement('path', { d: 'M0,0 L8,4 L0,8 z', fill: color, stroke: color })
+      ? svgElement('path', { d: 'M0,0 L16,17 L0,34 z', fill: color, stroke: color })
       : svgElement('path', {
-          d: 'M0,0 L8,4 L0,8',
+          d: 'M0,0 L16,17 L0,34',
           fill: 'none',
           stroke: color,
           'stroke-width': 1
