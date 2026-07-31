@@ -6,6 +6,7 @@ import type {
   ArisConnectionOccurrence,
   ArisLocalizedValue,
   ArisModel,
+  ArisModelType,
   ArisObjectDefinition,
   ArisObjectOccurrence,
   ArisWorkingDocument
@@ -131,11 +132,12 @@ function model(
   id: string,
   occurrences: readonly ArisObjectOccurrence[],
   connectionOccurrences: readonly ArisConnectionOccurrence[],
-  attributes: readonly ArisAttribute[] = []
+  attributes: readonly ArisAttribute[] = [],
+  type: ArisModelType = 'MT_EEPC'
 ): ArisModel {
   return {
     id,
-    type: 'MT_EEPC',
+    type,
     names: localized('Model'),
     attributes,
     occurrences,
@@ -297,6 +299,20 @@ describe('conv.function.noExecutor', () => {
     const findings = buildConventionFindings(document)
 
     expect(findings.filter((f) => f.ruleId === 'conv.function.noExecutor')).toHaveLength(0)
+  })
+
+  it('does not flag a VACD Function occurrence — executor wiring is an EPC-only relationship', () => {
+    // The DMT convention manual documents the R/A/C/I executor relationship solely as an
+    // EPC Objects Relationship; VACD chain elements carry no executor wiring (the AnimalWF
+    // VACD produced 14 false warnings before this scoping).
+    const funcDef = objectDefinition('D_FUNC', 'OT_FUNC', 'Chain element', [
+      attr('AT_ID', 'AWF.01')
+    ])
+    const funcOcc = objectOccurrence('O_FUNC', 'D_FUNC', 'M_VACD', 'ST_FUNC')
+    const m = model('M_VACD', [funcOcc], [], [], 'MT_VAL_ADD_CHN_DGM')
+    const document = workingDocument([m], [funcDef], [])
+
+    expect(buildConventionFindings(document)).toEqual([])
   })
 })
 

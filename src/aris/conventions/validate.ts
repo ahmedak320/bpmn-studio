@@ -20,14 +20,18 @@
  *  - `conv.model.missingAttribute` is about the MODEL's own attribute bag
  *    (plan R3's per-model attribute list), not any object inside it.
  *  - The other three (`missingIdentifier`, `noExecutor`, `naming.hint`) key
- *    off `OT_FUNC` / the element attribute schema and apply wherever that
- *    object type occurs — R3 explicitly lists "Function/VACD element" for
- *    the mandatory identifier, so EEPC functions and VACD chain elements are
- *    both in scope. `noExecutor` is likewise not model-type-restricted: a
- *    VACD chain element that (unusually) carries no executor wiring is
- *    flagged the same as an EEPC function would be — the brief for this
- *    rule names no model-type exception, and VACD elements are exposed
- *    through the same `OT_FUNC` object type.
+ *    off `OT_FUNC` / the element attribute schema. `missingIdentifier` and
+ *    `naming.hint` apply wherever that object type occurs — R3 explicitly
+ *    lists "Function/VACD element" for the mandatory identifier, so EEPC
+ *    functions and VACD chain elements are both in scope. `noExecutor`, by
+ *    contrast, IS model-type-restricted (EEPC only): the DMT convention
+ *    manual documents the R/A/C/I executor relationship solely as an EPC
+ *    Objects Relationship ("Connection from Executor to Function"), while
+ *    the VACD chapter defines only the Is-Predecessor-of and
+ *    Is-Process-Oriented-Superior relationships and no executor wiring.
+ *    Flagging a VACD chain element therefore manufactures findings that are
+ *    not defects (14 false warnings on the AnimalWF VACD before this
+ *    scoping).
  *
  * Models flagged `unsupported` (an ARIS model type this working document
  * doesn't decode) are skipped by every rule — the convention manual has
@@ -202,10 +206,14 @@ function checkFunctionMissingIdentifier(
   return findings
 }
 
+/** The EPC model type `conv.function.noExecutor` applies to — see the module doc. */
+const NO_EXECUTOR_MODEL_TYPE = 'MT_EEPC'
+
 /**
- * `conv.function.noExecutor` — every `OT_FUNC` occurrence must have at least one
- * incoming connection whose RACI is `R` (plan R2's `CT_EXEC_*` family) sourced from
- * one of the executor object types.
+ * `conv.function.noExecutor` — every `OT_FUNC` occurrence in an EEPC model must have at
+ * least one incoming connection whose RACI is `R` (plan R2's `CT_EXEC_*` family) sourced
+ * from one of the executor object types. EEPC-scoped: the DMT convention manual defines
+ * the executor R/A/C/I wiring only for EPC models; VACD chain elements carry none.
  */
 function checkFunctionNoExecutor(
   document: ArisWorkingDocument,
@@ -216,6 +224,7 @@ function checkFunctionNoExecutor(
   for (const [modelId, model] of document.models) {
     if (modelIds && !modelIds.has(modelId)) continue
     if (model.unsupported) continue
+    if (model.type !== NO_EXECUTOR_MODEL_TYPE) continue
 
     const occurrenceById = new Map(
       model.occurrences.map((occurrence) => [occurrence.id, occurrence])

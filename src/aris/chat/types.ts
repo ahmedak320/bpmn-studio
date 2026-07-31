@@ -76,6 +76,15 @@ export interface ArisChatModel {
   readonly names: ArisChatLocalizedValue
   readonly occurrences: readonly ArisChatObjectOccurrence[]
   readonly connectionOccurrences: readonly ArisChatConnectionOccurrence[]
+  /**
+   * The ARIS model type (e.g. `MT_EEPC`, `MT_VAL_ADD_CHN_DGM`). Optional in this
+   * reduced shape so synthesized documents keep working; real
+   * `ArisWorkingDocument` models always carry it. The gap scanner treats an
+   * absent type as "unknown" and runs every check (never suppressing a
+   * potentially real finding); a positively non-EPC type exempts the model from
+   * the EPC-semantics checks.
+   */
+  readonly type?: string
 }
 
 /** A reference to a user-supplied attachment (plan 18.1 "missing attachment"). */

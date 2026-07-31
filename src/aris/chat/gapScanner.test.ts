@@ -53,9 +53,10 @@ describe('scanArisChatGaps', () => {
       ]
     })
     const gaps = scanArisChatGaps(document)
-    expect(gaps.some((g) => g.kind === 'missingEnglishName' && g.targetIds.includes('D1'))).toBe(
-      true
-    )
+    const gap = gaps.find((g) => g.kind === 'missingEnglishName' && g.targetIds.includes('D1'))
+    // Advisory only: the convention manual mandates no bilingual name.
+    expect(gap).toBeDefined()
+    expect(gap!.severity).toBe('warning')
   })
 
   it('flags missing Arabic name', () => {
@@ -71,12 +72,72 @@ describe('scanArisChatGaps', () => {
       ]
     })
     const gaps = scanArisChatGaps(document)
-    expect(gaps.some((g) => g.kind === 'missingArabicName' && g.targetIds.includes('D1'))).toBe(
-      true
-    )
+    const gap = gaps.find((g) => g.kind === 'missingArabicName' && g.targetIds.includes('D1'))
+    expect(gap).toBeDefined()
+    expect(gap!.severity).toBe('warning')
   })
 
-  it('flags missing process code on an OT_FUNC definition', () => {
+  it('exempts a non-EPC model from the EPC-semantics checks (DMT value-added chain)', () => {
+    // A value-added chain has no events and no IO satellites by design: start/end
+    // completeness, sequence rules, orphan detection, and IO/satellite completeness
+    // must not fire on it (the AnimalWF VACD otherwise yields 2+13+14 false findings).
+    const modelId = 'M_VACD'
+    const objectDefinitions: ArisChatObjectDefinition[] = [
+      {
+        id: 'F1',
+        type: 'OT_FUNC',
+        names: names('Level one', 'المستوى الأول'),
+        attributes: [attribute('AT_ID', 'AWF.01')],
+        linkedModelIds: []
+      },
+      {
+        id: 'F2',
+        type: 'OT_FUNC',
+        names: names('Level two', 'المستوى الثاني'),
+        attributes: [attribute('AT_ID', 'AWF.02')],
+        linkedModelIds: []
+      }
+    ]
+    const connectionDefinitions: ArisChatConnectionDefinition[] = [
+      {
+        id: 'CD1',
+        type: 'CT_IS_PREDEC_OF_1',
+        fromObjectDefinitionId: 'F1',
+        toObjectDefinitionId: 'F2',
+        names: names(null),
+        attributes: []
+      }
+    ]
+    const model: ArisChatModel = {
+      id: modelId,
+      type: 'MT_VAL_ADD_CHN_DGM',
+      names: names('Value chain', 'سلسلة القيمة'),
+      occurrences: [
+        { id: 'O1', definitionId: 'F1', modelId, symbol: 'ST_FUNC' },
+        { id: 'O2', definitionId: 'F2', modelId, symbol: 'ST_FUNC' }
+      ],
+      connectionOccurrences: [
+        {
+          id: 'C1',
+          definitionId: 'CD1',
+          modelId,
+          sourceOccurrenceId: 'O1',
+          targetOccurrenceId: 'O2'
+        }
+      ]
+    }
+    const document = buildDocument({ models: [model], objectDefinitions, connectionDefinitions })
+    const gaps = scanArisChatGaps(document)
+    expect(gaps.some((g) => g.kind === 'missingStartOrEndEvent')).toBe(false)
+    expect(gaps.some((g) => g.kind === 'invalidSequence')).toBe(false)
+    expect(gaps.some((g) => g.kind === 'danglingObjectOrConnection')).toBe(false)
+    expect(gaps.some((g) => g.kind === 'missingInputsOutputsSystems')).toBe(false)
+  })
+
+  it('flags missing process code on an OT_FUNC definition when the vocabulary is in use', () => {
+    // The check is gated on the deployment actually using the attribute type (DMT defines
+    // no process-code attribute on functions), so a second function establishes the
+    // vocabulary; the flagged finding is advisory (warning), not an error.
     const document = buildDocument({
       objectDefinitions: [
         {
@@ -85,6 +146,13 @@ describe('scanArisChatGaps', () => {
           names: names('Do work', 'قم بالعمل'),
           attributes: [attribute('AT_PERS_RESP', 'Owner')],
           linkedModelIds: []
+        },
+        {
+          id: 'FN_CODED',
+          type: 'OT_FUNC',
+          names: names('Coded work', 'عمل مرمز'),
+          attributes: [attribute('AT_PROC_CODE', 'P-1'), attribute('AT_PERS_RESP', 'Owner')],
+          linkedModelIds: []
         }
       ]
     })
@@ -92,14 +160,14 @@ describe('scanArisChatGaps', () => {
     expect(gaps.filter((g) => g.kind === 'missingProcessCode')).toEqual([
       {
         kind: 'missingProcessCode',
-        severity: 'error',
+        severity: 'warning',
         targetIds: ['FN'],
         messageKey: 'aris.chat.gap.missingProcessCode'
       }
     ])
   })
 
-  it('flags missing owner/responsibility on an OT_FUNC definition', () => {
+  it('flags missing owner/responsibility on an OT_FUNC definition when the vocabulary is in use', () => {
     const document = buildDocument({
       objectDefinitions: [
         {
@@ -108,6 +176,13 @@ describe('scanArisChatGaps', () => {
           names: names('Do work', 'قم بالعمل'),
           attributes: [attribute('AT_PROC_CODE', 'P-1')],
           linkedModelIds: []
+        },
+        {
+          id: 'FN_OWNED',
+          type: 'OT_FUNC',
+          names: names('Owned work', 'عمل مملوك'),
+          attributes: [attribute('AT_PROC_CODE', 'P-2'), attribute('AT_PERS_RESP', 'Owner')],
+          linkedModelIds: []
         }
       ]
     })
@@ -115,11 +190,32 @@ describe('scanArisChatGaps', () => {
     expect(gaps.filter((g) => g.kind === 'missingOwner')).toEqual([
       {
         kind: 'missingOwner',
-        severity: 'error',
+        severity: 'warning',
         targetIds: ['FN'],
         messageKey: 'aris.chat.gap.missingOwner'
       }
     ])
+  })
+
+  it('stays silent on process code and owner when no function uses those attribute types (DMT)', () => {
+    // The DMT convention defines no process-code or owner ATTRIBUTE on functions
+    // (ownership is the RACI executor connection; the mandatory code is the AT_ID
+    // Identifier), so the checks must not flag a document whose deployment never
+    // uses that vocabulary — the AnimalWF import case (92+92 former false errors).
+    const document = buildDocument({
+      objectDefinitions: [
+        {
+          id: 'FN',
+          type: 'OT_FUNC',
+          names: names('Do work', 'قم بالعمل'),
+          attributes: [attribute('AT_ID', 'AWF.01.01.01')],
+          linkedModelIds: []
+        }
+      ]
+    })
+    const gaps = scanArisChatGaps(document)
+    expect(gaps.some((g) => g.kind === 'missingProcessCode')).toBe(false)
+    expect(gaps.some((g) => g.kind === 'missingOwner')).toBe(false)
   })
 
   it('flags a function occurrence with no input/output/system connection', () => {
