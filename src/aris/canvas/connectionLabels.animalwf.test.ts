@@ -259,17 +259,21 @@ describe('AnimalWF connection label placements are painted on the canvas (plan Â
 
     harness = bootCanvas({ document: workingDocument, modelId: target!.modelId })
     const registry = harness.canvas.elementRegistry
-    const bodyFill = (occurrenceId: string): string | null => {
+    const accentFill = (occurrenceId: string): string | null => {
       const gfx = registry.getGraphics(occurrenceId)
-      return gfx.querySelector('[data-aris-kind="occurrence"] > *')?.getAttribute('fill') ?? null
+      return (
+        gfx
+          .querySelector('[data-aris-kind="occurrence"] > [data-aris-part="accent"]')
+          ?.getAttribute('fill') ?? null
+      )
     }
     const definitionBefore = harness.canvas.document.objectDefinitions.get(target!.definitionId)
 
-    const siblingBefore = bodyFill(target!.second)
+    const siblingBefore = accentFill(target!.second)
     harness.canvas.authoring.restyleOccurrence(target!.first, { fillColor: '#ff00aa' })
 
-    expect(bodyFill(target!.first)).toBe('#ff00aa')
-    expect(bodyFill(target!.second)).toBe(siblingBefore)
+    expect(accentFill(target!.first)).toBe('#ff00aa')
+    expect(accentFill(target!.second)).toBe(siblingBefore)
     // The definition is untouched: same names and attributes, no style leaked onto it.
     const definitionAfter = harness.canvas.document.objectDefinitions.get(target!.definitionId)
     expect(definitionAfter).toEqual(definitionBefore)

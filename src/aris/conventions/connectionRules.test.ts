@@ -48,6 +48,37 @@ const EXISTING_VOCABULARY_TRIPLES: readonly {
   { modelType: null, from: 'OT_POLICY', to: 'OT_FUNC', connectionType: 'CT_MUST_BE_INFO_ABT_1' }
 ])
 
+const ANIMALWF_DMT_EEPC_TUPLES = Object.freeze([
+  {
+    modelType: 'MT_EEPC',
+    from: 'OT_FUNC',
+    to: 'OT_ENT_TYPE',
+    connectionType: 'CT_HAS_OUT',
+    verification: 'aris-doc'
+  },
+  {
+    modelType: 'MT_EEPC',
+    from: 'OT_FUNC',
+    to: 'OT_INFO_CARR',
+    connectionType: 'CT_CRT_OUT_TO',
+    verification: 'aris-doc'
+  },
+  {
+    modelType: 'MT_EEPC',
+    from: 'OT_FUNC',
+    to: 'OT_ENT_TYPE',
+    connectionType: 'CT_READ_1',
+    verification: 'unverified'
+  },
+  {
+    modelType: 'MT_EEPC',
+    from: 'OT_FUNC',
+    to: 'OT_FUNC',
+    connectionType: 'CT_IS_PREDEC_OF_1',
+    verification: 'unverified'
+  }
+] as const)
+
 describe('ARIS convention connection rules', () => {
   it('every existing vocabulary.ts triple resolves identically', () => {
     for (const triple of EXISTING_VOCABULARY_TRIPLES) {
@@ -81,22 +112,46 @@ describe('ARIS convention connection rules', () => {
     }
   })
 
+  it('legalizes only the four missing AnimalWF DMT EEPC tuples with audited verification', () => {
+    for (const tuple of ANIMALWF_DMT_EEPC_TUPLES) {
+      expect(isLegalConnection(tuple.modelType, tuple.from, tuple.to, tuple.connectionType)).toBe(
+        true
+      )
+      expect(
+        ARIS_CONNECTION_RULES.find(
+          (rule) =>
+            rule.modelType === tuple.modelType &&
+            rule.from === tuple.from &&
+            rule.to === tuple.to &&
+            rule.connectionType === tuple.connectionType
+        )?.verification
+      ).toBe(tuple.verification)
+    }
+  })
+
+  it('keeps non-fixture endpoint and connection-type combinations illegal', () => {
+    expect(isLegalConnection('MT_EEPC', 'OT_EVT', 'OT_EVT', 'CT_ACTIV_1')).toBe(false)
+    expect(isLegalConnection('MT_EEPC', 'OT_FUNC', 'OT_INFO_CARR', 'CT_READ_1')).toBe(false)
+    expect(isLegalConnection('MT_VAL_ADD_CHN_DGM', 'OT_FUNC', 'OT_ENT_TYPE', 'CT_HAS_OUT')).toBe(
+      false
+    )
+  })
+
   it('falls back to CT_REFS_TO_2 for an unknown from/to pair', () => {
-    const resolved = resolveConventionConnection('MT_EEPC', 'OT_FUNC', 'OT_FUNC')
+    const resolved = resolveConventionConnection('MT_EEPC', 'OT_EVT', 'OT_EVT')
     expect(resolved.fallback).toBe(true)
     expect(resolved.connectionType).toBe('CT_REFS_TO_2')
     expect(resolved.rule).toBeNull()
   })
 
-  it('model-type-specific rules win over generic rules', () => {
-    // In a VACD, FUNC->FUNC is CT_IS_PREDEC_OF_1, not the fallback.
+  it('resolves model-scoped function sequence rules', () => {
     const vacd = resolveConventionConnection('MT_VAL_ADD_CHN_DGM', 'OT_FUNC', 'OT_FUNC')
     expect(vacd.fallback).toBe(false)
     expect(vacd.connectionType).toBe('CT_IS_PREDEC_OF_1')
 
-    // In an EEPC, FUNC->FUNC has no rule and falls back.
+    // The real DMT export also uses this direct sequence tuple in EEPC models.
     const eepc = resolveConventionConnection('MT_EEPC', 'OT_FUNC', 'OT_FUNC')
-    expect(eepc.fallback).toBe(true)
-    expect(eepc.connectionType).toBe('CT_REFS_TO_2')
+    expect(eepc.fallback).toBe(false)
+    expect(eepc.connectionType).toBe('CT_IS_PREDEC_OF_1')
   })
 })

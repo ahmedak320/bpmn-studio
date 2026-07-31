@@ -34,7 +34,7 @@ export const ARIS_CONNECTION_LABEL_PREFIX = 'cxnlabel:'
  * working document, so a style that never reaches the element never draws.
  */
 export interface ArisOccurrenceStyleView {
-  /** Brush colour for the symbol's body, as an ARIS or CSS colour, or `null`. */
+  /** Brush colour for the descriptor's accent role, as an ARIS or CSS colour, or `null`. */
   readonly fillColor: string | null
   /** Pen colour for the symbol's outline, as an ARIS or CSS colour, or `null`. */
   readonly strokeColor: string | null
@@ -72,6 +72,12 @@ export interface ArisOccurrenceBusinessObject {
   readonly definitionId: string
   readonly objectType: string
   readonly symbolNum: string
+  /**
+   * Exact DMT presentation identity when an authoring/discovery surface chose
+   * one. Imported AML normally omits it and resolves from the persisted triple;
+   * unverified collapsed variants are never inferred from their label.
+   */
+  readonly catalogId?: string
   readonly name: string
   readonly style: ArisOccurrenceStyleView
   /** Read-only numbering/annotation placements drawn inside the occurrence's group. */

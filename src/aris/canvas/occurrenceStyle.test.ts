@@ -100,10 +100,19 @@ function primitivesOf(occurrenceId: string): readonly Element[] {
   return [...group.children].filter((child) => child.tagName.toLowerCase() !== 'text')
 }
 
-function bodyOf(occurrenceId: string): Element {
-  const first = primitivesOf(occurrenceId)[0]
-  if (!first) throw new Error(`No body primitive rendered for ${occurrenceId}.`)
-  return first
+function partOf(occurrenceId: string, part: 'surface' | 'accent' | 'icon'): Element {
+  const gfx = harness!.canvas.elementRegistry.getGraphics(occurrenceId)
+  const element = gfx.querySelector(`[data-aris-kind="occurrence"] > [data-aris-part="${part}"]`)
+  if (!element) throw new Error(`No ${part} primitive rendered for ${occurrenceId}.`)
+  return element
+}
+
+function accentOf(occurrenceId: string): Element {
+  return partOf(occurrenceId, 'accent')
+}
+
+function surfaceOf(occurrenceId: string): Element {
+  return partOf(occurrenceId, 'surface')
 }
 
 describe('occurrenceColorToCss accepts both spellings that reach the canvas', () => {
@@ -133,19 +142,20 @@ describe('the canvas draws the occurrence style it was given', () => {
   it('draws decoded AnimalWF app-system, event and function colors without a second swap', () => {
     harness = bootCanvas({
       document: documentWith([
-        { id: 'ObjOcc.app', symbol: 'ST_APPL_SYS', fillColor: '#9dc4d7' },
-        { id: 'ObjOcc.event', symbol: 'ST_EV', fillColor: '#edbbdc' },
+        { id: 'ObjOcc.app-color', fillColor: '#9dc4d7' },
+        { id: 'ObjOcc.event-color', fillColor: '#edbbdc' },
         { id: 'ObjOcc.function', symbol: 'ST_FUNC', fillColor: '#009933' },
         { id: 'ObjOcc.default', symbol: 'ST_FUNC' }
       ]),
       modelId: MODEL_ID
     })
 
-    expect(bodyOf('ObjOcc.app').getAttribute('fill')).toBe('#9dc4d7')
-    expect(bodyOf('ObjOcc.event').getAttribute('fill')).toBe('#edbbdc')
-    expect(bodyOf('ObjOcc.function').getAttribute('fill')).toBe('#009933')
+    expect(accentOf('ObjOcc.app-color').getAttribute('fill')).toBe('#9dc4d7')
+    expect(accentOf('ObjOcc.event-color').getAttribute('fill')).toBe('#edbbdc')
+    expect(accentOf('ObjOcc.function').getAttribute('fill')).toBe('#009933')
     // Catalog defaults are authored as RGB and remain byte-for-byte unchanged.
-    expect(bodyOf('ObjOcc.default').getAttribute('fill')).toBe('#339900')
+    expect(accentOf('ObjOcc.default').getAttribute('fill')).toBe('#339900')
+    expect(surfaceOf('ObjOcc.app-color').getAttribute('fill')).toBe('#ffffff')
   })
 
   it('paints a source brush colour over the symbol’s authored fill', () => {
@@ -154,9 +164,10 @@ describe('the canvas draws the occurrence style it was given', () => {
       modelId: MODEL_ID
     })
     // Unstyled: the registry's own fill for ST_FUNC (plan R1 DMT default).
-    expect(bodyOf('ObjOcc.1').getAttribute('fill')).toBe('#339900')
+    expect(accentOf('ObjOcc.1').getAttribute('fill')).toBe('#339900')
     // Styled: the occurrence's brush wins (§12.2 "source style data wins when present").
-    expect(bodyOf('ObjOcc.2').getAttribute('fill')).toBe('#cccccc')
+    expect(accentOf('ObjOcc.2').getAttribute('fill')).toBe('#cccccc')
+    expect(surfaceOf('ObjOcc.2').getAttribute('fill')).toBe('#ffffff')
   })
 
   it('paints outline colour, width and line style on every primitive', () => {
@@ -172,28 +183,30 @@ describe('the canvas draws the occurrence style it was given', () => {
       ]),
       modelId: MODEL_ID
     })
-    const primitives = primitivesOf('ObjOcc.1')
-    expect(primitives.length).toBeGreaterThan(1)
-    for (const primitive of primitives) {
-      expect(primitive.getAttribute('stroke')).toBe('#009933')
-      expect(primitive.getAttribute('stroke-width')).toBe('4')
-      expect(primitive.getAttribute('stroke-dasharray')).toBe('6 4')
-    }
+    const surface = surfaceOf('ObjOcc.1')
+    expect(surface.getAttribute('stroke')).toBe('#009933')
+    expect(surface.getAttribute('stroke-width')).toBe('4')
+    expect(surface.getAttribute('stroke-dasharray')).toBe('6 4')
+    // DMT icon strokes are always white and non-scaling.
+    const icon = partOf('ObjOcc.1', 'icon')
+    expect(icon.getAttribute('stroke')).toBe('#ffffff')
+    expect(icon.getAttribute('stroke-dasharray')).toBeNull()
+    expect(icon.getAttribute('vector-effect')).toBe('non-scaling-stroke')
   })
 
-  it('colours the symbol body only, leaving its accents intact', () => {
-    // ST_SYS_FUNC_ACT is a body rect plus a cog path and a hub circle. A brush that flooded every
-    // filled primitive would erase the cog, which is what makes the symbol recognizable.
+  it('colours only the DMT accent, leaving the white card and icon intact', () => {
     harness = bootCanvas({
       document: documentWith([{ id: 'ObjOcc.1', symbol: 'ST_SYS_FUNC_ACT', fillColor: '#ff00aa' }]),
       modelId: MODEL_ID
     })
-    const [body, ...accents] = primitivesOf('ObjOcc.1')
-    expect(body!.getAttribute('fill')).toBe('#ff00aa')
-    const accentFills = accents.map((accent) => accent.getAttribute('fill'))
-    expect(accentFills).toContain('#d1d5db')
-    expect(accentFills).toContain('#9ca3af')
-    expect(accentFills).not.toContain('#ff00aa')
+    expect(accentOf('ObjOcc.1').getAttribute('fill')).toBe('#ff00aa')
+    expect(surfaceOf('ObjOcc.1').getAttribute('fill')).toBe('#ffffff')
+    const icons = primitivesOf('ObjOcc.1').filter(
+      (primitive) => primitive.getAttribute('data-aris-part') === 'icon'
+    )
+    expect(icons.length).toBeGreaterThan(1)
+    expect(icons.some((icon) => icon.getAttribute('stroke') === '#ffffff')).toBe(true)
+    expect(icons.every((icon) => icon.getAttribute('fill') !== '#ff00aa')).toBe(true)
   })
 
   it('leaves the symbol geometry to the registry — only the paint changes', () => {
@@ -202,7 +215,7 @@ describe('the canvas draws the occurrence style it was given', () => {
       modelId: MODEL_ID
     })
     const shapeOf = (id: string): string => {
-      const body = bodyOf(id)
+      const body = surfaceOf(id)
       return `${body.tagName}|${body.getAttribute('x')}|${body.getAttribute('y')}|${body.getAttribute('width')}|${body.getAttribute('height')}`
     }
     expect(shapeOf('ObjOcc.2')).toBe(shapeOf('ObjOcc.1'))
@@ -272,24 +285,24 @@ describe('source connection paint reaches the canvas', () => {
 describe('an edited style changes the rendered output (§11.4 restyle occurrence)', () => {
   it('repaints the shape the moment restyleOccurrence runs, and undo puts it back', () => {
     harness = bootCanvas({ document: documentWith([{ id: 'ObjOcc.1' }]), modelId: MODEL_ID })
-    const before = bodyOf('ObjOcc.1').getAttribute('fill')
+    const before = accentOf('ObjOcc.1').getAttribute('fill')
     expect(before).toBe('#339900')
 
     harness.canvas.authoring.restyleOccurrence('ObjOcc.1', { fillColor: '#00ff00' })
-    expect(bodyOf('ObjOcc.1').getAttribute('fill')).toBe('#00ff00')
+    expect(accentOf('ObjOcc.1').getAttribute('fill')).toBe('#00ff00')
 
     harness.canvas.authoring.restyleOccurrence('ObjOcc.1', { strokeColor: '#ff0000' })
-    expect(bodyOf('ObjOcc.1').getAttribute('stroke')).toBe('#ff0000')
+    expect(surfaceOf('ObjOcc.1').getAttribute('stroke')).toBe('#ff0000')
 
     harness.canvas.authoring.restyleOccurrence('ObjOcc.1', { lineStyle: 'dotted' })
-    expect(bodyOf('ObjOcc.1').getAttribute('stroke-dasharray')).toBe('2 3')
+    expect(surfaceOf('ObjOcc.1').getAttribute('stroke-dasharray')).toBe('2 3')
 
     harness.canvas.undo()
-    expect(bodyOf('ObjOcc.1').getAttribute('stroke-dasharray')).toBeNull()
+    expect(surfaceOf('ObjOcc.1').getAttribute('stroke-dasharray')).toBeNull()
     harness.canvas.undo()
-    expect(bodyOf('ObjOcc.1').getAttribute('stroke')).not.toBe('#ff0000')
+    expect(surfaceOf('ObjOcc.1').getAttribute('stroke')).not.toBe('#ff0000')
     harness.canvas.undo()
-    expect(bodyOf('ObjOcc.1').getAttribute('fill')).toBe(before)
+    expect(accentOf('ObjOcc.1').getAttribute('fill')).toBe(before)
   })
 
   it('clears an override back to the symbol’s own appearance', () => {
@@ -297,9 +310,9 @@ describe('an edited style changes the rendered output (§11.4 restyle occurrence
       document: documentWith([{ id: 'ObjOcc.1', fillColor: 'cccccc' }]),
       modelId: MODEL_ID
     })
-    expect(bodyOf('ObjOcc.1').getAttribute('fill')).toBe('#cccccc')
+    expect(accentOf('ObjOcc.1').getAttribute('fill')).toBe('#cccccc')
     harness.canvas.authoring.restyleOccurrence('ObjOcc.1', { fillColor: null })
-    expect(bodyOf('ObjOcc.1').getAttribute('fill')).toBe('#339900')
+    expect(accentOf('ObjOcc.1').getAttribute('fill')).toBe('#339900')
   })
 })
 
@@ -310,8 +323,8 @@ describe('a style change affects only that occurrence (plan §8.2)', () => {
       modelId: MODEL_ID
     })
     const definitionBefore = harness.canvas.document.objectDefinitions.get('ObjDef.1')
-    const siblingBefore = bodyOf('ObjOcc.2').getAttribute('fill')
-    const otherBefore = bodyOf('ObjOcc.3').getAttribute('fill')
+    const siblingBefore = accentOf('ObjOcc.2').getAttribute('fill')
+    const otherBefore = accentOf('ObjOcc.3').getAttribute('fill')
 
     harness.canvas.authoring.restyleOccurrence('ObjOcc.1', {
       fillColor: '#ff00aa',
@@ -320,11 +333,11 @@ describe('a style change affects only that occurrence (plan §8.2)', () => {
       lineStyle: 'dashed'
     })
 
-    expect(bodyOf('ObjOcc.1').getAttribute('fill')).toBe('#ff00aa')
+    expect(accentOf('ObjOcc.1').getAttribute('fill')).toBe('#ff00aa')
     // Siblings share the definition — and nothing else.
-    expect(bodyOf('ObjOcc.2').getAttribute('fill')).toBe(siblingBefore)
-    expect(bodyOf('ObjOcc.2').getAttribute('stroke-dasharray')).toBeNull()
-    expect(bodyOf('ObjOcc.3').getAttribute('fill')).toBe(otherBefore)
+    expect(accentOf('ObjOcc.2').getAttribute('fill')).toBe(siblingBefore)
+    expect(surfaceOf('ObjOcc.2').getAttribute('stroke-dasharray')).toBeNull()
+    expect(accentOf('ObjOcc.3').getAttribute('fill')).toBe(otherBefore)
 
     const model = harness.canvas.document.models.get(MODEL_ID)!
     const styles = model.occurrences.map((occurrence) => occurrence.style.fillColor)

@@ -24,10 +24,13 @@ export interface ArisConnectionRule {
 export const ARIS_FALLBACK_CONNECTION_TYPE = 'CT_REFS_TO_2'
 
 /**
- * Model-type-specific rules win over model-type-independent ones, and the first
- * matching rule in this ordered list is the canonical type returned by
- * `resolveConventionConnection`.  Existing `vocabulary.ts` triples are kept at
- * the top in their original order; R2 additions follow.
+ * The first matching rule in this ordered list is the canonical type returned
+ * by `resolveConventionConnection`; model-type-specific rules therefore win
+ * when they precede model-type-independent ones. Existing `vocabulary.ts`
+ * triples are kept at the top in their original order; R2 additions follow.
+ * Alternate connection types observed in the AnimalWF DMT export are
+ * deliberately listed last: they extend legality without changing the
+ * established canonical type minted for an endpoint pair.
  */
 export const ARIS_CONNECTION_RULES: readonly ArisConnectionRule[] = Object.freeze([
   // --- EEPC control flow (verbatim from src/aris/canvas/vocabulary.ts) ------
@@ -311,6 +314,54 @@ export const ARIS_CONNECTION_RULES: readonly ArisConnectionRule[] = Object.freez
     to: 'OT_SERVICE',
     connectionType: 'CT_ENCOMPASSES_1',
     labelKey: 'aris.connection.encompasses',
+    raci: null,
+    verification: 'unverified'
+  }),
+
+  // --- AnimalWF DMT EEPC legality expansion -------------------------------
+  //
+  // These are the four exact missing tuples observed across the eight models
+  // in reference/AnimalWF/ARISAMLExport.xml. Keep them model-scoped: the export
+  // proves they are legal DMT EEPC connections, not universal ARIS pairings.
+  //
+  // The DMT manual's EPC relationship pages confirm Function -> Data Entity
+  // "Create" and Function -> Information Carrier "Creates Output to".
+  Object.freeze({
+    modelType: 'MT_EEPC',
+    from: 'OT_FUNC',
+    to: 'OT_ENT_TYPE',
+    connectionType: 'CT_HAS_OUT',
+    labelKey: 'aris.connection.createsOutputTo',
+    raci: null,
+    verification: 'aris-doc'
+  }),
+  Object.freeze({
+    modelType: 'MT_EEPC',
+    from: 'OT_FUNC',
+    to: 'OT_INFO_CARR',
+    connectionType: 'CT_CRT_OUT_TO',
+    labelKey: 'aris.connection.createsOutputTo',
+    raci: null,
+    verification: 'aris-doc'
+  }),
+
+  // VERIFY-AGAINST-REAL-ARIS-EXPORT: both tuples occur in the real export,
+  // but the DMT manual does not confirm this direction/model-type combination.
+  Object.freeze({
+    modelType: 'MT_EEPC',
+    from: 'OT_FUNC',
+    to: 'OT_ENT_TYPE',
+    connectionType: 'CT_READ_1',
+    labelKey: 'aris.connection.providesInputFor',
+    raci: null,
+    verification: 'unverified'
+  }),
+  Object.freeze({
+    modelType: 'MT_EEPC',
+    from: 'OT_FUNC',
+    to: 'OT_FUNC',
+    connectionType: 'CT_IS_PREDEC_OF_1',
+    labelKey: 'aris.connection.isPredecessorOf',
     raci: null,
     verification: 'unverified'
   })

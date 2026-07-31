@@ -1,5 +1,9 @@
 import { UNKNOWN_SYMBOL_DESCRIPTOR } from './fallback'
-import { ARIS_OBJECT_TYPE_DEFAULT_SYMBOL, ARIS_SYMBOL_DESCRIPTORS } from './shapes'
+import {
+  ARIS_OBJECT_TYPE_DEFAULT_SYMBOL,
+  ARIS_SYMBOL_DESCRIPTORS,
+  type DmtSymbolDescriptor
+} from './shapes'
 import type {
   ArisSourceGeometry,
   ArisSourceSymbolStyle,
@@ -15,15 +19,29 @@ export type {
   ArisSymbolResolutionRequest,
   ArisSymbolResolutionResult
 }
+export type {
+  DmtBox,
+  DmtIconId,
+  DmtOperator,
+  DmtPaintRole,
+  DmtPartId,
+  DmtScalePolicy,
+  DmtSemanticPart,
+  DmtSilhouette,
+  DmtSymbolDescriptor
+} from './shapes'
+export { isDmtSymbolDescriptor } from './shapes'
 
 interface SymbolIndexes {
   readonly exact: ReadonlyMap<string, ArisSymbolDescriptor>
   readonly byObjectSymbol: ReadonlyMap<string, ArisSymbolDescriptor>
+  readonly byCatalogId: ReadonlyMap<string, DmtSymbolDescriptor>
 }
 
-function buildIndexes(descriptors: readonly ArisSymbolDescriptor[]): SymbolIndexes {
+function buildIndexes(descriptors: readonly DmtSymbolDescriptor[]): SymbolIndexes {
   const exact = new Map<string, ArisSymbolDescriptor>()
   const byObjectSymbol = new Map<string, ArisSymbolDescriptor>()
+  const byCatalogId = new Map<string, DmtSymbolDescriptor>()
   for (const descriptor of descriptors) {
     if (!exact.has(descriptor.key)) {
       exact.set(descriptor.key, descriptor)
@@ -32,10 +50,12 @@ function buildIndexes(descriptors: readonly ArisSymbolDescriptor[]): SymbolIndex
     if (!byObjectSymbol.has(objectSymbolKey)) {
       byObjectSymbol.set(objectSymbolKey, descriptor)
     }
+    byCatalogId.set(descriptor.catalogId, descriptor)
   }
   return {
     exact,
-    byObjectSymbol
+    byObjectSymbol,
+    byCatalogId
   }
 }
 
@@ -88,9 +108,11 @@ function resolveDescriptor(request: ArisSymbolResolutionRequest): {
     }
   }
 
-  // 3. Object type default symbol.
+  // 3. A missing symbol on a newly authored request uses the object default.
+  // An explicit but unknown imported SymbolNum must remain visibly unknown;
+  // silently replacing it would hide a fidelity loss behind a plausible card.
   const defaultSymbolNum = ARIS_OBJECT_TYPE_DEFAULT_SYMBOL[request.objectType]
-  if (defaultSymbolNum) {
+  if (defaultSymbolNum && request.symbolNum.trim() === '') {
     const defaultExact = INDEXES.exact.get(
       `${request.modelType}:${request.objectType}:${defaultSymbolNum}`
     )
@@ -176,7 +198,7 @@ function passthroughSource(
  * Fallback order:
  * 1. exact triple match;
  * 2. object type + SymbolNum, any model type;
- * 3. object type default symbol;
+ * 3. object type default symbol when SymbolNum is absent;
  * 4. explicit visible unknown-symbol fallback.
  *
  * Source geometry, style, and reference material are passed through unchanged.
@@ -203,7 +225,18 @@ export function resolveDefaultSymbol(objectType: string): ArisSymbolDescriptor {
   )
 }
 
+/**
+ * Resolve an exact DMT presentation identity for descriptor-driven previews.
+ *
+ * This is intentionally separate from `resolveArisSymbol`: imports only carry a
+ * persisted triple and must not guess between catalog variants whose known
+ * objectType:symbolNum identity is shared.
+ */
+export function resolveArisCatalogSymbol(catalogId: string): DmtSymbolDescriptor | null {
+  return INDEXES.byCatalogId.get(catalogId) ?? null
+}
+
 /** All descriptors in the registry. */
-export function getArisSymbolDescriptors(): readonly ArisSymbolDescriptor[] {
+export function getArisSymbolDescriptors(): readonly DmtSymbolDescriptor[] {
   return ARIS_SYMBOL_DESCRIPTORS
 }

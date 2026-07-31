@@ -18,10 +18,10 @@
  * the descriptor's authored colours whenever the occurrence carries one, which
  * is what makes `restyleOccurrence` a visible edit rather than a stored one.
  *
- * The brush colours the symbol's *body* — its first filled primitive — and never
- * its accents: flooding every filled primitive would erase the detail that
- * distinguishes one symbol from another (an information-carrier's inner band, a
- * person's head), turning restyle into vandalism.
+ * A DMT descriptor assigns paint roles explicitly. The source brush can replace
+ * only the accent band/tile; the white card, white icon, caption and outline
+ * retain their semantic paint. Icons use a centered uniform transform while
+ * surfaces stretch to the imported occurrence bounds.
  *
  * Any fidelity finding the registry reports is attached to the rendered group
  * as `data-aris-fidelity` so the Phase 9 fidelity report can collect it without
@@ -33,7 +33,14 @@ import type EventBus from 'diagram-js/lib/core/EventBus'
 import type { Connection, Element, Shape } from 'diagram-js/lib/model/Types'
 import { createLine, updateLine } from 'diagram-js/lib/util/RenderUtil'
 
-import { resolveArisSymbol } from '../symbols'
+import {
+  isDmtSymbolDescriptor,
+  resolveArisCatalogSymbol,
+  resolveArisSymbol,
+  type DmtBox,
+  type DmtSemanticPart,
+  type DmtSymbolDescriptor
+} from '../symbols'
 import { amlColorRefToCss } from '../source/semanticIndex'
 import type { ArisDrawingElement, ArisSymbolDescriptor } from '../symbols/types'
 import {
@@ -74,6 +81,40 @@ function scaleFor(descriptor: ArisSymbolDescriptor, width: number, height: numbe
     sy: viewBox.height === 0 ? 1 : height / viewBox.height,
     tx: -viewBox.minX,
     ty: -viewBox.minY
+  }
+}
+
+function uniformScaleFor(
+  descriptor: ArisSymbolDescriptor,
+  width: number,
+  height: number,
+  sourceBox?: DmtBox
+): Scale {
+  const full = scaleFor(descriptor, width, height)
+  const { viewBox } = descriptor.drawing
+  const box =
+    sourceBox ??
+    ({
+      x: viewBox.minX,
+      y: viewBox.minY,
+      width: viewBox.width,
+      height: viewBox.height
+    } satisfies DmtBox)
+  const targetX = mapX(full, box.x)
+  const targetY = mapY(full, box.y)
+  const targetWidth = box.width * full.sx
+  const targetHeight = box.height * full.sy
+  const uniform = Math.min(
+    box.width === 0 ? 1 : targetWidth / box.width,
+    box.height === 0 ? 1 : targetHeight / box.height
+  )
+  const centeredX = targetX + (targetWidth - box.width * uniform) / 2
+  const centeredY = targetY + (targetHeight - box.height * uniform) / 2
+  return {
+    sx: uniform,
+    sy: uniform,
+    tx: uniform === 0 ? 0 : centeredX / uniform - box.x,
+    ty: uniform === 0 ? 0 : centeredY / uniform - box.y
   }
 }
 
@@ -158,23 +199,33 @@ function isFilledPrimitive(primitive: ArisDrawingElement): boolean {
  * space that cannot be scaled attribute-by-attribute, so the group carries the
  * scale transform and paths are emitted untouched inside it.
  *
- * `paint` is the occurrence's own style. `body` marks the one primitive the
- * brush colour applies to; the pen colour, width and dash apply to all of them.
+ * `paint` is the occurrence's own style. `accent` admits the brush and `pen`
+ * admits source outline styling. White icon primitives admit neither.
  */
 function drawPrimitive(
   primitive: ArisDrawingElement,
   scale: Scale,
   paint: ResolvedOccurrencePaint = EMPTY_PAINT,
-  body = false
+  options: {
+    readonly accent?: boolean
+    readonly pen?: boolean
+    readonly part?: string
+  } = {}
 ): SVGElement | null {
-  const stroke = paint.stroke ?? primitive.stroke ?? DEFAULT_STROKE
-  const strokeWidth = paint.strokeWidth ?? primitive.strokeWidth ?? 1.5
-  const dash = paint.dasharray
+  const stroke = options.pen
+    ? (paint.stroke ?? primitive.stroke ?? DEFAULT_STROKE)
+    : (primitive.stroke ?? DEFAULT_STROKE)
+  const strokeWidth = options.pen
+    ? (paint.strokeWidth ?? primitive.strokeWidth ?? 1.5)
+    : (primitive.strokeWidth ?? 1.5)
+  const dash = options.pen ? paint.dasharray : undefined
   const dashAttrs: Readonly<Record<string, string>> =
     dash === undefined || dash === null ? {} : { 'stroke-dasharray': dash }
+  const semanticAttrs: Readonly<Record<string, string>> =
+    options.part === undefined ? {} : { 'data-aris-part': options.part }
   const own = 'fill' in primitive ? primitive.fill : undefined
   const fillOf = (fallback: string): string =>
-    body && paint.fill !== undefined ? paint.fill : (own ?? fallback)
+    options.accent && paint.fill !== undefined ? paint.fill : (own ?? fallback)
   switch (primitive.kind) {
     case 'rect':
       return svgElement('rect', {
@@ -187,6 +238,8 @@ function drawPrimitive(
         fill: fillOf(DEFAULT_FILL),
         stroke,
         'stroke-width': strokeWidth,
+        'vector-effect': 'non-scaling-stroke',
+        ...semanticAttrs,
         ...dashAttrs
       })
     case 'circle': {
@@ -198,6 +251,8 @@ function drawPrimitive(
         fill: fillOf(DEFAULT_FILL),
         stroke,
         'stroke-width': strokeWidth,
+        'vector-effect': 'non-scaling-stroke',
+        ...semanticAttrs,
         ...dashAttrs
       })
     }
@@ -209,6 +264,8 @@ function drawPrimitive(
         fill: fillOf(DEFAULT_FILL),
         stroke,
         'stroke-width': strokeWidth,
+        'vector-effect': 'non-scaling-stroke',
+        ...semanticAttrs,
         ...dashAttrs
       })
     case 'line':
@@ -219,6 +276,8 @@ function drawPrimitive(
         y2: round(mapY(scale, primitive.y2)),
         stroke,
         'stroke-width': strokeWidth,
+        'vector-effect': 'non-scaling-stroke',
+        ...semanticAttrs,
         ...dashAttrs
       })
     case 'path':
@@ -228,6 +287,8 @@ function drawPrimitive(
         fill: fillOf('none'),
         stroke,
         'stroke-width': strokeWidth,
+        'vector-effect': 'non-scaling-stroke',
+        ...semanticAttrs,
         ...dashAttrs
       })
     default:
@@ -247,11 +308,18 @@ function drawCaption(
   text: string,
   width: number,
   height: number,
-  font: ArisLabelFont | null = null
+  font: ArisLabelFont | null = null,
+  box?: Readonly<{
+    readonly x: number
+    readonly y: number
+    readonly width: number
+    readonly height: number
+  }>
 ): SVGElement {
+  const region = box ?? { x: 0, y: 0, width, height }
   const node = svgElement('text', {
-    x: round(width / 2),
-    y: round(height / 2),
+    x: round(region.x + region.width / 2),
+    y: round(region.y + region.height / 2),
     'text-anchor': 'middle',
     'dominant-baseline': 'middle',
     'font-size': font?.fontSize ?? CAPTION_FONT_SIZE,
@@ -259,10 +327,43 @@ function drawCaption(
     ...(font?.fontWeight ? { 'font-weight': font.fontWeight } : {}),
     fill: occurrenceColorToCss(font?.textColor) ?? CAPTION_FILL,
     'data-aris-caption': 'true',
+    ...(box === undefined ? {} : { 'data-aris-part': 'content' }),
     ...rtlTextAttrs(text)
   })
   node.textContent = text
   return node
+}
+
+function partByElementIndex(
+  descriptor: DmtSymbolDescriptor,
+  elementIndex: number
+): DmtSemanticPart | undefined {
+  return descriptor.semanticParts.find((part) => part.elementIndexes.includes(elementIndex))
+}
+
+function scaleForPart(
+  descriptor: DmtSymbolDescriptor,
+  part: DmtSemanticPart,
+  width: number,
+  height: number
+): Scale {
+  if (part.scale === 'stretch') return scaleFor(descriptor, width, height)
+  return uniformScaleFor(
+    descriptor,
+    width,
+    height,
+    part.id === 'icon' ? descriptor.iconBox : undefined
+  )
+}
+
+function contentBoxAtSize(descriptor: DmtSymbolDescriptor, width: number, height: number): DmtBox {
+  const scale = scaleFor(descriptor, width, height)
+  return {
+    x: mapX(scale, descriptor.contentBox.x),
+    y: mapY(scale, descriptor.contentBox.y),
+    width: descriptor.contentBox.width * scale.sx,
+    height: descriptor.contentBox.height * scale.sy
+  }
 }
 
 /**
@@ -421,29 +522,76 @@ export class ArisRenderer extends BaseRenderer {
     const group = svgElement('g', { 'data-aris-kind': businessObject.kind })
 
     if (businessObject.kind === 'occurrence') {
-      const resolution = resolveArisSymbol({
-        modelType: businessObject.modelType,
-        objectType: businessObject.objectType,
-        symbolNum: businessObject.symbolNum
-      })
+      const selectedDescriptor =
+        businessObject.catalogId === undefined
+          ? null
+          : resolveArisCatalogSymbol(businessObject.catalogId)
+      const resolution =
+        selectedDescriptor === null
+          ? resolveArisSymbol({
+              modelType: businessObject.modelType,
+              objectType: businessObject.objectType,
+              symbolNum: businessObject.symbolNum
+            })
+          : { descriptor: selectedDescriptor, fidelity: Object.freeze([]) }
       group.setAttribute('data-aris-symbol', resolution.descriptor.key)
+      const dmtDescriptor = isDmtSymbolDescriptor(resolution.descriptor)
+        ? resolution.descriptor
+        : null
+      group.setAttribute(
+        'data-aris-catalog-id',
+        dmtDescriptor?.catalogId ?? 'orbitpm.unknown-symbol'
+      )
+      group.setAttribute('data-aris-part', 'presentation')
+      group.setAttribute('data-aris-icon', dmtDescriptor?.icon ?? 'unknown')
+      group.setAttribute('data-aris-silhouette', dmtDescriptor?.silhouette ?? 'unknown')
+      group.setAttribute('data-aris-operator', dmtDescriptor?.operator ?? 'none')
+      group.setAttribute(
+        'aria-label',
+        businessObject.name
+          ? `${dmtDescriptor?.accessibleLabel ?? 'Unknown ARIS symbol'}: ${businessObject.name}`
+          : (dmtDescriptor?.accessibleLabel ?? 'Unknown ARIS symbol')
+      )
+      group.setAttribute('role', 'img')
       if (resolution.fidelity.length > 0) {
         group.setAttribute(
           'data-aris-fidelity',
           resolution.fidelity.map((finding) => finding.kind).join(' ')
         )
       }
-      const scale = scaleFor(resolution.descriptor, shape.width, shape.height)
       const paint = resolvePaint(businessObject.style)
-      // The brush colours the body only — the first primitive that encloses an
-      // area — so a restyle repaints the symbol without erasing its detail.
-      const bodyIndex = resolution.descriptor.drawing.elements.findIndex(isFilledPrimitive)
+      const fallbackScale = scaleFor(resolution.descriptor, shape.width, shape.height)
+      const fallbackBodyIndex = resolution.descriptor.drawing.elements.findIndex(isFilledPrimitive)
       resolution.descriptor.drawing.elements.forEach((primitive, index) => {
-        const node = drawPrimitive(primitive, scale, paint, index === bodyIndex)
+        const part = dmtDescriptor === null ? undefined : partByElementIndex(dmtDescriptor, index)
+        const scale =
+          dmtDescriptor === null || part === undefined
+            ? fallbackScale
+            : scaleForPart(dmtDescriptor, part, shape.width, shape.height)
+        const node = drawPrimitive(primitive, scale, paint, {
+          accent:
+            part?.paintRole === 'accent' || (dmtDescriptor === null && index === fallbackBodyIndex),
+          pen: part?.id === 'surface' || part?.id === 'silhouette' || dmtDescriptor === null,
+          part: part?.id ?? (index === fallbackBodyIndex ? 'silhouette' : 'icon')
+        })
         if (node) svgAppend(group, node)
       })
-      if (businessObject.name) {
-        svgAppend(group, drawCaption(businessObject.name, shape.width, shape.height))
+      if (
+        businessObject.name &&
+        (dmtDescriptor === null || dmtDescriptor.captionPolicy === 'content-box')
+      ) {
+        svgAppend(
+          group,
+          drawCaption(
+            businessObject.name,
+            shape.width,
+            shape.height,
+            null,
+            dmtDescriptor === null
+              ? undefined
+              : contentBoxAtSize(dmtDescriptor, shape.width, shape.height)
+          )
+        )
       }
       for (const label of businessObject.attributeLabels ?? []) {
         svgAppend(group, drawAttributeLabel(label))

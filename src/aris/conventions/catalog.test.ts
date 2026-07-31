@@ -21,12 +21,14 @@ describe('ARIS convention symbol catalog', () => {
     }
   })
 
-  it('has exactly one catalog row for every persisted objectType + symbolNum identity', () => {
-    const identities = ARIS_CONVENTION_SYMBOLS.map(
-      (symbol) => `${symbol.objectType}:${symbol.symbolNum}`
-    )
+  it('has 36 stable catalog identities without pretending shared persisted pairs are unique', () => {
+    expect(ARIS_CONVENTION_SYMBOLS).toHaveLength(36)
+    const catalogIds = ARIS_CONVENTION_SYMBOLS.map((symbol) => symbol.catalogId)
+    expect(new Set(catalogIds).size).toBe(36)
 
-    expect(new Set(identities).size).toBe(identities.length)
+    const disabled = ARIS_CONVENTION_SYMBOLS.filter((symbol) => !symbol.placementEnabled)
+    expect(disabled).toHaveLength(7)
+    expect(disabled.every((symbol) => symbol.placementDisabledReason !== null)).toBe(true)
   })
 
   it('looks up a symbol by objectType + symbolNum', () => {
