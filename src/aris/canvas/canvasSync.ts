@@ -53,6 +53,7 @@ import { measureTextWidth } from '../renderer/textWrap'
 import { readLocalized } from './localization'
 import { connectionWaypoints, type ConnectionPort } from './waypoints'
 import { AT_NAME } from './vocabulary'
+import { resolveRaciLetter } from './raci'
 
 /** Thickness of a lane band whose model gives no usable explicit extent. */
 export const LANE_DEFAULT_THICKNESS = 240
@@ -74,6 +75,31 @@ export const CONNECTION_LABEL_SYMBOL_SIZE = 14
 export const CONNECTION_LABEL_LINE_HEIGHT = 16
 /** Caption size the canvas draws labels at; see `renderer.ts`. */
 const CONNECTION_LABEL_FONT_SIZE = 12
+/**
+ * The `Port` value ARIS writes for a north-west anchored placement. Every one of
+ * AnimalWF's derived RACI badges (`AT_TYPE_6`, empty value, offsets 0) carries it
+ * (fixplan §5.1); everything else on those sheets is `N`/portless and stays on
+ * the midpoint-centred path untouched.
+ */
+export const CONNECTION_LABEL_PORT_NW = 'NW'
+/**
+ * How far the drawn extent of a `Port="NW"` label is inset — up and to the left —
+ * from the route's source-box contact point (the point where the connection meets
+ * the executor/role box, `waypoints[0]`). The label's bottom-right corner is
+ * pinned there and the box grows north-west, so the letter floats *above* the line
+ * and is tucked just *left* of the role box rather than being struck through it.
+ *
+ * Calibrated to the original PDF's measured R badge (fixplan §0): glyph pt bbox
+ * `[192.6,111.8,195.6,116.4]` against line y `117.86` and role-box left x `1535u`.
+ * Converted to canvas units (`unit = (pt − 14.17) / 0.11906`) that is a glyph whose
+ * centre sits ≈24 units left of the role-box edge and ≈32 units above the line.
+ * With the letter drawn at its real style-sheet size (Arial 35.278u — the FontSS
+ * `−10` sheet), pinning the bottom-right at `(anchor.x − 11, anchor.y − 14)` and
+ * letting the box span the glyph's own extent reproduces that measured centre to
+ * sub-unit. These are universal calibration constants — never per-connection.
+ */
+export const CONNECTION_LABEL_NW_INSET_X = 11
+export const CONNECTION_LABEL_NW_INSET_Y = 14
 /** Box drawn for a free-text note whose source record carries no `Size`. */
 export const FREE_TEXT_DEFAULT_WIDTH = 160
 export const FREE_TEXT_DEFAULT_HEIGHT = 32
@@ -711,6 +737,13 @@ export class ArisCanvasSync {
       if (!midpoint) continue
       const definition = definitions.get(connection.definitionId)
       const owner = this.elementRegistry.get(connection.id) as Connection | undefined
+      // For a `Port="NW"` badge the label anchors against the source-box contact —
+      // the point where the route leaves the executor/role box (`waypoints[0]`) —
+      // not the midpoint. The endpoint object types decide the derived RACI letter.
+      const objectDefinitions = this.store.document.objectDefinitions
+      const sourceObjectType = objectDefinitions.get(source.definitionId)?.type ?? 'OT_UNKNOWN'
+      const targetObjectType = objectDefinitions.get(target.definitionId)?.type ?? 'OT_UNKNOWN'
+      const nwContact = waypoints[0]
       connection.attributeOccurrences.forEach((placement, index) => {
         const id = connectionLabelElementId(connection.id, index, placement.attributeType)
         desired.add(id)
@@ -731,10 +764,41 @@ export class ArisCanvasSync {
           text: connectionLabelText(placement, definition, this.displayLocaleId),
           zOrder: connection.style.zOrder
         })
-        const bounds = connectionLabelRect(placement, midpoint, {
-          symbolFlag: businessObject.symbolFlag,
-          text: businessObject.text
-        })
+        // North-west badges draw their authored value, or — for AnimalWF's empty
+        // `AT_TYPE_6` relationship placements — the derived RACI letter (the same
+        // letter the renderer paints), sized at the placement's real font. The box
+        // then hangs north-west of the source-box contact instead of straddling
+        // the midpoint. Any other port keeps the midpoint-centred extent unchanged.
+        let renderedText = businessObject.text
+        let nwAnchor: NwLabelAnchor | undefined
+        if (
+          (placement.port ?? '').trim().toUpperCase() === CONNECTION_LABEL_PORT_NW &&
+          businessObject.symbolFlag !== 'SYMBOL' &&
+          nwContact
+        ) {
+          const raciLetter =
+            businessObject.text.trim() === ''
+              ? resolveRaciLetter({
+                  connectionType: definition?.type ?? 'CT_UNKNOWN',
+                  sourceObjectType,
+                  targetObjectType
+                })
+              : null
+          const text = businessObject.text.length > 0 ? businessObject.text : (raciLetter ?? '')
+          if (text.length > 0) {
+            renderedText = text
+            nwAnchor = {
+              point: nwContact,
+              fontSize: businessObject.font?.fontSize ?? CONNECTION_LABEL_FONT_SIZE
+            }
+          }
+        }
+        const bounds = connectionLabelRect(
+          placement,
+          midpoint,
+          { symbolFlag: businessObject.symbolFlag, text: renderedText },
+          nwAnchor
+        )
         this.upsertShape(id, bounds, businessObject, dirty, {
           label: true,
           labelTarget: owner
@@ -1113,15 +1177,51 @@ function segmentLength(from: ArisPoint, to: ArisPoint): number {
  * draws nothing for them. Giving each of those a nominal box instead would put
  * dozens of invisible rectangles on the canvas and count them as overlaps in
  * every layout metric that measures labels.
+ *
+ * `Port="NW"` is the one exception (fixplan §5.1 + §0). Such a placement is not
+ * centred on the midpoint at all: its drawn extent hangs to the north-west of the
+ * route's source-box contact point (`anchor`), so the badge floats above the line
+ * and tucks against the role box. The caller supplies `anchor` (and the real drawn
+ * text/size) only for that port; every other port keeps the exact midpoint-centred
+ * math below, byte-for-byte.
  */
+/**
+ * What a `Port="NW"` placement anchors against: the route's source-box contact
+ * point (`waypoints[0]`) and the font size the letter is actually drawn at. The
+ * caller resolves both; `connectionLabelRect` only reaches for them on that port.
+ */
+export interface NwLabelAnchor {
+  readonly point: ArisPoint
+  readonly fontSize: number
+}
+
 export function connectionLabelRect(
-  placement: Pick<ArisAttributeOccurrence, 'offsetX' | 'offsetY' | 'width' | 'height'>,
+  placement: Pick<ArisAttributeOccurrence, 'offsetX' | 'offsetY' | 'width' | 'height' | 'port'>,
   midpoint: ArisPoint,
   content: { readonly symbolFlag: ArisAttributeSymbolFlag; readonly text: string } = {
     symbolFlag: 'TEXT',
     text: ''
-  }
+  },
+  anchor?: NwLabelAnchor
 ): ArisRect {
+  if (
+    anchor &&
+    (placement.port ?? '').trim().toUpperCase() === CONNECTION_LABEL_PORT_NW &&
+    content.symbolFlag !== 'SYMBOL' &&
+    content.text.length > 0
+  ) {
+    const width = positiveOrNull(placement.width) ?? measureTextWidth(content.text, anchor.fontSize)
+    const height = positiveOrNull(placement.height) ?? anchor.fontSize
+    // Pin the bottom-right corner up-and-left of the source-box contact, box grows
+    // north-west (fixplan §0's measured R). The letter is centred inside this box by
+    // the renderer, so the box IS the glyph's footprint and its centre is the letter's.
+    return Object.freeze({
+      x: anchor.point.x - CONNECTION_LABEL_NW_INSET_X - width,
+      y: anchor.point.y - CONNECTION_LABEL_NW_INSET_Y - height,
+      width,
+      height
+    })
+  }
   const drawn =
     content.symbolFlag === 'SYMBOL'
       ? { width: CONNECTION_LABEL_SYMBOL_SIZE, height: CONNECTION_LABEL_SYMBOL_SIZE }

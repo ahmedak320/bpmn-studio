@@ -248,6 +248,45 @@ describe('connectionLabelRect centres the placement on the midpoint plus its off
     )
     expect(rect).toEqual({ x: 100 - 11 - 20, y: 200 + 6 - 10, width: 40, height: 20 })
   })
+
+  it('anchors a Port="NW" text placement north-west of the source-box contact', () => {
+    // Fixplan §5.1/§0: the badge hangs above-left of where the route meets the
+    // source box, not on the midpoint. The box's bottom-right is pinned inset from
+    // the contact and it grows up-and-left; the midpoint is ignored entirely.
+    const anchor = { point: { x: 1535, y: 870 }, fontSize: 35.278 }
+    const rect = connectionLabelRect(
+      placement(),
+      { x: 9999, y: 9999 },
+      { symbolFlag: 'TEXT', text: 'R' },
+      anchor
+    )
+    expect(rect.x + rect.width).toBeCloseTo(1535 - 11, 6) // 11u left of the box edge
+    expect(rect.y + rect.height).toBeCloseTo(870 - 14, 6) // 14u above the line
+    expect(rect.width).toBeGreaterThan(0)
+    expect(rect.x + rect.width).toBeLessThan(1535) // clears the box …
+    expect(rect.y + rect.height).toBeLessThan(870) //  … and the line
+  })
+
+  it('leaves a SYMBOL or valueless NW placement on the midpoint path', () => {
+    const anchor = { point: { x: 1535, y: 870 }, fontSize: 35.278 }
+    // A SYMBOL marker never north-west anchors — it straddles the midpoint.
+    const symbol = connectionLabelRect(
+      placement(),
+      midpoint,
+      { symbolFlag: 'SYMBOL', text: '' },
+      anchor
+    )
+    expect(symbol.x + symbol.width / 2).toBe(100)
+    expect(symbol.y + symbol.height / 2).toBe(200)
+    // Empty text with an anchor draws nothing and occupies nothing, as before.
+    const empty = connectionLabelRect(
+      placement(),
+      midpoint,
+      { symbolFlag: 'TEXT', text: '' },
+      anchor
+    )
+    expect(empty).toEqual({ x: 100, y: 200, width: 0, height: 0 })
+  })
 })
 
 describe('attributeSymbolFlag normalizes SymbolFlag', () => {

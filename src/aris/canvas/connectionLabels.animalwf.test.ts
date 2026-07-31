@@ -10,7 +10,14 @@ import type { ArisWorkingDocument } from '../model/types'
 import { buildSemanticArisDocument } from '../source/semanticIndex'
 import { tokenizeXmlDocument } from '../source/xmlTokenizer'
 import { ARIS_CONNECTION_LABEL_PREFIX, arisBusinessObject } from './elements'
-import { connectionLabelRect, routeMidpoint } from './canvasSync'
+import {
+  CONNECTION_LABEL_NW_INSET_X,
+  CONNECTION_LABEL_NW_INSET_Y,
+  CONNECTION_LABEL_PORT_NW,
+  connectionLabelRect,
+  resolveLabelFont,
+  routeMidpoint
+} from './canvasSync'
 import { connectionWaypoints } from './waypoints'
 import { bootCanvas, type Harness } from './testing/harness'
 
@@ -75,11 +82,13 @@ interface DrawnLabel {
   readonly elementId: string
   readonly attributeType: string
   readonly symbolFlag: string
+  readonly port: string | null
   readonly fontStyleSheetId: string | null
   readonly hasText: boolean
   readonly hasSymbol: boolean
   readonly textAnchor: string | null
   readonly text: string
+  readonly raci: string | null
   readonly rect: Rect
 }
 
@@ -111,11 +120,13 @@ function drawLabelsFor(modelId: string): DrawnLabel[] {
       elementId: element.id,
       attributeType: group.getAttribute('data-aris-attribute-type') ?? '',
       symbolFlag: group.getAttribute('data-aris-symbol-flag') ?? '',
+      port: (businessObject as { readonly port?: string | null }).port ?? null,
       fontStyleSheetId: group.getAttribute('data-aris-font-ss'),
       hasText: text !== null,
       hasSymbol: group.querySelector('[data-aris-attribute-symbol]') !== null,
       textAnchor: text?.getAttribute('text-anchor') ?? null,
       text: text?.textContent ?? '',
+      raci: group.getAttribute('data-aris-raci'),
       rect: rectOf(element)
     })
   }
@@ -276,8 +287,11 @@ describe('AnimalWF connection label placements are painted on the canvas (plan �
     expect(drawn.every((label) => label.fontStyleSheetId !== null)).toBe(true)
   })
 
-  it('centres every placement on its route midpoint plus the source offsets', () => {
+  it('centres every non-NW placement on its route midpoint plus the source offsets', () => {
+    // The safety half of the P7 split (fixplan §5.1): CENTER/portless placements keep
+    // the EXACT midpoint-centred math — byte-identical to before the NW change.
     let checked = 0
+    let nwSkipped = 0
     for (const modelId of allModelIds()) {
       const model = workingDocument.models.get(modelId)!
       const occurrenceById = new Map(model.occurrences.map((entry) => [entry.id, entry]))
@@ -297,6 +311,10 @@ describe('AnimalWF connection label placements are painted on the canvas (plan �
           const id = `${ARIS_CONNECTION_LABEL_PREFIX}${connection.id}:${index}:${placement.attributeType}`
           const label = drawn.get(id)
           expect(label).toBeDefined()
+          if ((placement.port ?? '').trim().toUpperCase() === CONNECTION_LABEL_PORT_NW) {
+            nwSkipped += 1
+            return
+          }
           const expected = connectionLabelRect(placement, midpoint, {
             symbolFlag: label!.symbolFlag === 'SYMBOL' ? 'SYMBOL' : 'TEXT',
             text: label!.text
@@ -318,7 +336,105 @@ describe('AnimalWF connection label placements are painted on the canvas (plan �
       harness?.destroy()
       harness = null
     }
-    expect(checked).toBe(TOTAL_PLACEMENTS)
+    // 67 of the 123 placements are NW badges, handled by the NW test below.
+    expect(nwSkipped).toBe(67)
+    expect(checked).toBe(TOTAL_PLACEMENTS - 67)
+  })
+
+  it('anchors every NW badge north-west of the source-box contact, above the line (§5.1/§0)', () => {
+    // The change half of the P7 split: `Port="NW"` badges hang above-left of the point
+    // where the route leaves the source (executor/role) box — the drawn extent's
+    // bottom-right pinned inset from that contact — instead of straddling the midpoint.
+    // The rule is a PURE function of the drawn route + the letter's own extent: no
+    // per-connection constants, no hand-tuned per-letter rects.
+    let checked = 0
+    for (const modelId of allModelIds()) {
+      const model = workingDocument.models.get(modelId)!
+      const drawn = new Map(drawLabelsFor(modelId).map((label) => [label.elementId, label]))
+      const registry = harness!.canvas.elementRegistry
+
+      model.connectionOccurrences.forEach((connection) => {
+        const routeConn = registry.get(connection.id) as unknown as {
+          readonly waypoints: readonly { readonly x: number; readonly y: number }[]
+        }
+        const midpoint = routeMidpoint(routeConn.waypoints)
+        connection.attributeOccurrences.forEach((placement, index) => {
+          if ((placement.port ?? '').trim().toUpperCase() !== CONNECTION_LABEL_PORT_NW) return
+          const id = `${ARIS_CONNECTION_LABEL_PREFIX}${connection.id}:${index}:${placement.attributeType}`
+          const label = drawn.get(id)
+          expect(label).toBeDefined()
+          // A NW badge always draws the derived RACI letter (on `data-aris-raci`),
+          // never a symbol. The authored value is empty, so the letter is what the
+          // box is sized to — exactly as `syncConnectionLabels` sizes it.
+          expect(label!.symbolFlag).toBe('TEXT')
+          expect(label!.raci).toMatch(/^[RACI]$/)
+
+          const contact = routeConn.waypoints[0]!
+          const font = resolveLabelFont(workingDocument.styleCatalog, placement.fontStyleSheetId)
+          expect(font?.fontSize).toBeGreaterThan(0)
+          const fontSize = font!.fontSize!
+          const expected = connectionLabelRect(
+            placement,
+            midpoint!,
+            { symbolFlag: 'TEXT', text: label!.raci! },
+            { point: contact, fontSize }
+          )
+          // The mounted canvas reproduces the pure-function rect exactly.
+          expect(label!.rect.x).toBeCloseTo(expected.x, 6)
+          expect(label!.rect.y).toBeCloseTo(expected.y, 6)
+          expect(label!.rect.width).toBeCloseTo(expected.width, 6)
+          expect(label!.rect.height).toBeCloseTo(expected.height, 6)
+          // Bottom-right corner inset up-and-left of the contact point.
+          expect(label!.rect.x + label!.rect.width).toBeCloseTo(
+            contact.x - CONNECTION_LABEL_NW_INSET_X,
+            6
+          )
+          expect(label!.rect.y + label!.rect.height).toBeCloseTo(
+            contact.y - CONNECTION_LABEL_NW_INSET_Y,
+            6
+          )
+          // Never struck through: the whole letter sits above the line …
+          expect(label!.rect.y + label!.rect.height).toBeLessThan(contact.y)
+          // … and its box is sized to the drawn glyph, not the midpoint caption size.
+          expect(label!.rect.height).toBeGreaterThan(20)
+          checked += 1
+        })
+      })
+      harness?.destroy()
+      harness = null
+    }
+    expect(checked).toBe(67)
+  })
+
+  it('never lets a NW badge rect intersect any occurrence box (fixplan §5.1 risk)', () => {
+    // The stated risk of moving all the RACI letters: a badge could collide with a
+    // satellite/occurrence box. A box-intersection scan over the synced NW labels
+    // proves it does not — across every NW badge in every model, which necessarily
+    // covers the register-owner and renew-profile iterate models called out in the
+    // brief. Written as a scan, not as hand-authored per-letter rects.
+    const overlaps = (a: Rect, b: Rect): boolean =>
+      a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
+    let nwLabels = 0
+    let intersections = 0
+    for (const modelId of allModelIds()) {
+      const model = workingDocument.models.get(modelId)!
+      const nwRects = drawLabelsFor(modelId)
+        .filter((label) => (label.port ?? '').trim().toUpperCase() === CONNECTION_LABEL_PORT_NW)
+        .map((label) => label.rect)
+      nwLabels += nwRects.length
+      for (const rect of nwRects) {
+        // A non-degenerate letter footprint, or the scan would be vacuous.
+        expect(rect.width).toBeGreaterThan(0)
+        expect(rect.height).toBeGreaterThan(0)
+        for (const occurrence of model.occurrences) {
+          if (overlaps(rect, occurrence.bounds)) intersections += 1
+        }
+      }
+      harness?.destroy()
+      harness = null
+    }
+    expect(nwLabels).toBe(67)
+    expect(intersections).toBe(0)
   })
 
   it('keeps every placement occurrence-local, never on the definition (plan §8.2)', () => {
@@ -415,8 +531,10 @@ describe('AnimalWF connection label placements are painted on the canvas (plan �
     expect(totalLabels).toBe(TOTAL_PLACEMENTS)
     // Measured, then pinned: no connection label overlaps another, and the only seven that reach
     // into a shape are `SYMBOL` markers whose route midpoint genuinely falls inside the shape at
-    // one end — which is where ARIS draws them too. The 95 valueless `TEXT` placements draw
-    // nothing and therefore occupy nothing, so they cannot overlap anything at all.
+    // one end — which is where ARIS draws them too. After the P7 change the 67 `Port="NW"` RACI
+    // badges now occupy a real letter footprint (they hang above-left of the source-box contact),
+    // yet they still overlap nothing — neither another label nor a shape — so both totals hold. The
+    // remaining 28 valueless `TEXT` placements draw nothing and occupy nothing.
     expect(labelOnLabel).toBe(0)
     expect(labelOnShape).toBe(7)
   })
