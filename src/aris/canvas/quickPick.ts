@@ -27,10 +27,16 @@ import type Selection from 'diagram-js/lib/features/selection/Selection'
 import type { Element } from 'diagram-js/lib/model/Types'
 
 import { t, type Key } from '../../i18n'
-import { ARIS_CONVENTION_SYMBOLS, conventionSymbol } from '../conventions'
+import {
+  ARIS_CONVENTION_SYMBOLS,
+  conventionSymbol,
+  conventionSymbolByCatalogId
+} from '../conventions/catalog'
 import type { ArisAuthoring } from './authoring'
+import { createDescriptorPreview } from './descriptorPreview'
+import { dmtLibraryItem } from './dmtLibrary'
 import { arisBusinessObject } from './elements'
-import { arisPaletteGlyph } from './paletteProvider'
+import type { ArisPaletteProvider } from './paletteProvider'
 
 import './arisQuickPick.css'
 
@@ -63,9 +69,11 @@ interface DirectEditingLike {
 export const ARIS_QUICK_PICK_OVERLAY_TYPE = 'aris-quick-pick'
 
 export interface ArisQuickPickMember {
+  readonly catalogId: string
   readonly objectType: string
   readonly symbolNum: string
   readonly labelKey: string
+  readonly descriptorFingerprint: string
   readonly enabled: boolean
   readonly active: boolean
 }
@@ -76,6 +84,7 @@ interface OpenState {
   readonly popover: HTMLElement
   readonly onDocumentPointerDown: (event: Event) => void
   readonly onDocumentKeyDown: (event: KeyboardEvent) => void
+  readonly returnFocus: HTMLElement | null
 }
 
 export class ArisQuickPick {
@@ -86,7 +95,8 @@ export class ArisQuickPick {
     'selection',
     'canvas',
     'arisAuthoring',
-    'directEditing'
+    'directEditing',
+    'arisPaletteProvider'
   ]
 
   private open_: OpenState | null = null
@@ -98,7 +108,8 @@ export class ArisQuickPick {
     private readonly selection: Selection,
     private readonly canvas: Canvas,
     private readonly authoring: ArisAuthoring,
-    private readonly directEditing: DirectEditingLike
+    private readonly directEditing: DirectEditingLike,
+    private readonly palette: ArisPaletteProvider
   ) {
     // Open right after a shape is placed, above direct editing's own
     // `create.end` handler (priority 250) so the popover exists before the
@@ -122,24 +133,41 @@ export class ArisQuickPick {
     const businessObject = arisBusinessObject(this.elementRegistry.get(elementId))
     if (!businessObject || businessObject.kind !== 'occurrence') return Object.freeze([])
     const { objectType, symbolNum } = businessObject
-    const current = conventionSymbol(objectType, symbolNum)
+    const currentCatalogId = businessObject.catalogId ?? this.palette.catalogIdFor(elementId)
+    const current =
+      (currentCatalogId === null ? null : conventionSymbolByCatalogId(currentCatalogId)) ??
+      conventionSymbol(objectType, symbolNum)
     if (!current || current.family === null) return Object.freeze([])
 
     const canReplace = this.authoring.canReplaceNewObject(elementId)
+    const currentItem = dmtLibraryItem(current.catalogId)
+    if (currentItem === null) return Object.freeze([])
     const members: ArisQuickPickMember[] = [
-      { objectType, symbolNum, labelKey: current.labelKey, enabled: true, active: true }
+      {
+        catalogId: current.catalogId,
+        objectType,
+        symbolNum,
+        labelKey: current.labelKey,
+        descriptorFingerprint: currentItem.descriptorFingerprint,
+        enabled: true,
+        active: true
+      }
     ]
     // The whole convention family, across object types: same-object-type rows
     // are an in-place symbol swap (always safe); other object types are a guarded
     // cross-type replace. The active row (and any duplicate of it) is skipped.
     for (const peer of ARIS_CONVENTION_SYMBOLS) {
       if (peer.family !== current.family) continue
-      if (peer.objectType === objectType && peer.symbolNum === symbolNum) continue
+      if (peer.catalogId === current.catalogId) continue
       const sameType = peer.objectType === objectType
+      const item = dmtLibraryItem(peer.catalogId)
+      if (item === null) continue
       members.push({
+        catalogId: peer.catalogId,
         objectType: peer.objectType,
         symbolNum: peer.symbolNum,
         labelKey: peer.labelKey,
+        descriptorFingerprint: item.descriptorFingerprint,
         enabled: sameType ? true : canReplace,
         active: false
       })
@@ -148,7 +176,7 @@ export class ArisQuickPick {
   }
 
   /** Open the menu beside `elementId`, replacing any menu already open. */
-  open(elementId: string): void {
+  open(elementId: string, focusMenu = false): void {
     this.close()
     if (!this.elementRegistry.get(elementId)) return
     const members = this.membersFor(elementId)
@@ -174,17 +202,32 @@ export class ArisQuickPick {
       this.close()
     }
     const onDocumentKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') this.close()
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        this.close(true)
+      }
     }
     // Capture phase so an outside click closes the menu before it lands.
     document.addEventListener('pointerdown', onDocumentPointerDown, true)
     document.addEventListener('keydown', onDocumentKeyDown, true)
 
-    this.open_ = { elementId, overlayId, popover, onDocumentPointerDown, onDocumentKeyDown }
+    const activeElement = document.activeElement
+    const returnFocus = activeElement instanceof HTMLElement ? activeElement : null
+    this.open_ = {
+      elementId,
+      overlayId,
+      popover,
+      onDocumentPointerDown,
+      onDocumentKeyDown,
+      returnFocus
+    }
+    if (focusMenu) {
+      popover.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus()
+    }
   }
 
   /** Dismiss the menu if one is open. Idempotent. */
-  close(): void {
+  close(restoreFocus = false): void {
     const open = this.open_
     if (!open) return
     this.open_ = null
@@ -195,6 +238,7 @@ export class ArisQuickPick {
     } catch {
       // already gone — non-fatal.
     }
+    if (restoreFocus && open.returnFocus?.isConnected) open.returnFocus.focus()
   }
 
   // -- rendering -------------------------------------------------------------
@@ -212,8 +256,10 @@ export class ArisQuickPick {
       button.className = 'aris-quick-pick__item'
       button.setAttribute('role', 'menuitemradio')
       button.setAttribute('aria-checked', member.active ? 'true' : 'false')
+      button.dataset.arisCatalogId = member.catalogId
       button.dataset.arisObjectType = member.objectType
       button.dataset.arisSymbolNum = member.symbolNum
+      button.dataset.arisDescriptorFingerprint = member.descriptorFingerprint
       if (!member.enabled) {
         button.disabled = true
         button.title = t('aris.quickPick.replaceBlocked')
@@ -222,11 +268,7 @@ export class ArisQuickPick {
       const glyph = document.createElement('span')
       glyph.className = 'aris-quick-pick__glyph'
       glyph.setAttribute('aria-hidden', 'true')
-      // Author-controlled line-art markup (the palette glyph table).
-      glyph.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${arisPaletteGlyph(
-        member.objectType,
-        member.symbolNum
-      )}</svg>`
+      glyph.appendChild(createDescriptorPreview(member.catalogId))
       button.appendChild(glyph)
 
       const text = document.createElement('span')
@@ -242,9 +284,37 @@ export class ArisQuickPick {
         if (button.disabled) return
         this.activate(elementId, member)
       })
+      // Native keyboard activation dispatches a detail-0 click. Pointer clicks
+      // were already handled on pointerdown to preserve the inline editor.
+      button.addEventListener('click', (event) => {
+        if (event.detail !== 0) return
+        event.preventDefault()
+        event.stopPropagation()
+        if (!button.disabled) this.activate(elementId, member)
+      })
 
       menu.appendChild(button)
     }
+
+    menu.addEventListener('keydown', (event) => {
+      const buttons = [...menu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')]
+      const current = buttons.indexOf(document.activeElement as HTMLButtonElement)
+      if (current < 0) return
+      let next = current
+      if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+        next = (current + 1) % buttons.length
+      } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+        next = (current - 1 + buttons.length) % buttons.length
+      } else if (event.key === 'Home') {
+        next = 0
+      } else if (event.key === 'End') {
+        next = buttons.length - 1
+      } else {
+        return
+      }
+      buttons[next]?.focus()
+      event.preventDefault()
+    })
 
     return menu
   }
@@ -263,8 +333,13 @@ export class ArisQuickPick {
     }
 
     if (member.objectType === businessObject.objectType) {
-      // Same object type: an in-place symbol swap.
-      this.authoring.setOccurrenceSymbol(elementId, member.symbolNum)
+      // Same object type: an in-place symbol swap. A collapsed catalog variant
+      // may share the same SymbolNum, in which case only the exact live
+      // presentation identity changes.
+      if (member.symbolNum !== businessObject.symbolNum) {
+        this.authoring.setOccurrenceSymbol(elementId, member.symbolNum)
+      }
+      this.palette.rememberCatalogPresentation(elementId, member.catalogId)
       this.close()
       return
     }
@@ -284,6 +359,7 @@ export class ArisQuickPick {
       symbolNum: member.symbolNum
     })
     this.close()
+    this.palette.rememberCatalogPresentation(result.occurrenceId, member.catalogId)
     const replacement = this.elementRegistry.get(result.occurrenceId) as Element | undefined
     if (!replacement) return
     this.selection.select(replacement)

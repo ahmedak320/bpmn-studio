@@ -11,6 +11,7 @@ import type ElementRegistry from 'diagram-js/lib/core/ElementRegistry'
 import type Selection from 'diagram-js/lib/features/selection/Selection'
 import type { Element } from 'diagram-js/lib/model/Types'
 
+import { dmtLibraryItems, searchDmtLibrary, type DmtLibraryGroupId } from './dmtLibrary'
 import { arisBusinessObject } from './elements'
 
 type SearchFn = <T extends Record<string, string | string[]>>(
@@ -29,6 +30,18 @@ export interface ArisSearchResult {
   readonly elementId: string
   readonly name: string
   readonly type: string
+}
+
+export interface ArisLibrarySearchResult {
+  readonly catalogId: string
+  readonly objectType: string
+  readonly symbolNum: string
+  readonly label: string
+  readonly englishLabel: string
+  readonly arabicLabel: string
+  readonly group: DmtLibraryGroupId
+  readonly placementEnabled: true
+  readonly catalogPlacementEnabled: boolean
 }
 
 export class ArisSearchProvider {
@@ -84,5 +97,52 @@ export class ArisSearchProvider {
     this.selection.select(element)
     this.canvas.scrollToElement(element)
     return first
+  }
+
+  /** The active model's descriptor-backed, provider-authorable library. */
+  libraryItems(): readonly ArisLibrarySearchResult[] {
+    return Object.freeze(
+      dmtLibraryItems(this.activeModelType()).map((item) =>
+        Object.freeze({
+          catalogId: item.catalogId,
+          objectType: item.objectType,
+          symbolNum: item.symbolNum,
+          label: item.englishLabel,
+          englishLabel: item.englishLabel,
+          arabicLabel: item.arabicLabel,
+          group: item.group,
+          placementEnabled: true,
+          catalogPlacementEnabled: item.catalogPlacementEnabled
+        })
+      )
+    )
+  }
+
+  /** Fuzzy bilingual search over label, aliases, type, symbol and catalog id. */
+  findLibrary(pattern: string): readonly ArisLibrarySearchResult[] {
+    return Object.freeze(
+      searchDmtLibrary(pattern, this.activeModelType()).map((item) =>
+        Object.freeze({
+          catalogId: item.catalogId,
+          objectType: item.objectType,
+          symbolNum: item.symbolNum,
+          label: item.englishLabel,
+          englishLabel: item.englishLabel,
+          arabicLabel: item.arabicLabel,
+          group: item.group,
+          placementEnabled: true,
+          catalogPlacementEnabled: item.catalogPlacementEnabled
+        })
+      )
+    )
+  }
+
+  private activeModelType(): string {
+    for (const element of this.elementRegistry.getAll()) {
+      const businessObject = arisBusinessObject(element)
+      if (businessObject?.kind === 'occurrence') return businessObject.modelType
+      if (businessObject?.kind === 'model') return businessObject.modelType
+    }
+    return 'MT_EEPC'
   }
 }
