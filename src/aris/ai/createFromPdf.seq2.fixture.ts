@@ -28,8 +28,25 @@
 
 import type { ArisAiDraftV1 } from './contract'
 
-/** The provider/model the app defaults to for OpenRouter (providersLite.ts). */
+/** The provider/model the app defaults to for OpenRouter (providersLite.ts).
+ * Also the model that produced the RECORDED fixture, so the mocked tests stay
+ * pinned to it (deterministic, env-free). */
 export const SEQ2_OPENROUTER_MODEL_ID = 'z-ai/glm-5.2'
+
+/**
+ * The live A/B arm selector (Wave 8): defaults to gemini-3.5-flash-lite, or the
+ * model named by `SEQ2_VISION_MODEL` (e.g. `qwen/qwen3-vl-235b-a22b-instruct`).
+ * Used ONLY by the live tests — the mocked tests never read it.
+ */
+export const SEQ2_VISION_MODEL_ID = process.env.SEQ2_VISION_MODEL ?? 'google/gemini-3.5-flash-lite'
+
+/** Soft (logged, never a hard fail) live-similarity target for a vision model
+ * that actually sees the drawing — above the 0.5 hard floor tuned for glm's
+ * OCR-blind runs. */
+export const SEQ2_LIVE_SOFT_TARGET = 0.65
+
+/** Hard per-run cost ceiling for a live A/B cell (USD). */
+export const SEQ2_LIVE_MAX_COST_USD = 0.1
 
 /**
  * The recorded draft. Logical ids are human-chosen slugs (never real ARIS

@@ -95,6 +95,15 @@ export interface BuildOpts {
   jsonMode: boolean
   /** Optional PDF/image attached to the first user turn (provider-native part). */
   attachment?: GenAttachment
+  /**
+   * Optional enum-locked JSON Schema for `response_format: json_schema`
+   * (Wave 8 M5). Honored ONLY by {@link buildOpenRouterRequest} on routes whose
+   * endpoint advertises `structured_outputs`. The direct-vendor adapters
+   * ({@link buildAnthropicRequest}/{@link buildGeminiRequest}) deliberately
+   * IGNORE it — schema-locking those is out of scope this wave, and the zod
+   * validator + deterministic normalizer remain the backstop everywhere.
+   */
+  responseSchema?: { name: string; schema: Record<string, unknown> }
 }
 
 /** Error carrying the HTTP status so the classifier can read it. */
@@ -179,10 +188,11 @@ export const GENERATION_TIMEOUT_MS = 180_000
 export const TEST_CONNECTION_TIMEOUT_MS = 15_000
 
 /**
- * Generation currently asks for at most 6,000 output tokens. One decompressed
- * MiB leaves a very large allowance for JSON syntax and multibyte text while
- * keeping decode + JSON.parse on the main thread bounded below the multi-MiB
- * range that would require a worker.
+ * Generation asks for at most 16,000 output tokens on attachment runs (8,000
+ * for text runs) — see ArisGenerationPanel MAX_ATTACHMENT_TOKENS/MAX_TOKENS.
+ * One decompressed MiB leaves a very large allowance for JSON syntax and
+ * multibyte text (16k tokens ≈ 64–100 KB) while keeping decode + JSON.parse on
+ * the main thread bounded below the multi-MiB range that would require a worker.
  */
 export const MAX_PROVIDER_RESPONSE_BODY_BYTES = 1_048_576
 
@@ -591,9 +601,27 @@ export function buildOpenRouterRequest(
     provider: {
       zdr: true,
       data_collection: 'deny'
-    }
+    },
+    // OpenRouter accounting: return the authoritative `usage.cost` (read by
+    // credits.ts extractUsage) so cost is measured, not just estimated (M5/M8).
+    usage: { include: true }
   }
-  if (opts.jsonMode) body.response_format = { type: 'json_object' }
+  // An enum-locked json_schema (M5) makes invented codes like CT_FLOW
+  // unrepresentable on schema-enforcing routes; plain json_object is the
+  // fallback for every other route. OpenRouter silently drops an unsupported
+  // param on some endpoints, so the zod validator + normalizer still run.
+  if (opts.responseSchema) {
+    body.response_format = {
+      type: 'json_schema',
+      json_schema: {
+        name: opts.responseSchema.name,
+        strict: true,
+        schema: opts.responseSchema.schema
+      }
+    }
+  } else if (opts.jsonMode) {
+    body.response_format = { type: 'json_object' }
+  }
   if (opts.attachment?.kind === 'pdf') {
     // Attach the file-parser plugin — for PDF `file` parts ONLY. Images are
     // native to chat/completions (no plugin; verified 2026-07-23, OpenRouter
@@ -830,6 +858,9 @@ export function makeBrowserCallLLM(
     attachment?: GenAttachment
     signal?: AbortSignal
     onAttempt?: (attempt: RetryAttempt) => void
+    /** Enum-locked json_schema for structured-output routes (Wave 8 M5). Sent
+     * on EVERY attempt — the draft shape is identical on a repair turn. */
+    responseSchema?: { name: string; schema: Record<string, unknown> }
   }
 ): CallLLM {
   let attachmentAvailable = extra?.attachment
@@ -839,7 +870,12 @@ export function makeBrowserCallLLM(
     // validation feedback without silently uploading the same bytes again.
     const attachment = attachmentAvailable
     attachmentAvailable = undefined
-    const req = buildRequest(cfg, messages, { maxTokens, jsonMode: true, attachment })
+    const req = buildRequest(cfg, messages, {
+      maxTokens,
+      jsonMode: true,
+      attachment,
+      ...(extra?.responseSchema ? { responseSchema: extra.responseSchema } : {})
+    })
     return withBoundedRetry(
       async () =>
         fetchWithTimeout(

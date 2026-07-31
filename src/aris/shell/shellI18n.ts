@@ -231,6 +231,7 @@ export const ARIS_SHELL_MESSAGE_KEYS: Readonly<Record<string, string>> = Object.
     '{model} on {provider} cannot accept a PDF. Choose a model that reads documents, or describe the process in text instead.',
   'aris.create.attachment.remove': 'Remove attachment',
   'aris.create.attachment.selected': 'Attached {name} ({size}, {type}).',
+  'aris.create.attachment.switchModel': 'Switch to {model} and attach',
   'aris.create.attachment.tooLarge': '{name} is too large to attach for {provider}.',
   'aris.create.attachment.unsupportedType':
     'Only PDF, PNG, JPEG, WebP, and GIF files can be attached.',

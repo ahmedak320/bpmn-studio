@@ -25,6 +25,7 @@ import { ArisGenerationPanel } from '../../ArisGenerationPanel'
 import { buildMinimalValidDraft } from '../ai/testFixtures'
 import { resetSessionKeysForTests } from '../../ai/keys'
 import { resetProviderSelectionForTests } from '../../ai/providerSelection'
+import { firstLiteModelForAttachment, getLiteModelCapabilities } from '../../ai/providersLite'
 import type { GenAttachment } from '../../ai/pdf'
 import type { ArisAiGenerationRequest } from './arisAiGeneration'
 
@@ -116,6 +117,24 @@ function selectProvider(id: string): void {
       target: { value: id }
     }
   )
+}
+
+function selectModel(id: string): void {
+  fireEvent.change(panel().querySelector<HTMLInputElement>('[data-orbitpm-aris-create-model]')!, {
+    target: { value: id }
+  })
+}
+
+function noticeText(): string {
+  return panel().querySelector('[data-orbitpm-aris-create-attachment-notice]')?.textContent ?? ''
+}
+
+function switchButton(): HTMLButtonElement | null {
+  return panel().querySelector<HTMLButtonElement>('[data-orbitpm-aris-create-attachment-switch]')
+}
+
+function modelValue(): string {
+  return panel().querySelector<HTMLInputElement>('[data-orbitpm-aris-create-model]')!.value
 }
 
 /**
@@ -232,6 +251,54 @@ describe('§4.3/§16.7 — cancellation on the PDF/Picture tab', () => {
 
     await waitFor(() => expect(statusText()).toContain('cancelled'))
     expect(harness.created).toEqual([])
+  })
+})
+
+describe('§16.6 M7 — PDFs are GATED on image-only models, with a one-click switch', () => {
+  it('offers a switch to a pdf-capable model when a PDF is picked on the image-only qwen route', () => {
+    renderPanel()
+    // qwen3-vl is vision but PDF-gated (the ZDR-leak gate) — a PDF must never
+    // reach it.
+    selectModel('qwen/qwen3-vl-235b-a22b-instruct')
+    expect(getLiteModelCapabilities('openrouter', 'qwen/qwen3-vl-235b-a22b-instruct').pdf).toBe(
+      false
+    )
+    click('[data-orbitpm-aris-create-document-tab]')
+    chooseFile(DOCUMENT_FILE_INPUT, pdfFile('spec.pdf'))
+
+    // The capability rejection is surfaced, and a switch is offered.
+    expect(noticeText()).toContain('cannot accept a PDF')
+    const expected = firstLiteModelForAttachment('openrouter', 'pdf')!
+    expect(getLiteModelCapabilities('openrouter', expected).pdf).toBe(true)
+    const button = switchButton()
+    expect(button).not.toBeNull()
+    expect(button!.textContent).toContain(expected)
+
+    // Clicking adopts the suggested model and the PDF becomes accepted.
+    fireEvent.click(button!)
+    expect(modelValue()).toBe(expected)
+    expect(noticeText()).toContain('Attached spec.pdf')
+    expect(switchButton()).toBeNull()
+  })
+
+  it('offers a switch to an image-capable model when a PNG is picked on the text-only glm route', () => {
+    renderPanel()
+    // z-ai/glm-5.2 is the default OpenRouter route — text-only (no images).
+    expect(getLiteModelCapabilities('openrouter', 'z-ai/glm-5.2').images).toBe(false)
+    click('[data-orbitpm-aris-create-document-tab]')
+    chooseFile(DOCUMENT_FILE_INPUT, imageFile('flow.png', 'image/png'))
+
+    expect(noticeText()).toContain('cannot accept a picture')
+    const expected = firstLiteModelForAttachment('openrouter', 'image')!
+    expect(getLiteModelCapabilities('openrouter', expected).images).toBe(true)
+    const button = switchButton()
+    expect(button).not.toBeNull()
+    expect(button!.textContent).toContain(expected)
+
+    fireEvent.click(button!)
+    expect(modelValue()).toBe(expected)
+    expect(noticeText()).toContain('Attached flow.png')
+    expect(switchButton()).toBeNull()
   })
 })
 

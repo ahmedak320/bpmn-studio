@@ -70,8 +70,49 @@ const OPENROUTER_MODELS: ModelSpec[] = [
   { id: 'deepseek/deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
   { id: 'anthropic/claude-opus-4.8', label: 'Claude Opus 4.8 (Anthropic)' },
   { id: 'anthropic/claude-sonnet-5', label: 'Claude Sonnet 5 (Anthropic)' },
-  { id: 'google/gemini-3.6-flash', label: 'Gemini 3.6 Flash (Google)' }
+  { id: 'google/gemini-3.6-flash', label: 'Gemini 3.6 Flash (Google)' },
+  // Wave 8 — curated vision routes for the Create-from-PDF/Picture A/B. Placed
+  // AFTER the seven text entries so `defaultLiteModelId('openrouter')` stays
+  // `z-ai/glm-5.2` (the text default). `firstLiteModelForAttachment` consults
+  // this order, so the A/B winner is promoted to the FIRST of these two.
+  {
+    id: 'google/gemini-3.5-flash-lite',
+    label: 'Gemini 3.5 Flash Lite (Google) — vision, native PDF'
+  },
+  {
+    id: 'qwen/qwen3-vl-235b-a22b-instruct',
+    label: 'Qwen3-VL 235B Instruct — vision, picture only'
+  }
 ]
+
+/**
+ * Per-model capability overrides for reviewed OpenRouter slugs, consulted by
+ * {@link getLiteModelCapabilities} BEFORE the `anthropic/`/`google/` prefix
+ * heuristic. Only slugs whose selected ZDR endpoint capability was reviewed by
+ * hand belong here; unlisted curated ids keep the prefix-heuristic behavior and
+ * unreviewed ids still fail closed.
+ *
+ * `qwen/qwen3-vl-235b-a22b-instruct` is a vision model with NO native PDF
+ * modality: `pdf:false` is a privacy gate, not just a capability note — sending
+ * a PDF to an image-only OpenRouter model triggers the `file-parser` OCR
+ * fallback, and plugins are outside OpenRouter's ZDR enforcement, so a PDF
+ * would ship workspace content past the privacy pin. See Wave 8 M1/M7/M8.
+ */
+const OPENROUTER_MODEL_CAPABILITY_OVERRIDES: Record<string, { pdf: boolean; images: boolean }> = {
+  'qwen/qwen3-vl-235b-a22b-instruct': { pdf: false, images: true }
+}
+
+/**
+ * OpenRouter curated slugs whose selected ZDR endpoints advertise
+ * `structured_outputs` (live-verified against the route catalog 2026-07-31).
+ * Consumed by the panel/harness to send an enum-locked
+ * `response_format: json_schema` (Wave 8 M5). Deliberately NOT part of
+ * {@link LiteModelCapabilities} — several tests `toEqual` that exact shape.
+ */
+export const OPENROUTER_STRUCTURED_OUTPUT_MODELS: ReadonlySet<string> = new Set([
+  'google/gemini-3.5-flash-lite',
+  'qwen/qwen3-vl-235b-a22b-instruct'
+])
 
 /** Providers reachable directly from the browser. */
 export const LITE_PROVIDERS: LiteProviderSpec[] = [
@@ -140,11 +181,37 @@ export function getLiteModelCapabilities(
     return { text: true, pdf: true, images: true, verified: true }
   }
 
+  // Reviewed per-model override wins over the prefix heuristic below (Wave 8):
+  // an image-only vision route must report `pdf:false` to keep a PDF off it.
+  const override = OPENROUTER_MODEL_CAPABILITY_OVERRIDES[normalizedModel]
+  if (override) {
+    return { text: true, pdf: override.pdf, images: override.images, verified: true }
+  }
+
   // OpenRouter's PDF parser can provide reviewed text models with document
   // content. Native image parts are enabled only for the reviewed Claude and
   // Gemini routes; the remaining curated routes are text-only in Lite.
   const images = normalizedModel.startsWith('anthropic/') || normalizedModel.startsWith('google/')
   return { text: true, pdf: true, images, verified: true }
+}
+
+/**
+ * The first curated model of `providerId` whose {@link getLiteModelCapabilities}
+ * grants the requested attachment `kind`, or `null` when none does. Used by the
+ * Create panel (Wave 8 M7) to offer a one-click switch when the selected model
+ * rejects a picked attachment. Registry order is the preference order, so the
+ * A/B winner promoted to the first vision slot is offered first.
+ */
+export function firstLiteModelForAttachment(
+  providerId: LiteProviderId,
+  kind: 'pdf' | 'image'
+): string | null {
+  const provider = getLiteProvider(providerId)
+  for (const model of provider.models) {
+    const capabilities = getLiteModelCapabilities(providerId, model.id)
+    if (kind === 'pdf' ? capabilities.pdf : capabilities.images) return model.id
+  }
+  return null
 }
 
 /**

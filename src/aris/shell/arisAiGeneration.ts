@@ -37,6 +37,7 @@ import {
   MAX_SEMANTIC_REPAIR_ATTEMPTS,
   advanceArisAiRepairState,
   buildArisAiRepairMessage,
+  normalizeArisAiDraft,
   validateArisAiDraft,
   type ArisAiDraftV1,
   type ArisAiValidationFinding
@@ -221,6 +222,9 @@ export async function runArisAiGeneration(
 
     let findings: readonly ArisAiValidationFinding[] = []
     let warnings: readonly ArisAiValidationFinding[] = []
+    // Deterministic connection-type rewrites for THIS attempt only — reset each
+    // iteration, so per-attempt rewrites never leak across attempts.
+    let normalizedRewrites: readonly ArisAiValidationFinding[] = []
     let draft: ArisAiDraftV1 | null = null
 
     let raw: unknown
@@ -237,9 +241,16 @@ export async function runArisAiGeneration(
         finding('response-not-json', '$', `The response was not strict JSON: ${jsonError}`)
       ]
     } else {
+      // Deterministic backstop BEFORE validation: map trivially-recoverable
+      // invented connection codes (e.g. CT_FLOW, ct_activ_1) onto canonical
+      // CT_* literals via the endpoint census, so they never burn a repair
+      // turn. Rewrites are hardcoded supported literals — the forbidden-content
+      // scan inside validateArisAiDraft still runs on the normalized value.
+      const normalized = normalizeArisAiDraft(raw)
+      normalizedRewrites = normalized.rewrites
       // Steps 7 + 8 (schema and type vocabulary, plus the §16.4 forbidden
       // content scan that runs first inside validateArisAiDraft).
-      const validation = validateArisAiDraft(raw)
+      const validation = validateArisAiDraft(normalized.value)
       if (!validation.ok) {
         findings = validation.findings
       } else {
@@ -255,7 +266,9 @@ export async function runArisAiGeneration(
       return {
         ok: true,
         draft,
-        warnings,
+        // Surface the deterministic rewrites as advisory warnings alongside any
+        // EPC-semantics warnings; the Create panel renders them unchanged.
+        warnings: [...normalizedRewrites, ...warnings],
         semanticAttemptsUsed: state.semanticAttemptsUsed,
         requestsSent
       }

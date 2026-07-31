@@ -44,19 +44,29 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBrowserCallLLM } from '../../ai/browserAi'
-import { buildPdfInstruction, type GenAttachment } from '../../ai/pdf'
+import { estimateCostUsd, extractUsage } from '../../ai/credits'
+import { buildImageInstruction, buildPdfInstruction, type GenAttachment } from '../../ai/pdf'
+import {
+  OPENROUTER_STRUCTURED_OUTPUT_MODELS,
+  getLiteModelCapabilities
+} from '../../ai/providersLite'
 import { buildAmlFromArisAiDraft } from '../shell/arisAiCreate'
 import {
   runArisAiGeneration,
   type ArisAiGenerationResult,
   type ArisAiSend
 } from '../shell/arisAiGeneration'
+import { ARIS_AI_SUPPORTED_CONNECTION_TYPES } from './typeValidation'
+import { buildArisAiDraftJsonSchema } from './draftJsonSchema'
 import { validateArisAiDraftEpcSemantics } from './epcSemantics'
 import { buildArisAiPrompt } from './promptBuilder'
 import { validateArisAiDraft } from './validateDraft'
 import {
+  SEQ2_LIVE_MAX_COST_USD,
+  SEQ2_LIVE_SOFT_TARGET,
   SEQ2_OPENROUTER_MODEL_ID,
   SEQ2_RECORDED_DRAFT,
+  SEQ2_VISION_MODEL_ID,
   buildSeq2OpenRouterBody,
   buildSeq2RecordedOpenRouterBody,
   seq2NameSimilarity,
@@ -65,8 +75,10 @@ import {
   type Seq2ProcessSummary
 } from './createFromPdf.seq2.fixture'
 
-// The Create surface's per-request output cap (ArisGenerationPanel MAX_TOKENS).
-const SEQ2_MAX_TOKENS = 8_000
+// The Create surface's per-request output cap for ATTACHMENT runs
+// (ArisGenerationPanel MAX_ATTACHMENT_TOKENS, Wave 8 M6 — raised 8k → 16k so a
+// full-fidelity register draft never truncates into a fake semantic failure).
+const SEQ2_MAX_TOKENS = 16_000
 
 /** A fetch call captured by the stub, with the decoded JSON request body. */
 interface CapturedRequest {
@@ -112,19 +124,26 @@ const SEQ2_MOCK_ATTACHMENT: GenAttachment = {
 
 /**
  * The `send` adapter — a one-for-one mirror of `ArisGenerationPanel.buildSend`
- * (the production wiring), minus the UI-only `callProvider` test hook.
+ * (the production wiring), minus the UI-only `callProvider` test hook. The
+ * model is a parameter so a live arm can select gemini/qwen; the enum-locked
+ * json_schema (M5) is attached exactly as the panel does, for structured-output
+ * routes, on EVERY attempt (the retained `makeBrowserCallLLM` threads it).
  */
-function makeSeq2Send(apiKey: string): ArisAiSend {
+function makeSeq2Send(apiKey: string, modelId: string = SEQ2_OPENROUTER_MODEL_ID): ArisAiSend {
+  const responseSchema = OPENROUTER_STRUCTURED_OUTPUT_MODELS.has(modelId)
+    ? { name: 'aris_ai_draft_v1', schema: buildArisAiDraftJsonSchema() }
+    : undefined
   return async (request, signal) => {
     const call = makeBrowserCallLLM(
       {
         providerId: 'openrouter',
-        model: SEQ2_OPENROUTER_MODEL_ID,
+        model: modelId,
         apiKey,
         title: 'OrbitPM ARIS Studio Lite (Seq-2 harness)'
       },
       {
         ...(request.attachment ? { attachment: request.attachment } : {}),
+        ...(responseSchema ? { responseSchema } : {}),
         signal
       }
     )
@@ -145,12 +164,21 @@ function buildSeq2Prompt(): { system: string; user: string } {
   })
 }
 
+/** The prompt exactly as the Create surface's picture path builds it. */
+function buildSeq2ImagePrompt(): { system: string; user: string } {
+  return buildArisAiPrompt({
+    modelName: 'Request to Register Animal Owner Profile',
+    modelType: 'auto-detect',
+    description: buildImageInstruction('Register Animal Owner Profile')
+  })
+}
+
 function runSeq2Generation(
   send: ArisAiSend,
   attachment: GenAttachment,
-  onRepairTurn?: (attemptNumber: number) => void
+  onRepairTurn?: (attemptNumber: number) => void,
+  prompt: { system: string; user: string } = buildSeq2Prompt()
 ): Promise<ArisAiGenerationResult> {
-  const prompt = buildSeq2Prompt()
   return runArisAiGeneration({
     system: prompt.system,
     user: prompt.user,
@@ -181,8 +209,11 @@ describe('Wave 7 Seq-2 — create-from-PDF pipeline (mocked transport)', () => {
     expect(request.url).toBe('https://openrouter.ai/api/v1/chat/completions')
     expect(request.headers.authorization).toBe('Bearer seq2-mocked-key')
     expect(request.body.model).toBe(SEQ2_OPENROUTER_MODEL_ID)
+    // glm-5.2 is not a structured-output route → plain json_object (M5); the
+    // attachment budget is 16k (M6); usage accounting is always requested (M5).
     expect(request.body.response_format).toEqual({ type: 'json_object' })
     expect(request.body.max_tokens).toBe(SEQ2_MAX_TOKENS)
+    expect(request.body.usage).toEqual({ include: true })
     // The PDF rides as a provider-native file part with the file-parser plugin.
     expect(request.body.plugins).toEqual([{ id: 'file-parser' }])
     const messages = request.body.messages as Array<{ role: string; content: unknown }>
@@ -291,6 +322,10 @@ describe('Wave 7 Seq-2 — create-from-PDF pipeline (mocked transport)', () => {
       expect(typeof message.content).toBe('string')
     }
     expect(repairBody.plugins).toBeUndefined()
+    // The repair turn keeps the same transport shape: json_object for glm-5.2,
+    // usage accounting requested (M5).
+    expect(repairBody.response_format).toEqual({ type: 'json_object' })
+    expect(repairBody.usage).toEqual({ include: true })
     const repairPrompt = String(repairMessages[repairMessages.length - 1].content)
     expect(repairPrompt).toContain('Repair turn 1 of 3')
     expect(repairPrompt).toContain('response-not-json')
@@ -323,6 +358,72 @@ describe('Wave 7 Seq-2 — create-from-PDF pipeline (mocked transport)', () => {
     expect(selfScore.score).toBe(1)
     expect(selfScore.functionNameRecall).toBe(1)
     expect(selfScore.eventNameRecall).toBe(1)
+  })
+
+  it('sends the enum-locked json_schema request shape for structured-output vision models', async () => {
+    // A literal structured-output route id (NOT the env-dependent const) so the
+    // mocked test is deterministic regardless of SEQ2_VISION_MODEL.
+    const { calls } = stubFetchReplaying([buildSeq2RecordedOpenRouterBody()])
+    const result = await runSeq2Generation(
+      makeSeq2Send('k', 'google/gemini-3.5-flash-lite'),
+      SEQ2_MOCK_ATTACHMENT
+    )
+
+    expect(calls).toHaveLength(1)
+    const responseFormat = calls[0].body.response_format as {
+      type: string
+      json_schema: {
+        name: string
+        strict: boolean
+        schema: {
+          properties: Record<string, { items: { properties: Record<string, { enum?: unknown }> } }>
+        }
+      }
+    }
+    expect(responseFormat.type).toBe('json_schema')
+    expect(responseFormat.json_schema.name).toBe('aris_ai_draft_v1')
+    expect(responseFormat.json_schema.strict).toBe(true)
+    expect(
+      responseFormat.json_schema.schema.properties.relations.items.properties.connectionType.enum
+    ).toEqual(ARIS_AI_SUPPORTED_CONNECTION_TYPES)
+    // The pipeline still returns the recorded draft through the real transport.
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.draft).toEqual(SEQ2_RECORDED_DRAFT)
+  })
+
+  it('normalizes invented connection types without a repair turn', async () => {
+    // A variant of the recorded body: an event→function edge invents CT_FLOW
+    // and a function→event edge invents CT_SEQ — both trivially mappable.
+    const variant = structuredClone(SEQ2_RECORDED_DRAFT)
+    const relationsById = new Map(
+      variant.relations.map((relation) => [relation.logicalId, relation])
+    )
+    ;(relationsById.get('rel-trigger-login') as { connectionType: string }).connectionType =
+      'CT_FLOW'
+    ;(
+      relationsById.get('rel-auto-approve-registered') as { connectionType: string }
+    ).connectionType = 'CT_SEQ'
+    const { calls } = stubFetchReplaying([buildSeq2OpenRouterBody(JSON.stringify(variant))])
+
+    const result = await runSeq2Generation(makeSeq2Send('k'), SEQ2_MOCK_ATTACHMENT)
+
+    // One physical request, zero semantic repair turns — the normalizer fixed
+    // both codes before validation.
+    expect(calls).toHaveLength(1)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.requestsSent).toBe(1)
+    expect(result.semanticAttemptsUsed).toBe(0)
+    const normalized = result.warnings.filter(
+      (warning) => warning.code === 'normalized-connection-type'
+    )
+    expect(normalized).toHaveLength(2)
+    const draftById = new Map(
+      result.draft.relations.map((relation) => [relation.logicalId, relation])
+    )
+    expect(draftById.get('rel-trigger-login')!.connectionType).toBe('CT_ACTIV_1')
+    expect(draftById.get('rel-auto-approve-registered')!.connectionType).toBe('CT_CRT_1')
   })
 })
 
@@ -409,13 +510,148 @@ function readExpectedSummary(): Seq2ProcessSummary {
   }
 }
 
-describe('Wave 7 Seq-2 — create-from-PDF pipeline (live OpenRouter)', () => {
+// The rasterized page for the image arm (offline step; never committed — the
+// `reference/` tree lives outside the repo). Accept the `-1` suffix pdftoppm
+// emits and a no-suffix candidate, mirroring the PDF candidate pattern.
+const REFERENCE_PNG_CANDIDATES = [
+  'Register_Animal_Owner_Profile_Draft03-1.png',
+  'Register_Animal_Owner_Profile_Draft03.png'
+] as const
+
+function readReferencePng(): { bytes: Buffer; fileName: string } {
+  let lastError: unknown = null
+  for (const candidate of REFERENCE_PNG_CANDIDATES) {
+    try {
+      return { bytes: readFileSync(join(REFERENCE_ROOT, 'png', candidate)), fileName: candidate }
+    } catch (error) {
+      lastError = error
+    }
+  }
+  const pngDir = join(REFERENCE_ROOT, 'png')
+  const pdfPath = join(REFERENCE_ROOT, 'pdf', 'Register_Animal_Owner_Profile_Draft03.pdf')
+  // A keyed run without the raster is an operator error, not a skip — fail
+  // loudly with the exact command to produce it.
+  throw new Error(
+    `Seq-2 live IMAGE: reference PNG not found under ${pngDir} ` +
+      `(tried ${REFERENCE_PNG_CANDIDATES.join(', ')}). Create it offline:\n` +
+      `  mkdir -p ${pngDir} && pdftoppm -png -r 150 ${pdfPath} ` +
+      `${join(pngDir, 'Register_Animal_Owner_Profile_Draft03')}\n` +
+      `(last error: ${String(lastError)})`
+  )
+}
+
+interface Seq2UsageCapture {
+  requests: number
+  costUsd: number
+  everyRequestHadUsage: boolean
+}
+
+/**
+ * Wrap the REAL `fetch` (pass-through) to accumulate the authoritative
+ * OpenRouter cost + request count for the live cell, without altering the
+ * response the pipeline sees. `afterEach` already unstubs.
+ */
+function installOpenRouterUsageCapture(modelId: string): Seq2UsageCapture {
+  const capture: Seq2UsageCapture = { requests: 0, costUsd: 0, everyRequestHadUsage: true }
+  const realFetch = globalThis.fetch
+  vi.stubGlobal('fetch', async (input: unknown, init?: RequestInit) => {
+    const res = await realFetch(input as Parameters<typeof realFetch>[0], init)
+    try {
+      if (String(input).startsWith('https://openrouter.ai/api/v1/chat/completions')) {
+        capture.requests += 1
+        const json = (await res.clone().json()) as unknown
+        const usage = extractUsage('openrouter', json)
+        if (!usage) {
+          capture.everyRequestHadUsage = false
+        } else {
+          const cost =
+            usage.providerCostUsd ?? estimateCostUsd(modelId, usage.inputTokens, usage.outputTokens)
+          if (cost === null) capture.everyRequestHadUsage = false
+          else capture.costUsd += cost
+        }
+      }
+    } catch {
+      capture.everyRequestHadUsage = false
+    }
+    return res
+  })
+  return capture
+}
+
+/** Shared hard-gate assertions + the grep-able SEQ2-AB summary line. */
+function reportSeq2Live(params: {
+  mode: 'pdf' | 'image'
+  modelId: string
+  result: ArisAiGenerationResult & { ok: true }
+  expectedSummary: Seq2ProcessSummary
+  capture: Seq2UsageCapture
+}): void {
+  const { mode, modelId, result, expectedSummary, capture } = params
+
+  // Hard gate: at most ONE semantic repair turn (a model that sees the drawing
+  // should barely need repairs), and at most 3 normalizer rewrites (zero
+  // surviving unsupported-connection-type findings by construction on success).
+  expect(result.semanticAttemptsUsed).toBeLessThanOrEqual(1)
+  const normalizedCount = result.warnings.filter(
+    (warning) => warning.code === 'normalized-connection-type'
+  ).length
+  expect(normalizedCount).toBeLessThanOrEqual(3)
+
+  // Auto-detect should land on EPC; production path draft → canonical AML.
+  expect(result.draft.models.some((model) => model.modelType === 'MT_EEPC')).toBe(true)
+  const aml = buildAmlFromArisAiDraft(result.draft)
+  expect(aml.xml).toContain('<AML>')
+  expect(aml.xml).toContain('Model.Type="MT_EEPC"')
+  expect(aml.xml).toContain('ObjDef.ID=')
+  expect(aml.xml).toContain('CxnOcc')
+
+  const actualSummary = seq2SummaryFromDraft(result.draft)
+  const breakdown = seq2SimilarityScore(expectedSummary, actualSummary)
+  // Hard floor 0.5 (unchanged); soft target 0.65 is logged, never a hard fail.
+  expect(breakdown.score).toBeGreaterThanOrEqual(SEQ2_LIVE_SIMILARITY_THRESHOLD)
+  if (breakdown.score < SEQ2_LIVE_SOFT_TARGET) {
+    console.warn(
+      `SEQ2-AB model=${modelId} mode=${mode} below soft target ${SEQ2_LIVE_SOFT_TARGET}: ` +
+        `score=${breakdown.score.toFixed(3)}`
+    )
+  }
+
+  // Cost is a HARD gate when every request yielded usage; otherwise a warning.
+  if (capture.requests > 0 && capture.everyRequestHadUsage) {
+    expect(capture.costUsd).toBeLessThan(SEQ2_LIVE_MAX_COST_USD)
+  } else {
+    console.warn(
+      `SEQ2-AB model=${modelId} mode=${mode} cost not fully measured ` +
+        `(usage missing on some request); estimated costUsd=${capture.costUsd.toFixed(4)}`
+    )
+  }
+
+  console.warn(
+    `SEQ2-AB model=${modelId} mode=${mode} score=${breakdown.score.toFixed(3)} ` +
+      `fn=${breakdown.functionNameRecall.toFixed(2)} ev=${breakdown.eventNameRecall.toFixed(2)} ` +
+      `mix=${breakdown.typeDistribution.toFixed(2)} conn=${breakdown.connectionRatio.toFixed(2)} ` +
+      `repairs=${result.semanticAttemptsUsed} requests=${capture.requests} ` +
+      `normalized=${normalizedCount} costUsd=${capture.costUsd.toFixed(4)}`
+  )
+}
+
+describe('Wave 8 Seq-2 A/B — create-from-PDF / picture pipeline (live OpenRouter)', () => {
   it(
-    'generates the register-owner process from the reference PDF via glm-5.2 and fuzzy-compares to the original',
+    'generates the register-owner process from the reference PDF and fuzzy-compares to the original',
     async () => {
       const apiKey = process.env.OPENROUTER_API_KEY
       if (!apiKey) {
         console.warn('set OPENROUTER_API_KEY to run live Seq-2')
+        return
+      }
+      // Capability mirror-guard: never send a PDF to an image-only model. This
+      // is how the qwen sweep legally skips the PDF cell (the same gate the
+      // product enforces at pick and send time).
+      if (!getLiteModelCapabilities('openrouter', SEQ2_VISION_MODEL_ID).pdf) {
+        console.warn(
+          `SEQ2-AB model=${SEQ2_VISION_MODEL_ID} mode=pdf skipped — image-only model; ` +
+            `PDF arm skipped by the same gate the product enforces`
+        )
         return
       }
 
@@ -429,43 +665,70 @@ describe('Wave 7 Seq-2 — create-from-PDF pipeline (live OpenRouter)', () => {
         sizeBytes: pdf.bytes.byteLength
       }
 
-      const result = await runSeq2Generation(makeSeq2Send(apiKey), attachment, (attemptNumber) =>
-        console.warn(`live Seq-2: semantic repair turn ${attemptNumber}`)
+      const capture = installOpenRouterUsageCapture(SEQ2_VISION_MODEL_ID)
+      const result = await runSeq2Generation(
+        makeSeq2Send(apiKey, SEQ2_VISION_MODEL_ID),
+        attachment,
+        (attemptNumber) => console.warn(`live Seq-2 pdf: semantic repair turn ${attemptNumber}`)
       )
       if (!result.ok) {
         throw new Error(
-          `live Seq-2 generation failed (${result.reason}); first findings: ` +
+          `live Seq-2 pdf generation failed (${result.reason}); first findings: ` +
             JSON.stringify(result.findings.slice(0, 10))
         )
       }
-      console.warn(
-        `live Seq-2: draft accepted after ${result.requestsSent} request(s), ` +
-          `${result.semanticAttemptsUsed} repair turn(s), ${result.warnings.length} warning(s)`
+      expect(result.ok).toBe(true)
+      reportSeq2Live({
+        mode: 'pdf',
+        modelId: SEQ2_VISION_MODEL_ID,
+        result,
+        expectedSummary,
+        capture
+      })
+    },
+    SEQ2_LIVE_TEST_TIMEOUT_MS
+  )
+
+  it(
+    'generates the register-owner process from the reference PNG (picture path) and fuzzy-compares',
+    async () => {
+      const apiKey = process.env.OPENROUTER_API_KEY
+      if (!apiKey) {
+        console.warn('set OPENROUTER_API_KEY to run live Seq-2')
+        return
+      }
+      // No pdf-capability guard — both arms (gemini + qwen) run the image cell.
+      const png = readReferencePng()
+      const expectedSummary = readExpectedSummary()
+      const attachment: GenAttachment = {
+        kind: 'image',
+        base64: png.bytes.toString('base64'),
+        mediaType: 'image/png',
+        fileName: png.fileName,
+        sizeBytes: png.bytes.byteLength
+      }
+
+      const capture = installOpenRouterUsageCapture(SEQ2_VISION_MODEL_ID)
+      const result = await runSeq2Generation(
+        makeSeq2Send(apiKey, SEQ2_VISION_MODEL_ID),
+        attachment,
+        (attemptNumber) => console.warn(`live Seq-2 image: semantic repair turn ${attemptNumber}`),
+        buildSeq2ImagePrompt()
       )
-
-      // The reference process is unambiguously an EPC (events, functions, XOR
-      // rules), and auto-detect should land there.
-      expect(result.draft.models.some((model) => model.modelType === 'MT_EEPC')).toBe(true)
-
-      // Same path as production: draft → canonical AML export.
-      const aml = buildAmlFromArisAiDraft(result.draft)
-      expect(aml.xml).toContain('<AML>')
-      expect(aml.xml).toContain('Model.Type="MT_EEPC"')
-      expect(aml.xml).toContain('ObjDef.ID=')
-      expect(aml.xml).toContain('CxnOcc')
-
-      const actualSummary = seq2SummaryFromDraft(result.draft)
-      const breakdown = seq2SimilarityScore(expectedSummary, actualSummary)
-      console.warn(
-        `live Seq-2 similarity vs original: score=${breakdown.score.toFixed(3)} ` +
-          `(threshold ${SEQ2_LIVE_SIMILARITY_THRESHOLD}) — ` +
-          `function recall ${breakdown.functionNameRecall.toFixed(2)}, ` +
-          `event recall ${breakdown.eventNameRecall.toFixed(2)}, ` +
-          `type mix ${breakdown.typeDistribution.toFixed(2)}, ` +
-          `connection ratio ${breakdown.connectionRatio.toFixed(2)} ` +
-          `(expected ${expectedSummary.connections}, got ${actualSummary.connections})`
-      )
-      expect(breakdown.score).toBeGreaterThanOrEqual(SEQ2_LIVE_SIMILARITY_THRESHOLD)
+      if (!result.ok) {
+        throw new Error(
+          `live Seq-2 image generation failed (${result.reason}); first findings: ` +
+            JSON.stringify(result.findings.slice(0, 10))
+        )
+      }
+      expect(result.ok).toBe(true)
+      reportSeq2Live({
+        mode: 'image',
+        modelId: SEQ2_VISION_MODEL_ID,
+        result,
+        expectedSummary,
+        capture
+      })
     },
     SEQ2_LIVE_TEST_TIMEOUT_MS
   )
