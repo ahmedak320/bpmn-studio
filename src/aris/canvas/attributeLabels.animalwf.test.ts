@@ -99,6 +99,46 @@ describe('AnimalWF Phase-B: function numbering painted beside the symbol', () =>
       expect(texts).toHaveLength(expected.length)
       expect([...new Set(texts)].sort()).toEqual([...expected])
     })
+
+    it(`centres each numbering on the occurrence centre plus the source offset for ${modelId}`, () => {
+      // Wave 6 GEOM: the AttrOcc offset is measured from the occurrence's centre and the label
+      // box is centred on the offset point (raw canvas units — verified against the paired PDFs
+      // with sub-unit residuals). This is what keeps "01" below its tall card instead of
+      // overlapping the wrapped caption's third line.
+      harness = bootCanvas({ document: workingDocument, modelId })
+      const registry = harness.canvas.elementRegistry
+      const model = workingDocument.models.get(modelId)
+      if (!model) throw new Error(`Model ${modelId} missing from the working document.`)
+      let numbered = 0
+      for (const element of registry.getAll()) {
+        if (arisBusinessObject(element)?.kind !== 'occurrence') continue
+        const occurrence = model.occurrences.find((entry) => entry.id === element.id)
+        if (!occurrence) continue
+        const gfx = registry.getGraphics(element.id)
+        const group = gfx.querySelector('[data-aris-kind="occurrence"]')
+        if (!group) continue
+        for (const node of group.querySelectorAll('text[data-aris-attribute-label]')) {
+          const attributeType = node.getAttribute('data-aris-attribute-label')
+          const placement = occurrence.attributeOccurrences.find(
+            (entry) =>
+              entry.attributeType === attributeType &&
+              ((entry.offsetX ?? 0) !== 0 || (entry.offsetY ?? 0) !== 0)
+          )
+          if (!placement) throw new Error(`No offset placement for ${element.id} ${attributeType}.`)
+          numbered += 1
+          // Single-line text: the node's x/y is the laid-out line anchor, i.e. the box centre.
+          expect(Number(node.getAttribute('x'))).toBeCloseTo(
+            occurrence.bounds.width / 2 + (placement.offsetX ?? 0),
+            6
+          )
+          expect(Number(node.getAttribute('y'))).toBeCloseTo(
+            occurrence.bounds.height / 2 + (placement.offsetY ?? 0),
+            6
+          )
+        }
+      }
+      expect(numbered).toBeGreaterThan(0)
+    })
   }
 })
 

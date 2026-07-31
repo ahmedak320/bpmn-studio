@@ -96,6 +96,32 @@ const EXPECTED_FURNITURE: Readonly<
   })
 })
 
+/**
+ * The authored `<GfxObj>` header frame per model (Wave 6 GEOM: exact source
+ * bounds, not the derived envelope — the register sheet measured 6637×400
+ * where the source authors 6700×388).
+ */
+const EXPECTED_HEADER_FRAME: Readonly<
+  Record<
+    string,
+    { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
+  >
+> = Object.freeze({
+  [REGISTER_OWNER]: Object.freeze({ x: 0, y: 0, width: 6700, height: 388 }),
+  [RENEW_PROFILE]: Object.freeze({ x: 0, y: 0, width: 4600, height: 388 })
+})
+
+/** The authored `<GfxObj>` Reference-Laws box outline per model. */
+const EXPECTED_REFERENCE_BOX: Readonly<
+  Record<
+    string,
+    { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
+  >
+> = Object.freeze({
+  [REGISTER_OWNER]: Object.freeze({ x: 5880, y: 487, width: 742, height: 747 }),
+  [RENEW_PROFILE]: Object.freeze({ x: 3777, y: 487, width: 742, height: 747 })
+})
+
 let workingDocument: ArisWorkingDocument
 let harness: Harness | null = null
 
@@ -137,14 +163,11 @@ describe('AnimalWF V5+: print-frame header band', () => {
       const header = layer.querySelector('[data-aris-print-frame-header]')
       expect(header, 'header band').not.toBeNull()
 
-      // The band is a single frame anchored at the page origin, enclosing the
-      // header furniture with the source's own inset (within 4% of the
-      // authored Gfx frame's 388-unit height).
+      // The band is the authored GfxObj frame itself (Wave 6 GEOM): the exact
+      // source bounds, not the furniture-envelope derivation that measured
+      // 6637×400 on this sheet.
       const band = rectOf(header!.querySelector('rect'))
-      expect(band.x).toBe(0)
-      expect(band.y).toBe(0)
-      expect(band.height).toBeGreaterThanOrEqual(388 * 0.96)
-      expect(band.height).toBeLessThanOrEqual(388 * 1.04)
+      expect(band).toEqual(EXPECTED_HEADER_FRAME[modelId])
 
       // Process Code / Process Name / Organizational Owner, resolved from the
       // model attributes and painted at the exact free-text anchors.
@@ -231,9 +254,28 @@ describe('AnimalWF V5+: tuple-safe RACI badges on the role connectors', () => {
   }
 })
 
-describe('AnimalWF V5+: function numbering at the source-resolved bottom edge', () => {
+describe('AnimalWF GEOM: Reference-Laws graphic frame', () => {
   for (const modelId of [REGISTER_OWNER, RENEW_PROFILE]) {
-    it(`places every function number at the card's bottom region for ${modelId}`, () => {
+    it(`draws the Reference-Laws box outline at its authored GfxObj bounds for ${modelId}`, () => {
+      harness = bootCanvas({ document: workingDocument, modelId })
+      const layer = printFrameLayer()
+      // Exactly one non-header frame: the header band's own GfxObj is drawn by
+      // the header, never duplicated here.
+      const frames = [...layer.querySelectorAll('[data-aris-graphic-frame]')]
+      expect(frames).toHaveLength(1)
+      expect(frames[0]!.getAttribute('data-aris-graphic-frame-shape')).toBe('RoundedRectangle')
+      const outline = frames[0]!.querySelector('rect')
+      expect(rectOf(outline)).toEqual(EXPECTED_REFERENCE_BOX[modelId])
+      // The authored pen is COLORREF 0 (black) with no fill.
+      expect(outline!.getAttribute('stroke')).toBe('#000000')
+      expect(outline!.getAttribute('fill')).toBe('none')
+    })
+  }
+})
+
+describe('AnimalWF V5+: function numbering below the card', () => {
+  for (const modelId of [REGISTER_OWNER, RENEW_PROFILE]) {
+    it(`places every function number below its card for ${modelId}`, () => {
       harness = bootCanvas({ document: workingDocument, modelId })
       const registry = harness.canvas.elementRegistry
       let numbered = 0
@@ -247,10 +289,11 @@ describe('AnimalWF V5+: function numbering at the source-resolved bottom edge', 
         for (const node of group?.querySelectorAll('text[data-aris-attribute-label]') ?? []) {
           expect(node.getAttribute('data-aris-attribute-label')).toBe('AT_ID')
           numbered += 1
-          // The source AttrOcc places the number at the card's bottom edge:
-          // the label's centre sits in the lower half of the card, never at
-          // the top and never guessed sequentially.
-          expect(Number(node.getAttribute('y'))).toBeGreaterThan(shape.height / 2)
+          // Wave 6 GEOM: the AttrOcc offset anchors the number's centre at the
+          // occurrence centre plus the source offset, which for every numbered
+          // function on these sheets is below the card's bottom edge — never
+          // on the wrapped caption's lines inside the card.
+          expect(Number(node.getAttribute('y'))).toBeGreaterThan(shape.height)
           expect(node.textContent).toMatch(/^\d{2}$/)
         }
       }

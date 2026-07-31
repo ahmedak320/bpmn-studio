@@ -80,6 +80,58 @@ function occurrenceName(
 }
 
 describe('buildFromSource', () => {
+  it('carries GfxObj graphic frames into the working model with decoded paint', () => {
+    const document = buildDocumentFromXml(`<AML>
+      <Group Group.ID="Group.Root">
+        <Model Model.ID="Model.1" Model.Type="MT_EEPC">
+          <GfxObj HasSymbolEffect="1" Zorder="9">
+            <Pen Color="996600" Style="0" Width="1" />
+            <Brush Color="0" Color2="0" BrushType="TRANSPARENT" />
+            <Position Pos.X="0" Pos.Y="0" />
+            <Size Size.dX="6700" Size.dY="388" />
+            <RoundedRectangle Shaded="YES"><Position Pos.X="0" Pos.Y="0" /></RoundedRectangle>
+          </GfxObj>
+          <GfxObj Zorder="1">
+            <Pen Color="0" Style="0" Width="1" />
+            <Brush Color="123456" Color2="0" BrushType="SOLID" />
+            <Position Pos.X="5880" Pos.Y="487" />
+            <Size Size.dX="742" Size.dY="747" />
+            <RoundedRectangle Shaded="NO"><Position Pos.X="0" Pos.Y="0" /></RoundedRectangle>
+          </GfxObj>
+        </Model>
+      </Group>
+    </AML>`)
+    const model = document.models.get('Model.1')
+
+    expect(model?.graphicObjects).toHaveLength(2)
+    const [header, referenceBox] = model!.graphicObjects!
+    // The source element declares no id, so the deterministic synthesized id
+    // from the element's document path is the frame's identity.
+    expect(header.id).toBe('synthetic:GfxObj:AML[1]/Group[1]/Model[1]/GfxObj[1]')
+    expect(header).toMatchObject({
+      modelId: 'Model.1',
+      bounds: { x: 0, y: 0, width: 6700, height: 388 },
+      shape: 'RoundedRectangle',
+      shapeShaded: 'YES',
+      hasSymbolEffect: '1',
+      penColor: '#006699',
+      penStyle: 'solid',
+      penWidth: 1,
+      // A TRANSPARENT brush is "no fill": the frame draws as an outline only.
+      fillColor: 'none',
+      zOrder: 9
+    })
+    expect(referenceBox).toMatchObject({
+      id: 'synthetic:GfxObj:AML[1]/Group[1]/Model[1]/GfxObj[2]',
+      bounds: { x: 5880, y: 487, width: 742, height: 747 },
+      penColor: '#000000',
+      // COLORREF 123456 is 0x00BBGGRR, i.e. sRGB #563412.
+      fillColor: '#563412',
+      zOrder: 1
+    })
+    expect(referenceBox.rawAttributes).toEqual({ Zorder: '1' })
+  })
+
   it('carries decoded source colors into occurrence, connection, free-text and font paint', () => {
     const document = buildDocumentFromXml(SOURCE_COLOR_AML)
     const model = document.models.get('Model.1')

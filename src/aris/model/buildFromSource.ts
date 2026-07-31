@@ -7,6 +7,7 @@ import type {
   ArisConnectionOccurrence,
   ArisDatabase,
   ArisFreeText,
+  ArisGraphicObject,
   ArisLane,
   ArisLocalizedValue,
   ArisModel,
@@ -22,6 +23,7 @@ import type {
   ArisSourceConnectionOccurrenceRecordLike,
   ArisSourceFreeTextOccurrenceRecordLike,
   ArisSourceFreeTextRecordLike,
+  ArisSourceGraphicObjectRecordLike,
   ArisSourceIndexLike,
   ArisSourceLaneRecordLike,
   ArisSourceModelRecordLike,
@@ -537,6 +539,33 @@ function buildAttachment(
   })
 }
 
+/**
+ * A `<GfxObj>` graphic frame as a working-model entity. A real `<GfxObj>`
+ * never carries an id attribute, so — exactly like `<FFTextOcc>` — `id` is
+ * the deterministic id the semantic index synthesizes from the element's
+ * document path. A `TRANSPARENT` brush is "no fill" (see the occurrence-paint
+ * rule above): the frame draws as an outline only.
+ */
+function buildGraphicObject(source: ArisSourceGraphicObjectRecordLike): ArisGraphicObject {
+  return Object.freeze({
+    id: source.sourceId ?? '',
+    modelId: source.parsed.modelId ?? '',
+    bounds: buildBounds(source.parsed.x, source.parsed.y, source.parsed.dx, source.parsed.dy),
+    shape: source.parsed.shape ?? null,
+    shapeShaded: source.parsed.shapeShaded ?? null,
+    hasSymbolEffect: source.parsed.hasSymbolEffect ?? null,
+    penColor: sourceColorToCss(source.parsed.penColor),
+    penStyle: sourcePenStyle(source.parsed.penStyle),
+    penWidth: source.parsed.penWidth ?? null,
+    fillColor:
+      (source.parsed.brushType ?? '').trim().toUpperCase() === 'TRANSPARENT'
+        ? TRANSPARENT_FILL
+        : sourceColorToCss(source.parsed.brushColor),
+    zOrder: source.parsed.zorder ?? null,
+    rawAttributes: Object.freeze({ ...source.rawAttributes })
+  })
+}
+
 const FREE_TEXT_MODEL_ATTRIBUTE_TYPE = 'AT_MODEL_AT'
 const FREE_TEXT_MODEL_ATTRIBUTE_GUID = 'AT_MODEL_AT_GUID'
 
@@ -670,6 +699,15 @@ export function buildFromSource(index: ArisSourceIndexLike): ArisWorkingDocument
     attachmentsByModel.set(attachment.modelId, list)
   }
 
+  const graphicObjectsByModel = new Map<string, ArisGraphicObject[]>()
+  for (const source of index.graphicObjects ?? []) {
+    const frame = buildGraphicObject(source)
+    if (!frame.id || !frame.modelId) continue
+    const list = graphicObjectsByModel.get(frame.modelId) ?? []
+    list.push(frame)
+    graphicObjectsByModel.set(frame.modelId, list)
+  }
+
   const models = new Map<string, ArisModel>()
   for (const [, source] of index.models) {
     const model = buildModel(source, index.attributes)
@@ -680,9 +718,18 @@ export function buildFromSource(index: ArisSourceIndexLike): ArisWorkingDocument
     const lanes = Object.freeze(lanesByModel.get(modelId) ?? [])
     const freeText = Object.freeze(freeTextByModel.get(modelId) ?? [])
     const attachments = Object.freeze(attachmentsByModel.get(modelId) ?? [])
+    const graphicObjects = Object.freeze(graphicObjectsByModel.get(modelId) ?? [])
     models.set(
       modelId,
-      Object.freeze({ ...model, occurrences, connectionOccurrences, lanes, freeText, attachments })
+      Object.freeze({
+        ...model,
+        occurrences,
+        connectionOccurrences,
+        lanes,
+        freeText,
+        attachments,
+        graphicObjects
+      })
     )
   }
 

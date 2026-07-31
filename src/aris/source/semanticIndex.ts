@@ -353,6 +353,34 @@ export type ArisFreeTextOccurrenceRecord = ArisSourceRecordBase<{
   readonly fillColor: string | null
 }>
 
+/**
+ * A `<GfxObj>` graphic frame (plan Wave 6, GEOM): the model-level drawn
+ * furniture ARIS places outside any occurrence — the header band that frames
+ * the process-code/name/owner sheet and the Reference-Laws grouping boxes.
+ * Unlike an occurrence it carries no id attribute and no definition; its
+ * geometry is its own `<Position>`/`<Size>` pair, its stroke is the child
+ * `<Pen>`, and the shape child (`RoundedRectangle` in every observed export)
+ * says how the frame's corners draw.
+ */
+export type ArisGraphicObjectRecord = ArisSourceRecordBase<{
+  readonly modelId: string | null
+  readonly zorder: number | null
+  readonly hasSymbolEffect: string | null
+  /** Name of the shape child element (`RoundedRectangle` in AnimalWF). */
+  readonly shape: string | null
+  /** The shape child's `Shaded` flag, when it declares one. */
+  readonly shapeShaded: string | null
+  readonly x: number | null
+  readonly y: number | null
+  readonly dx: number | null
+  readonly dy: number | null
+  readonly penColor: string | null
+  readonly penStyle: string | null
+  readonly penWidth: number | null
+  readonly brushColor: string | null
+  readonly brushType: string | null
+}>
+
 export type ArisAttachmentRecord = ArisSourceRecordBase<{
   readonly attachmentId: string | null
   readonly creator: string | null
@@ -465,6 +493,7 @@ export interface ArisSourceIndex {
   readonly linkedModelAssignments: readonly ArisLinkedModelAssignmentRecord[]
   readonly freeTextOccurrences: readonly ArisFreeTextOccurrenceRecord[]
   readonly attachmentOccurrences: readonly ArisAttachmentOccurrenceRecord[]
+  readonly graphicObjects: readonly ArisGraphicObjectRecord[]
   readonly blobs: readonly ArisBlobRecord[]
   readonly guidReferences: readonly ArisGuidReferenceRecord[]
   readonly templateReferences: readonly ArisGuidReferenceRecord[]
@@ -518,12 +547,13 @@ const SOURCE_ID_ATTRIBUTES = [
  * `FFTextOcc` is the confirmed case: ARIS never emits an id for a free-text occurrence (it is
  * referenced only by `FFTextDef.IdRef` plus its position in the document), so without this list
  * every one of them falls through `sourceId === null` and is silently dropped by the `!item.id`
- * guards in `buildFromSource.ts`.
+ * guards in `buildFromSource.ts`. `GfxObj` is the same shape: a graphic frame is referenced only
+ * by where it sits in its model, never by an id.
  *
  * A record whose element is in this set gets a synthesized id (see {@link synthesizeSourceId})
  * whenever it has no real one, instead of being left with `sourceId: null`.
  */
-const SYNTHETIC_SOURCE_ID_ELEMENTS: ReadonlySet<string> = new Set(['FFTextOcc'])
+const SYNTHETIC_SOURCE_ID_ELEMENTS: ReadonlySet<string> = new Set(['FFTextOcc', 'GfxObj'])
 
 /**
  * Deterministically synthesize an id for a record that has no source id attribute to begin
@@ -559,6 +589,7 @@ const RECORD_KIND_BY_ELEMENT: Readonly<Record<string, string>> = Object.freeze({
   FFTextOcc: 'free-text-occurrence',
   OLEDef: 'attachment',
   OLEOcc: 'attachment-occurrence',
+  GfxObj: 'graphic-object',
   Blob: 'blob',
   FontStyleSheet: 'font-style-sheet',
   Font: 'font',
@@ -588,10 +619,25 @@ const ABSORBING_RECORD_KINDS: Readonly<Record<string, readonly string[]>> = Obje
   PlainText: ['attribute'],
   Bold: ['attribute'],
   LineBreak: ['attribute'],
-  Flag: ['model']
+  Flag: ['model'],
+  // The shape child of a `<GfxObj>` is part of the frame record itself — its
+  // name and `Shaded` flag are parsed onto the owning `graphic-object`.
+  RoundedRectangle: ['graphic-object']
 })
 
 const DOCUMENT_ROOT_RECORD_KIND = 'document-root'
+
+/**
+ * The `<GfxObj>` children that describe the frame itself rather than its
+ * shape: anything else (`RoundedRectangle` in every observed export) is the
+ * shape the frame draws.
+ */
+const GRAPHIC_OBJECT_PLUMBING_CHILDREN: ReadonlySet<string> = new Set([
+  'Pen',
+  'Brush',
+  'Position',
+  'Size'
+])
 
 function attrsOf(node: XmlElementNode): Readonly<Record<string, string>> {
   const attributes = Object.fromEntries(
@@ -930,6 +976,7 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
   const freeTextOccurrences: ArisFreeTextOccurrenceRecord[] = []
   const attachments = new Map<string, ArisAttachmentRecord>()
   const attachmentOccurrences: ArisAttachmentOccurrenceRecord[] = []
+  const graphicObjects: ArisGraphicObjectRecord[] = []
   const blobs: ArisBlobRecord[] = []
   const fontStyleSheets = new Map<string, ArisFontStyleSheetRecord>()
   const fonts: ArisFontRecord[] = []
@@ -1616,6 +1663,49 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
         )
         break
       }
+      case 'GfxObj': {
+        const ancestorModel = nearestAncestor(context, ['Model'])
+        const position = readPositionPair(context)
+        const size = readSizePair(context)
+        const pen = directChild(context, 'Pen')
+        const brush = directChild(context, 'Brush')
+        const penAttributes = pen ? attrsOf(pen) : null
+        const brushAttributes = brush ? attrsOf(brush) : null
+        // The shape child is the one child that is not frame plumbing. Only
+        // `RoundedRectangle` is a known shape so far; any other name is kept on
+        // the record (`shape`) and mirrored into `unknownChildren`, and the
+        // child itself is retained as an unknown record below.
+        const shape = childElements(context.node).find(
+          (child) => !GRAPHIC_OBJECT_PLUMBING_CHILDREN.has(child.name)
+        )
+        graphicObjects.push(
+          indexedRecord(
+            context,
+            'graphic-object',
+            {
+              modelId: ancestorModel?.attributes['Model.ID'] ?? null,
+              zorder: parseOptionalInteger(context.attributes.Zorder),
+              hasSymbolEffect: context.attributes.HasSymbolEffect ?? null,
+              shape: shape?.name ?? null,
+              shapeShaded: shape ? (attrsOf(shape).Shaded ?? null) : null,
+              x: position.x,
+              y: position.y,
+              dx: size.dx,
+              dy: size.dy,
+              penColor: amlColorRefToCss(penAttributes?.Color),
+              penStyle: penAttributes?.Style ?? null,
+              penWidth: parseOptionalInteger(penAttributes?.Width),
+              brushColor: amlColorRefToCss(brushAttributes?.Color),
+              brushType: brushAttributes?.BrushType ?? null
+            },
+            {
+              knownAttributes: ['Zorder', 'HasSymbolEffect'],
+              knownChildren: ['Pen', 'Brush', 'Position', 'Size', 'RoundedRectangle']
+            }
+          )
+        )
+        break
+      }
       case 'Blob': {
         const owner = nearestAncestor(context, ['OLEDef'])
         const raw = elementText(context.node, entityMap) || childLeafText(context.node).trim()
@@ -1909,6 +1999,7 @@ export function buildSemanticArisDocument(document: TokenizedXmlDocument): Seman
       linkedModelAssignments: Object.freeze(linkedModelAssignments),
       freeTextOccurrences: Object.freeze(freeTextOccurrences),
       attachmentOccurrences: Object.freeze(attachmentOccurrences),
+      graphicObjects: Object.freeze(graphicObjects),
       blobs: Object.freeze(blobs),
       guidReferences: Object.freeze(guidReferences),
       templateReferences: Object.freeze(

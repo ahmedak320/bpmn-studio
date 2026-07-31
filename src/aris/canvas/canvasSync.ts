@@ -935,21 +935,26 @@ function resolveOccurrenceAttributeText(
  * The read-only attribute annotations drawn inside an occurrence's group: every non-`AT_NAME`
  * `<AttrOcc>` that both (a) places itself outside the symbol — a non-zero offset, since a zero
  * offset means "inside", which the caption already owns — and (b) resolves to stored text. This is
- * what paints a function's `AT_PROC_CODE` / `AT_ID` numbering beside its symbol. Geometry reuses
- * `externalNameRect` in the occurrence's local coordinate space, so a numbering annotation tracks
- * its owner exactly as the external caption does. The source `<AttrOcc>` records are read, never
- * rewritten (§12.2).
+ * what paints a function's `AT_PROC_CODE` / `AT_ID` numbering beside its symbol. The source
+ * `<AttrOcc>` records are read, never rewritten (§12.2).
+ *
+ * ## Placement anchor (Wave 6, GEOM)
+ *
+ * The offset is measured from the occurrence's *centre* and the label box is *centred* on the
+ * offset point — the same anchor rule `connectionLabelRect` uses for the connection-side twin
+ * (plan §12.1). Verified against the paired AnimalWF PDFs (33 placements across the
+ * register-owner / renew-profile / transfer sheets, three print scales): the numbering's text
+ * centre lands at `occurrence centre + (OffsetX, OffsetY)` in raw canvas units with sub-unit
+ * residuals, which puts "01" just below its card instead of on the wrapped caption's third line.
+ * The offsets are plain canvas units, not twips: `OffsetX="215"` lands 530 units right of the
+ * card's left edge (`670/2 + 215`), where 215 twips would be 38. The box keeps the source `<Size>`
+ * when the placement carries one, and the default label extent otherwise — the renderer centres
+ * the text in the box, so the box centre is what must sit on the anchor.
  */
 export function occurrenceAttributeLabels(
   document: ArisWorkingDocument,
   occurrence: ArisObjectOccurrence
 ): readonly ArisOccurrenceAttributeLabel[] {
-  const localOwner: ArisRect = {
-    x: 0,
-    y: 0,
-    width: occurrence.bounds.width,
-    height: occurrence.bounds.height
-  }
   const labels: ArisOccurrenceAttributeLabel[] = []
   for (const placement of occurrence.attributeOccurrences) {
     if (placement.attributeType === AT_NAME) continue
@@ -958,23 +963,18 @@ export function occurrenceAttributeLabels(
     if (offsetX === 0 && offsetY === 0) continue
     const text = resolveOccurrenceAttributeText(document, occurrence, placement.attributeType)
     if (!text) continue
-    const rect = externalNameRect(
-      {
-        offsetX,
-        offsetY,
-        width: positiveOrNull(placement.width),
-        height: positiveOrNull(placement.height)
-      },
-      localOwner
-    )
+    const width = positiveOrNull(placement.width) ?? EXTERNAL_LABEL_DEFAULT_WIDTH
+    const height = positiveOrNull(placement.height) ?? EXTERNAL_LABEL_DEFAULT_HEIGHT
+    const centerX = occurrence.bounds.width / 2 + offsetX
+    const centerY = occurrence.bounds.height / 2 + offsetY
     labels.push(
       Object.freeze({
         attributeType: placement.attributeType,
         text,
-        x: rect.x,
-        y: rect.y,
-        width: rect.width,
-        height: rect.height
+        x: centerX - width / 2,
+        y: centerY - height / 2,
+        width,
+        height
       })
     )
   }

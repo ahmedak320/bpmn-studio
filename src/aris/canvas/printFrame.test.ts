@@ -8,6 +8,7 @@ import type {
   ArisConnectionDefinition,
   ArisConnectionOccurrence,
   ArisFreeText,
+  ArisGraphicObject,
   ArisModel,
   ArisObjectDefinition,
   ArisObjectOccurrence,
@@ -177,6 +178,33 @@ function attachment(
   })
 }
 
+/** A `<GfxObj>` graphic frame as `buildFromSource` delivers it on the model. */
+function graphicObject(
+  id: string,
+  bounds: {
+    readonly x: number
+    readonly y: number
+    readonly width: number
+    readonly height: number
+  },
+  penColor: string | null
+): ArisGraphicObject {
+  return Object.freeze({
+    id,
+    modelId: MODEL_ID,
+    bounds: Object.freeze(bounds),
+    shape: 'RoundedRectangle',
+    shapeShaded: 'YES',
+    hasSymbolEffect: null,
+    penColor,
+    penStyle: 'solid',
+    penWidth: 1,
+    fillColor: 'none',
+    zOrder: null,
+    rawAttributes: Object.freeze({})
+  })
+}
+
 function boundNote(id: string, attributeType: string, x: number, y: number): ArisFreeText {
   return Object.freeze({
     id,
@@ -310,6 +338,60 @@ describe('buildPrintFrame — header, anchored values, attachments, legend slot'
     expect(frame.legend!.bounds).toEqual({ x: 450, y: 8139, width: 3800, height: 622 })
   })
 
+  it('draws the header band at the authored GfxObj frame that encloses the title block', () => {
+    const model = modelWith({
+      attributes: Object.freeze([
+        Object.freeze({
+          type: 'AT_ID',
+          values: Object.freeze([Object.freeze({ localeId: 'en-US', text: 'AWF.01.01' })])
+        })
+      ]),
+      freeText: Object.freeze([boundNote('FFTextOcc.1', 'AT_ID', 1823, 122)]),
+      attachments: Object.freeze([attachment('logo', 5403, 40, 1194, 320)]),
+      graphicObjects: Object.freeze([
+        graphicObject('GfxObj.header', { x: 0, y: 0, width: 6700, height: 388 }, '#006699'),
+        graphicObject('GfxObj.laws', { x: 5880, y: 487, width: 742, height: 747 }, '#000000')
+      ]),
+      occurrences: Object.freeze([occurrence('ObjOcc.func', 'ObjDef.func', 900, 900)])
+    })
+    const frame = buildPrintFrame(model)
+    // The band takes the authored frame's exact bounds, not the derived
+    // furniture envelope (which measured 6637×400 here).
+    expect(frame.header!.bounds).toEqual({ x: 0, y: 0, width: 6700, height: 388 })
+    expect(frame.header!.sourceFrameId).toBe('GfxObj.header')
+    // The header's own frame is not drawn twice; the Reference-Laws box is the
+    // one remaining graphic frame, at its authored bounds and pen.
+    expect(frame.graphicFrames.map((graphic) => graphic.id)).toEqual(['GfxObj.laws'])
+    expect(frame.graphicFrames[0]).toMatchObject({
+      bounds: { x: 5880, y: 487, width: 742, height: 747 },
+      penColor: '#000000',
+      penWidth: 1,
+      fillColor: 'none'
+    })
+  })
+
+  it('falls back to the derived envelope when no authored frame encloses the title block', () => {
+    const model = modelWith({
+      attributes: Object.freeze([
+        Object.freeze({
+          type: 'AT_ID',
+          values: Object.freeze([Object.freeze({ localeId: 'en-US', text: 'AWF.01.01' })])
+        })
+      ]),
+      freeText: Object.freeze([boundNote('FFTextOcc.1', 'AT_ID', 1823, 122)]),
+      attachments: Object.freeze([attachment('logo', 5403, 40, 1194, 320)]),
+      // A frame that sits beside the header area must not capture the band.
+      graphicObjects: Object.freeze([
+        graphicObject('GfxObj.laws', { x: 5880, y: 487, width: 742, height: 747 }, '#000000')
+      ]),
+      occurrences: Object.freeze([occurrence('ObjOcc.func', 'ObjDef.func', 900, 900)])
+    })
+    const frame = buildPrintFrame(model)
+    expect(frame.header!.sourceFrameId).toBeNull()
+    expect(frame.header!.bounds.width).toBeGreaterThanOrEqual(5403 + 1194)
+    expect(frame.graphicFrames.map((graphic) => graphic.id)).toEqual(['GfxObj.laws'])
+  })
+
   it('renders nothing for an empty model', () => {
     const frame = buildPrintFrame(modelWith({}))
     expect(frame.header).toBeNull()
@@ -366,6 +448,41 @@ describe('drawPrintFrame — SVG furniture', () => {
     const value = parent.querySelector('[data-aris-print-frame-text="anchored-value"]')
     expect(value?.textContent).toBe('AWF.01.01')
     expect(parent.querySelector('[data-aris-ole-pending]')).not.toBeNull()
+  })
+
+  it('draws each non-header graphic frame as an outline at its authored bounds and pen', () => {
+    const model = modelWith({
+      attributes: Object.freeze([
+        Object.freeze({
+          type: 'AT_ID',
+          values: Object.freeze([Object.freeze({ localeId: 'en-US', text: 'AWF.01.01' })])
+        })
+      ]),
+      freeText: Object.freeze([boundNote('FFTextOcc.1', 'AT_ID', 1823, 122)]),
+      attachments: Object.freeze([attachment('logo', 5403, 40, 1194, 320)]),
+      graphicObjects: Object.freeze([
+        graphicObject('GfxObj.header', { x: 0, y: 0, width: 6700, height: 388 }, '#006699'),
+        graphicObject('GfxObj.laws', { x: 5880, y: 487, width: 742, height: 747 }, '#000000')
+      ]),
+      occurrences: Object.freeze([occurrence('ObjOcc.func', 'ObjDef.func', 900, 900)])
+    })
+    const parent = document.createElementNS(SVG_NS, 'g')
+    drawPrintFrame(parent, buildPrintFrame(model), { modelName: 'Register profile' })
+
+    const frames = [...parent.querySelectorAll('[data-aris-graphic-frame]')]
+    expect(frames.map((node) => node.getAttribute('data-aris-graphic-frame-id'))).toEqual([
+      'GfxObj.laws'
+    ])
+    const rect = frames[0]!.querySelector('rect')!
+    expect({
+      x: Number(rect.getAttribute('x')),
+      y: Number(rect.getAttribute('y')),
+      width: Number(rect.getAttribute('width')),
+      height: Number(rect.getAttribute('height'))
+    }).toEqual({ x: 5880, y: 487, width: 742, height: 747 })
+    expect(rect.getAttribute('stroke')).toBe('#000000')
+    expect(rect.getAttribute('fill')).toBe('none')
+    expect(frames[0]!.getAttribute('data-aris-graphic-frame-shape')).toBe('RoundedRectangle')
   })
 })
 

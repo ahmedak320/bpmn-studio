@@ -136,6 +136,35 @@ export interface ArisAttachment {
   readonly rawAttributes: Readonly<Record<string, string>>
 }
 
+/**
+ * A `<GfxObj>` graphic frame on a model canvas (plan Wave 6, GEOM): drawn
+ * furniture that belongs to no occurrence — the header band framing the
+ * process-code/name/owner sheet and the Reference-Laws grouping boxes. The
+ * record is purely visual: it is read from the source and painted by the
+ * print-frame layer, never edited and never written back (§12.2), so the
+ * geometry and pen are kept exactly as authored.
+ *
+ * The source element carries no id attribute (like `<FFTextOcc>`); `id` is
+ * the deterministic id the semantic index synthesizes from the element's
+ * document path, so the same import always yields the same frame identity.
+ */
+export interface ArisGraphicObject {
+  readonly id: string
+  readonly modelId: string
+  readonly bounds: ArisBounds
+  /** Name of the shape child element (`RoundedRectangle` in AnimalWF). */
+  readonly shape: string | null
+  readonly shapeShaded: string | null
+  readonly hasSymbolEffect: string | null
+  readonly penColor: string | null
+  readonly penStyle: string | null
+  readonly penWidth: number | null
+  /** `none` when the source brush is `TRANSPARENT` (a drawn outline only). */
+  readonly fillColor: string | null
+  readonly zOrder: number | null
+  readonly rawAttributes: Readonly<Record<string, string>>
+}
+
 /** Model-level layout state such as scale, grid, and background. */
 export interface ArisLayoutState {
   readonly scale: number | null
@@ -287,6 +316,13 @@ export interface ArisModel {
    * places none" is expressed.
    */
   readonly attachments: readonly ArisAttachment[]
+  /**
+   * `<GfxObj>` graphic frames placed on this model (the header band, the
+   * Reference-Laws boxes). Optional so authored documents and older fixtures
+   * stay valid — an absent value means "no imported frames", exactly like an
+   * empty array.
+   */
+  readonly graphicObjects?: readonly ArisGraphicObject[]
   readonly layout: ArisLayoutState
   readonly unsupported: boolean
   readonly rawSourceRecord: unknown
@@ -356,6 +392,12 @@ export interface ArisSourceIndexLike {
   }
   readonly unknownRecords: readonly unknown[]
   readonly routePoints: readonly ArisSourceRoutePointRecordLike[]
+  /**
+   * `<GfxObj>` graphic-frame records. Optional so a source index built for a
+   * narrower purpose (an authored document, a test double) stays assignable;
+   * an index that omits them simply places no graphic frames.
+   */
+  readonly graphicObjects?: readonly ArisSourceGraphicObjectRecordLike[]
 }
 
 /** The narrow view of a `<Pen>`/`<Brush>` record the working model reads. */
@@ -476,6 +518,23 @@ export type ArisSourceFreeTextOccurrenceRecordLike = ArisSourceRecordBaseLike<{
   readonly dx: number | null
   readonly dy: number | null
   readonly zorder: number | null
+}>
+
+export type ArisSourceGraphicObjectRecordLike = ArisSourceRecordBaseLike<{
+  readonly modelId: string | null
+  readonly zorder: number | null
+  readonly hasSymbolEffect: string | null
+  readonly shape: string | null
+  readonly shapeShaded: string | null
+  readonly x: number | null
+  readonly y: number | null
+  readonly dx: number | null
+  readonly dy: number | null
+  readonly penColor: string | null
+  readonly penStyle: string | null
+  readonly penWidth: number | null
+  readonly brushColor: string | null
+  readonly brushType: string | null
 }>
 
 export interface ArisSourceRoutePointRecordLike {

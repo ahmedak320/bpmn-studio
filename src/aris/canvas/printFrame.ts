@@ -30,17 +30,18 @@
  *   TODO(V5+ OLE): decode `index.blobs` for these attachment ids and swap the
  *   placeholder/legend for the authored images.
  * - **Gfx frame geometry.** The header/reference rounded rectangles are AML
- *   `GfxObj` records, which the semantic index currently preserves only as
- *   unknown records, so the band extent is derived from the furniture it
- *   encloses (the source's own inset is kept). TODO(V5+ Gfx): parse `GfxObj`
- *   Position/Size into the working model and use the exact frame bounds —
- *   including the Reference-Laws box this lane does not draw.
+ *   `GfxObj` records, parsed into `model.graphicObjects` (Wave 6 GEOM): the
+ *   header band draws at the authored frame's exact bounds when one encloses
+ *   the title block, and every other frame — the Reference-Laws boxes — draws
+ *   as its own outline at the authored bounds and pen. TODO(V5+ Gfx): the
+ *   shape grammar beyond `RoundedRectangle` (the only shape AnimalWF uses) is
+ *   parsed but any non-rectangle frame geometry is not drawn yet.
  * - **Multi-page print pagination.** The frame is page furniture drawn in
  *   canvas coordinates; splitting it across printed pages is out of scope.
  */
 
 import { resolveFreeTextModelAttributeBinding } from '../model/buildFromSource'
-import type { ArisFreeText, ArisModel } from '../model/types'
+import type { ArisFreeText, ArisGraphicObject, ArisModel } from '../model/types'
 import { bidiTextAttrs } from './bidi'
 import { modelContentBounds, type ArisRect } from './canvasSync'
 import { DEFAULT_LOCALE_ID } from './emptyDocument'
@@ -73,11 +74,29 @@ export interface ArisPrintFrameHeader {
   readonly anchoredValues: readonly ArisPrintFrameAnchoredValue[]
   /** The organization title block rectangle (an OLE attachment's bounds). */
   readonly orgBlock: ArisRect | null
+  /** The authored `GfxObj` frame the band draws at, when the source carries one. */
+  readonly sourceFrameId: string | null
+}
+
+/**
+ * A `<GfxObj>` frame drawn as page furniture in its own right — the
+ * Reference-Laws grouping boxes. The header band's own frame is excluded (the
+ * header draws it), so what remains here is every frame the generic furniture
+ * paths would otherwise not draw at all.
+ */
+export interface ArisPrintFrameGraphicFrame {
+  readonly id: string
+  readonly bounds: ArisRect
+  readonly shape: string | null
+  readonly penColor: string | null
+  readonly penWidth: number | null
+  readonly fillColor: string | null
 }
 
 export interface ArisPrintFrameModel {
   readonly header: ArisPrintFrameHeader | null
   readonly legend: ArisLegendModel | null
+  readonly graphicFrames: readonly ArisPrintFrameGraphicFrame[]
 }
 
 export interface ArisPrintFrameOptions {
@@ -195,6 +214,7 @@ function buildHeader(
   model: ArisModel,
   localeId: string,
   content: ArisRect | null,
+  frames: readonly ArisGraphicObject[],
   resolveNoteFont?: (note: ArisFreeText) => ArisLabelFont | null
 ): ArisPrintFrameHeader | null {
   const { orgBlock } = classifyAttachments(model, content)
@@ -221,11 +241,20 @@ function buildHeader(
 
   if (orgBlock === null && anchored.length === 0 && rows.length === 0) return null
 
+  // The authored `GfxObj` header frame, when the source carries one: the
+  // smallest frame that encloses the organization title block. It wins over
+  // the derived envelope below — the band then draws at the exact authored
+  // bounds (the AnimalWF sheets author 6700×388 where the envelope measured
+  // 6637×400).
+  const sourceFrame = orgBlock === null ? null : frameEnclosing(frames, orgBlock)
+
   // The band encloses its furniture with the source's own inset. An imported
   // model anchors the band at the origin; an authored model parks it directly
   // above its content.
   let bounds: ArisRect
-  if (orgBlock !== null) {
+  if (sourceFrame !== null) {
+    bounds = sourceFrame.bounds
+  } else if (orgBlock !== null) {
     const inset = orgBlock.y > 0 ? orgBlock.y : AUTHORED_HEADER_INSET
     let extent: ArisRect | null = null
     for (const note of model.freeText) {
@@ -268,8 +297,31 @@ function buildHeader(
         })
       })
     ),
-    orgBlock
+    orgBlock,
+    sourceFrameId: sourceFrame?.id ?? null
   })
+}
+
+/**
+ * The smallest graphic frame that fully contains `rect` — how the header band
+ * finds its authored frame among the model's `<GfxObj>` records (the
+ * Reference-Laws boxes sit elsewhere on the sheet and never contain the title
+ * block).
+ */
+function frameEnclosing(
+  frames: readonly ArisGraphicObject[],
+  rect: ArisRect
+): ArisGraphicObject | null {
+  let best: ArisGraphicObject | null = null
+  for (const frame of frames) {
+    const b = frame.bounds
+    if (rect.x < b.x || rect.y < b.y) continue
+    if (rect.x + rect.width > b.x + b.width) continue
+    if (rect.y + rect.height > b.y + b.height) continue
+    if (best !== null && b.width * b.height >= best.bounds.width * best.bounds.height) continue
+    best = frame
+  }
+  return best
 }
 
 function buildLegendSlot(model: ArisModel, content: ArisRect | null): ArisRect | null {
@@ -294,11 +346,27 @@ export function buildPrintFrame(
 ): ArisPrintFrameModel {
   const localeId = options.localeId ?? DEFAULT_LOCALE_ID
   const content = modelContentBounds(model)
-  const header = buildHeader(model, localeId, content, options.resolveNoteFont)
+  const frames = model.graphicObjects ?? []
+  const header = buildHeader(model, localeId, content, frames, options.resolveNoteFont)
   const legendSlot = options.legend === false ? null : buildLegendSlot(model, content)
+  // Every authored frame that is not the header band's own draws as page
+  // furniture in its own right (the Reference-Laws grouping boxes).
+  const graphicFrames = frames
+    .filter((frame) => frame.id !== header?.sourceFrameId)
+    .map((frame) =>
+      Object.freeze({
+        id: frame.id,
+        bounds: frame.bounds,
+        shape: frame.shape,
+        penColor: frame.penColor,
+        penWidth: frame.penWidth,
+        fillColor: frame.fillColor
+      })
+    )
   return Object.freeze({
     header,
-    legend: legendSlot === null ? null : buildArisLegend(legendSlot)
+    legend: legendSlot === null ? null : buildArisLegend(legendSlot),
+    graphicFrames: Object.freeze(graphicFrames)
   })
 }
 
@@ -432,8 +500,40 @@ function drawHeader(group: SVGElement, header: ArisPrintFrameHeader, modelName: 
 }
 
 /**
+ * One authored `<GfxObj>` frame — a Reference-Laws grouping box in practice.
+ * Drawn exactly as authored: the source bounds, the decoded pen colour and
+ * logical width, and the source fill (`none` for the transparent brush every
+ * one of AnimalWF's frames carries). The reference sheets print these frames
+ * square-cornered, so no corner radius is invented for them.
+ */
+function drawGraphicFrames(group: SVGElement, frames: readonly ArisPrintFrameGraphicFrame[]): void {
+  for (const frame of frames) {
+    const { bounds } = frame
+    const frameGroup = svgElement('g', {
+      'data-aris-graphic-frame': 'true',
+      'data-aris-graphic-frame-id': frame.id,
+      ...(frame.shape === null ? {} : { 'data-aris-graphic-frame-shape': frame.shape })
+    })
+    svgAppend(
+      frameGroup,
+      svgElement('rect', {
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height,
+        fill: frame.fillColor ?? 'none',
+        stroke: frame.penColor ?? '#000000',
+        'stroke-width': Math.max(1, frame.penWidth ?? 1)
+      })
+    )
+    svgAppend(group, frameGroup)
+  }
+}
+
+/**
  * Append the model's print frame to `parent`, in canvas coordinates: the
- * header band first (it sits at the top of the page), then the bottom legend.
+ * header band first (it sits at the top of the page), then the authored
+ * graphic frames, then the bottom legend.
  */
 export function drawPrintFrame(
   parent: SVGElement,
@@ -442,6 +542,7 @@ export function drawPrintFrame(
 ): void {
   const group = svgElement('g', { 'data-aris-print-frame': 'true' })
   if (frame.header !== null) drawHeader(group, frame.header, options.modelName)
+  drawGraphicFrames(group, frame.graphicFrames)
   if (frame.legend !== null) drawArisLegend(group, frame.legend)
   svgAppend(parent, group)
 }

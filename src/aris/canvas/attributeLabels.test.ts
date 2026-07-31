@@ -151,9 +151,9 @@ describe('occurrenceAttributeLabels — AT_PROC_CODE / AT_ID numbering placement
       ['AT_ID', '07'],
       ['AT_PROC_CODE', 'P-100']
     ])
-    // Geometry reuses externalNameRect in the occurrence's local space: x/y are the raw offset, an
-    // unsized placement takes the default label box.
-    expect(labels[0]).toMatchObject({ x: 150, y: 150, width: 120, height: 24 })
+    // Geometry: the offset is measured from the occurrence's centre and the label box is centred
+    // on the offset point — (100/2+150, 60/2+150) = (200,180) — with the default label extent.
+    expect(labels[0]).toMatchObject({ x: 140, y: 168, width: 120, height: 24 })
   })
 
   it('skips AT_NAME, zero-offset placements, and placements with no stored value', () => {

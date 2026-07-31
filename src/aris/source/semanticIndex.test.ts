@@ -134,6 +134,7 @@ function collectRecordPaths(index: ArisSourceIndex): Set<string> {
   add(index.freeTextOccurrences)
   add(index.attachments.values())
   add(index.attachmentOccurrences)
+  add(index.graphicObjects)
   add(index.blobs)
   add(index.styles.fontStyleSheets.values())
   add(index.styles.fonts)
@@ -283,8 +284,12 @@ describe('buildSemanticArisDocument', () => {
     expect(semantic.index.positions).toHaveLength(6)
     expect(semantic.index.sizes).toHaveLength(5)
     expect(semantic.index.routePoints).toHaveLength(2)
+    // The `<GfxObj>` frame is a typed record with a synthesized id — nothing
+    // about it is left to the unknown list.
+    expect(semantic.index.graphicObjects).toHaveLength(1)
+    expect(semantic.index.graphicObjects[0]?.parsed.shape).toBe('RoundedRectangle')
     expect(semantic.index.unknownRecords.some((record) => record.elementName === 'GfxObj')).toBe(
-      true
+      false
     )
     expect(semantic.diagnostics).toHaveLength(0)
 
@@ -395,8 +400,16 @@ describe('buildSemanticArisDocument', () => {
       recordKind: 'model'
     })
     expect(accounting.get('AML[1]/Group[1]/Group[1]/Model[1]/GfxObj[1]')).toMatchObject({
-      disposition: 'unknown',
-      recordKind: 'unknown'
+      disposition: 'record',
+      recordKind: 'graphic-object'
+    })
+    // The frame's shape child is folded into the graphic-object record.
+    expect(
+      accounting.get('AML[1]/Group[1]/Group[1]/Model[1]/GfxObj[1]/RoundedRectangle[1]')
+    ).toMatchObject({
+      disposition: 'absorbed',
+      recordKind: 'graphic-object',
+      recordPath: 'AML[1]/Group[1]/Group[1]/Model[1]/GfxObj[1]'
     })
     // Styled-text elements are folded into the attribute record that owns them.
     expect(
@@ -427,20 +440,84 @@ describe('buildSemanticArisDocument', () => {
     </AML>`
 
     const semantic = buildSemanticArisDocument(tokenizeXmlDocument(xml))
+    // The GfxObj and its RoundedRectangle shape are typed/absorbed now; the
+    // Union remains the unknown record.
     const unknownNames = semantic.index.unknownRecords.map((record) => record.elementName)
-    expect(unknownNames).toEqual(['GfxObj', 'RoundedRectangle', 'Union'])
+    expect(unknownNames).toEqual(['Union'])
 
-    const gfxObj = semantic.index.unknownRecords[0]
-    expect(gfxObj?.recordKind).toBe('unknown')
-    expect(gfxObj?.rawAttributes).toEqual({ HasSymbolEffect: 'YES', Zorder: '3' })
-    expect(gfxObj?.unknownAttributes).toEqual({ HasSymbolEffect: 'YES', Zorder: '3' })
-    expect(gfxObj?.unknownChildren).toEqual(['RoundedRectangle'])
-    expect(gfxObj?.parent).toMatchObject({ elementName: 'Model', sourceId: 'Model.1' })
-    expect(gfxObj?.span.end.offset).toBeGreaterThan(gfxObj?.span.start.offset ?? 0)
-
-    const union = semantic.index.unknownRecords[2]
+    const union = semantic.index.unknownRecords[0]
+    expect(union?.recordKind).toBe('unknown')
     expect(union?.rawAttributes['ObjOccs.IdRefs']).toBe('ObjOcc.1 ObjOcc.2')
+    expect(union?.parent).toMatchObject({ elementName: 'Model', sourceId: 'Model.1' })
+    expect(union?.span.end.offset).toBeGreaterThan(union?.span.start.offset ?? 0)
     expect(semantic.diagnostics).toHaveLength(0)
+  })
+
+  it('parses GfxObj graphic frames with their geometry, pen, brush and shape', () => {
+    const xml = `<AML>
+      <Group Group.ID="Group.Root">
+        <Model Model.ID="Model.1" Model.Type="MT_EEPC">
+          <GfxObj HasSymbolEffect="1" Zorder="9">
+            <Pen Color="996600" Style="0" Width="1" />
+            <Brush Color="0" Color2="0" BrushType="TRANSPARENT" />
+            <Position Pos.X="0" Pos.Y="0" />
+            <Size Size.dX="6700" Size.dY="388" />
+            <RoundedRectangle Shaded="YES"><Position Pos.X="0" Pos.Y="0" /></RoundedRectangle>
+          </GfxObj>
+          <GfxObj Zorder="1">
+            <Pen Color="0" Style="0" Width="1" />
+            <Brush Color="0" Color2="0" BrushType="TRANSPARENT" />
+            <Position Pos.X="5880" Pos.Y="487" />
+            <Size Size.dX="742" Size.dY="747" />
+            <RoundedRectangle Shaded="NO"><Position Pos.X="0" Pos.Y="0" /></RoundedRectangle>
+          </GfxObj>
+        </Model>
+      </Group>
+    </AML>`
+
+    const semantic = buildSemanticArisDocument(tokenizeXmlDocument(xml))
+    expect(semantic.diagnostics).toHaveLength(0)
+    expect(semantic.index.graphicObjects).toHaveLength(2)
+
+    const header = semantic.index.graphicObjects[0]
+    expect(header?.recordKind).toBe('graphic-object')
+    expect(header?.elementName).toBe('GfxObj')
+    expect(header?.sourceId).toBe('synthetic:GfxObj:AML[1]/Group[1]/Model[1]/GfxObj[1]')
+    expect(header?.parsed).toMatchObject({
+      modelId: 'Model.1',
+      zorder: 9,
+      hasSymbolEffect: '1',
+      shape: 'RoundedRectangle',
+      shapeShaded: 'YES',
+      x: 0,
+      y: 0,
+      dx: 6700,
+      dy: 388,
+      // COLORREF 996600 is 0x00BBGGRR, i.e. sRGB #006699.
+      penColor: '#006699',
+      penStyle: '0',
+      penWidth: 1,
+      brushType: 'TRANSPARENT'
+    })
+    // Raw attributes are retained verbatim next to the parsed view.
+    expect(header?.rawAttributes).toEqual({ HasSymbolEffect: '1', Zorder: '9' })
+    expect(header?.unknownAttributes).toEqual({})
+    expect(header?.unknownChildren).toEqual([])
+    expect(header?.parent).toMatchObject({ elementName: 'Model', sourceId: 'Model.1' })
+
+    const referenceBox = semantic.index.graphicObjects[1]
+    expect(referenceBox?.parsed).toMatchObject({
+      zorder: 1,
+      hasSymbolEffect: null,
+      x: 5880,
+      y: 487,
+      dx: 742,
+      dy: 747,
+      penColor: '#000000',
+      shapeShaded: 'NO'
+    })
+    // The frame records are typed, so nothing of them lands in the unknown list.
+    expect(semantic.index.unknownRecords).toHaveLength(0)
   })
 
   it('retains unknown attributes on known elements', () => {
@@ -809,12 +886,13 @@ describe('buildSemanticArisDocument', () => {
     expect(index.styles.brushes).toHaveLength(416 + 16 + 13)
     expect(index.linkedModelAssignments).toHaveLength(7)
     expect(index.supersededRecords).toHaveLength(0)
-    // 13 GfxObj + 13 RoundedRectangle + 126 SizeElement + 19 Container + 3 Union.
-    expect(index.unknownRecords).toHaveLength(174)
+    // The 13 GfxObj frames are typed records now; their RoundedRectangle shape
+    // children are folded into the frame record.
+    expect(index.graphicObjects).toHaveLength(13)
+    // 126 SizeElement + 19 Container + 3 Union.
+    expect(index.unknownRecords).toHaveLength(148)
     expect([...new Set(index.unknownRecords.map((record) => record.elementName))].sort()).toEqual([
       'Container',
-      'GfxObj',
-      'RoundedRectangle',
       'SizeElement',
       'Union'
     ])
