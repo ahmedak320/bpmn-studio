@@ -37,6 +37,14 @@ function itemFor(
   return button
 }
 
+function catalogItemFor(container: HTMLElement, catalogId: string): HTMLButtonElement {
+  const button = container.querySelector<HTMLButtonElement>(
+    `.aris-quick-pick button[data-aris-catalog-id="${catalogId}"]`
+  )
+  if (!button) throw new Error(`No quick-pick item for ${catalogId}`)
+  return button
+}
+
 describe('post-placement quick-pick (Lane C4)', () => {
   it('lists the active symbol plus its variant family members', () => {
     harness = bootCanvas()
@@ -93,6 +101,38 @@ describe('post-placement quick-pick (Lane C4)', () => {
 
     expect(findOccurrence(canvas.document, created.occurrenceId)?.symbol).toBe('ST_DOC')
     expect(startSymbol).not.toBe('ST_DOC')
+  })
+
+  it('surfaces and renders catalog-disabled governance variants through the provider override', () => {
+    harness = bootCanvas()
+    const { canvas, container } = harness
+    const created = canvas.authoring.createObject({
+      objectType: 'OT_POLICY',
+      symbolNum: 'ST_BUSINESS_POLICY',
+      position: { x: 0, y: 0 }
+    })
+
+    const members = quickPick(harness).membersFor(created.occurrenceId)
+    expect(members.find((member) => member.catalogId === 'governance.sla')).toMatchObject({
+      enabled: true
+    })
+    expect(
+      members.find((member) => member.catalogId === 'governance.law-regulation')
+    ).toMatchObject({ enabled: true })
+
+    quickPick(harness).open(created.occurrenceId)
+    const button = catalogItemFor(container, 'governance.sla')
+    expect(button.querySelector('svg')?.getAttribute('data-aris-catalog-id')).toBe('governance.sla')
+    pointerDown(button)
+
+    const businessObject = shape(canvas, created.occurrenceId).businessObject as {
+      readonly catalogId?: string
+    }
+    expect(businessObject.catalogId).toBe('governance.sla')
+    const gfx = canvas.elementRegistry.getGraphics(created.occurrenceId)
+    expect(
+      gfx.querySelector('[data-aris-kind="occurrence"]')?.getAttribute('data-aris-catalog-id')
+    ).toBe('governance.sla')
   })
 
   it('replaces the object across types for a fresh shape, preserving bounds and name', () => {

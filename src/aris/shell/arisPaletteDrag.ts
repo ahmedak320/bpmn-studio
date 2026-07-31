@@ -24,7 +24,7 @@
 // real CSS positioning context — see node_modules/diagram-js/lib/core/Canvas.js
 // (createContainer) and .../lib/features/palette/Palette.js (_getParentContainer).
 
-import { t } from '../../i18n'
+import { dmtLibraryText } from './dmtLibraryI18n'
 
 /** A palette position, in pixels, relative to the top-left corner of the
  *  canvas container that hosts it (NOT the viewport). */
@@ -45,8 +45,12 @@ export interface PaletteBounds {
 }
 
 const STORAGE_KEY = 'orbitpm.aris.palettePos'
+const DOCK_STORAGE_KEY = 'orbitpm.aris.paletteDocked'
 const GRIP_CLASS = 'orbitpm-palette-grip'
 const DRAGGING_CLASS = 'orbitpm-palette-grip--dragging'
+const CONTROLS_CLASS = 'orbitpm-palette-controls'
+const DOCK_CLASS = 'orbitpm-palette-dock'
+const DOCKED_CLASS = 'orbitpm-palette-docked'
 const PALETTE_SELECTOR = '.djs-palette'
 
 /** Clamps a single axis so `value + paletteSize` never exceeds
@@ -125,6 +129,22 @@ function clearStoredPos(): void {
   }
 }
 
+function readStoredDocked(): boolean {
+  try {
+    return localStorage.getItem(DOCK_STORAGE_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function writeStoredDocked(docked: boolean): void {
+  try {
+    localStorage.setItem(DOCK_STORAGE_KEY, String(docked))
+  } catch {
+    /* docking still works for this session */
+  }
+}
+
 /** Bounds derived from the CURRENT layout — see PaletteBounds for why this is
  *  re-read on every drag step/resize rather than cached once. */
 function readBounds(canvasContainer: HTMLElement, palette: HTMLElement): PaletteBounds {
@@ -164,19 +184,40 @@ function clearPaletteInlinePosition(palette: HTMLElement): void {
  *  construction, so it is normally already there) or later, once a
  *  MutationObserver sees the palette appear. */
 function wirePalette(palette: HTMLElement, canvasContainer: HTMLElement): () => void {
-  const grip = document.createElement('div')
+  const controls = document.createElement('div')
+  controls.className = CONTROLS_CLASS
+  const grip = document.createElement('button')
+  grip.type = 'button'
   grip.className = GRIP_CLASS
-  grip.title = t('aris.palette.grip.title')
+  grip.title = dmtLibraryText('aris.library.move')
+  grip.setAttribute('aria-label', dmtLibraryText('aris.library.move'))
+  const dock = document.createElement('button')
+  dock.type = 'button'
+  dock.className = DOCK_CLASS
+  controls.append(grip, dock)
   // Appended as the LAST child — after .djs-palette-entries and the
   // .djs-palette-toggle collapse button. bpmn-js re-renders only the entries
   // container's contents on palette updates, so a sibling appended here is
   // never touched/removed by those re-renders.
-  palette.appendChild(grip)
+  palette.appendChild(controls)
+
+  let docked = readStoredDocked()
+  const applyDocked = (next: boolean): void => {
+    docked = next
+    palette.classList.toggle(DOCKED_CLASS, docked)
+    const label = dmtLibraryText(docked ? 'aris.library.undock' : 'aris.library.dock')
+    dock.title = label
+    dock.setAttribute('aria-label', label)
+    dock.setAttribute('aria-pressed', docked ? 'true' : 'false')
+    if (docked) clearPaletteInlinePosition(palette)
+    writeStoredDocked(docked)
+  }
+  applyDocked(docked)
 
   // Restore any position saved from a previous session, clamped against the
   // palette's real (just-measured) size in case the window shrank since.
   const stored = readStoredPos()
-  if (stored) {
+  if (stored && !docked) {
     setPaletteInlinePosition(palette, clampPalettePos(stored, readBounds(canvasContainer, palette)))
   }
 
@@ -194,6 +235,7 @@ function wirePalette(palette: HTMLElement, canvasContainer: HTMLElement): () => 
   } | null = null
 
   const onPointerDown = (event: PointerEvent): void => {
+    if (docked) return
     if (drag) return // a second simultaneous pointer (e.g. multi-touch) never hijacks an active drag
     if (event.button !== 0) return // primary button only — right/middle-click pass through untouched
 
@@ -256,7 +298,23 @@ function wirePalette(palette: HTMLElement, canvasContainer: HTMLElement): () => 
     drag = null
     grip.classList.remove(DRAGGING_CLASS)
     clearStoredPos()
+    applyDocked(false)
     clearPaletteInlinePosition(palette)
+    event.preventDefault()
+    event.stopPropagation()
+  }
+
+  const onDockClick = (event: MouseEvent): void => {
+    applyDocked(!docked)
+    if (!docked) {
+      const previous = readStoredPos()
+      if (previous) {
+        setPaletteInlinePosition(
+          palette,
+          clampPalettePos(previous, readBounds(canvasContainer, palette))
+        )
+      }
+    }
     event.preventDefault()
     event.stopPropagation()
   }
@@ -266,6 +324,7 @@ function wirePalette(palette: HTMLElement, canvasContainer: HTMLElement): () => 
   grip.addEventListener('pointerup', endDrag)
   grip.addEventListener('pointercancel', endDrag)
   grip.addEventListener('dblclick', onDoubleClick)
+  dock.addEventListener('click', onDockClick)
 
   // The container resizes with the window/sidebar, and the palette itself
   // resizes when its entry count/column layout changes — either can leave a
@@ -288,7 +347,27 @@ function wirePalette(palette: HTMLElement, canvasContainer: HTMLElement): () => 
       }
     })
     resizeObserver.observe(canvasContainer)
+    resizeObserver.observe(palette)
   }
+
+  // Attribute/class and font/locale changes may not resize immediately in all
+  // engines. Re-clamp after the palette DOM changes as a fallback.
+  const mutationObserver = new MutationObserver(() => {
+    if (docked || palette.style.left === '') return
+    const current: PalettePos = {
+      left: parseFloat(palette.style.left) || 0,
+      top: parseFloat(palette.style.top) || 0
+    }
+    const next = clampPalettePos(current, readBounds(canvasContainer, palette))
+    if (next.left !== current.left || next.top !== current.top) {
+      setPaletteInlinePosition(palette, next)
+    }
+  })
+  mutationObserver.observe(palette, {
+    attributes: true,
+    childList: true,
+    subtree: true
+  })
 
   return () => {
     grip.removeEventListener('pointerdown', onPointerDown)
@@ -296,8 +375,10 @@ function wirePalette(palette: HTMLElement, canvasContainer: HTMLElement): () => 
     grip.removeEventListener('pointerup', endDrag)
     grip.removeEventListener('pointercancel', endDrag)
     grip.removeEventListener('dblclick', onDoubleClick)
+    dock.removeEventListener('click', onDockClick)
     resizeObserver?.disconnect()
-    grip.remove()
+    mutationObserver.disconnect()
+    controls.remove()
   }
 }
 

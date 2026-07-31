@@ -6,12 +6,14 @@
  * those, provided by `ArisAuthoring.requestDeleteDefinition`.
  */
 
-import type Connect from 'diagram-js/lib/features/connect/Connect'
 import type ContextPad from 'diagram-js/lib/features/context-pad/ContextPad'
-import type { Element } from 'diagram-js/lib/model/Types'
+import type { Element, Shape } from 'diagram-js/lib/model/Types'
 
-import { t } from '../../i18n'
+import { t, type Key } from '../../i18n'
+import { dmtLibraryText } from '../shell/dmtLibraryI18n'
 import type { ArisModeling } from './arisModeling'
+import { descriptorPreviewMarkup } from './descriptorPreview'
+import { dmtConnectionHelpers, dmtLibraryItem, type DmtConnectionHelper } from './dmtLibrary'
 import { arisBusinessObject } from './elements'
 import type { ArisPaletteProvider } from './paletteProvider'
 import type { ArisQuickPick } from './quickPick'
@@ -20,6 +22,10 @@ export interface ArisContextPadEntry {
   readonly group: string
   readonly className: string
   readonly title: string
+  readonly html?: string
+  readonly arisConnectionType?: string
+  readonly arisPeerCatalogId?: string
+  readonly arisDirection?: DmtConnectionHelper['direction']
   readonly action: {
     readonly click?: (event: Event, element: Element) => void
     readonly dragstart?: (event: Event, element: Element) => void
@@ -27,11 +33,10 @@ export interface ArisContextPadEntry {
 }
 
 export class ArisContextPadProvider {
-  static $inject = ['contextPad', 'connect', 'modeling', 'arisPaletteProvider', 'arisQuickPick']
+  static $inject = ['contextPad', 'modeling', 'arisPaletteProvider', 'arisQuickPick']
 
   constructor(
     contextPad: ContextPad,
-    private readonly connect: Connect,
     private readonly modeling: ArisModeling,
     private readonly palette: ArisPaletteProvider,
     private readonly quickPick: ArisQuickPick
@@ -51,40 +56,35 @@ export class ArisContextPadProvider {
     const entries: Record<string, ArisContextPadEntry> = {}
 
     if (businessObject.kind === 'occurrence') {
-      entries['connect'] = {
-        group: 'connect',
-        className: 'aris-context-pad-connect',
-        title: t('aris.contextPad.connect'),
-        action: {
-          click: (event, target) => this.connect.start(event as unknown as MouseEvent, target),
-          dragstart: (event, target) => this.connect.start(event as unknown as MouseEvent, target)
-        }
-      }
-      entries['append.function'] = {
-        group: 'append',
-        className: 'aris-context-pad-append-function',
-        title: t('aris.contextPad.appendFunction'),
-        action: {
-          click: (_event, target) => {
-            this.modeling.appendShape(
-              target,
-              this.palette.draftShape({ objectType: 'OT_FUNC', symbolNum: 'ST_FUNC' }),
-              { x: target.x + target.width + 120, y: target.y + target.height / 2 }
-            )
-          }
-        }
-      }
-      entries['append.event'] = {
-        group: 'append',
-        className: 'aris-context-pad-append-event',
-        title: t('aris.contextPad.appendEvent'),
-        action: {
-          click: (_event, target) => {
-            this.modeling.appendShape(
-              target,
-              this.palette.draftShape({ objectType: 'OT_EVT', symbolNum: 'ST_EV' }),
-              { x: target.x + target.width + 120, y: target.y + target.height / 2 }
-            )
+      for (const helper of this.helpersFor(element)) {
+        const peer = dmtLibraryItem(helper.peerCatalogId)
+        if (peer === null) continue
+        const relation = t(helper.labelKey as Key)
+        const peerLabel = t(peer.labelKey as Key)
+        const direction = dmtLibraryText(
+          helper.direction === 'outgoing'
+            ? 'aris.library.direction.after'
+            : 'aris.library.direction.before'
+        )
+        const title = dmtLibraryText('aris.library.quickConnect', {
+          relation,
+          peer: peerLabel,
+          direction
+        })
+        entries[helper.id] = {
+          group: 'quick-connect',
+          className: `aris-context-pad-quick-connect aris-context-pad-quick-connect--${helper.direction}`,
+          title,
+          html:
+            `<button type="button" class="entry aris-context-pad-quick-connect__button" ` +
+            `draggable="true" aria-label="${escapeHtml(title)}">` +
+            descriptorPreviewMarkup(peer.catalogId) +
+            `</button>`,
+          arisConnectionType: helper.connectionType,
+          arisPeerCatalogId: helper.peerCatalogId,
+          arisDirection: helper.direction,
+          action: {
+            click: (_event, target) => this.appendConnected(target, helper)
           }
         }
       }
@@ -97,7 +97,7 @@ export class ArisContextPadProvider {
           className: 'aris-context-pad-swap-symbol',
           title: t('aris.contextPad.swapSymbol'),
           action: {
-            click: (_event, target) => this.quickPick.open(target.id)
+            click: (_event, target) => this.quickPick.open(target.id, true)
           }
         }
       }
@@ -123,4 +123,64 @@ export class ArisContextPadProvider {
 
     return entries
   }
+
+  /**
+   * Compact helper manifest: one affordance per legal direction, peer object
+   * type, connection type and canonical label. Variant choice is delegated to
+   * the shared quick-pick after the peer is placed.
+   */
+  helpersFor(element: Element): readonly DmtConnectionHelper[] {
+    const businessObject = arisBusinessObject(element)
+    if (businessObject?.kind !== 'occurrence') return Object.freeze([])
+    const seen = new Set<string>()
+    return Object.freeze(
+      dmtConnectionHelpers(businessObject.modelType, businessObject.objectType).filter((helper) => {
+        const key = [
+          helper.direction,
+          helper.peerObjectType,
+          helper.connectionType,
+          helper.labelKey
+        ].join(':')
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+    )
+  }
+
+  private appendConnected(target: Element, helper: DmtConnectionHelper): void {
+    const peer = dmtLibraryItem(helper.peerCatalogId)
+    if (peer === null) return
+    const draft = this.palette.draftShape({
+      catalogId: peer.catalogId,
+      objectType: peer.objectType,
+      symbolNum: peer.symbolNum
+    })
+    const center =
+      helper.direction === 'outgoing'
+        ? {
+            x: target.x + target.width + 120 + (draft.width ?? 0) / 2,
+            y: target.y + target.height / 2
+          }
+        : {
+            x: target.x - 120 - (draft.width ?? 0) / 2,
+            y: target.y + target.height / 2
+          }
+    const created = this.modeling.createShape(draft, center) as Shape
+    this.palette.rememberCatalogPresentation(created.id, peer.catalogId)
+    if (helper.direction === 'outgoing') {
+      this.modeling.connect(target, created, { connectionType: helper.connectionType })
+    } else {
+      this.modeling.connect(created, target, { connectionType: helper.connectionType })
+    }
+  }
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
 }
