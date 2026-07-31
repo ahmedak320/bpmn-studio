@@ -35,7 +35,7 @@ describe('ARIS convention symbol catalog', () => {
     const symbol = conventionSymbol('OT_FUNC', 'ST_FUNC')
     expect(symbol).not.toBeNull()
     expect(symbol?.labelKey).toBe('aris.symbol.function')
-    expect(symbol?.defaultFill).toBe('#339900')
+    expect(symbol?.defaultFill).toBe('#339933')
   })
 
   it('returns null for an unknown objectType + symbolNum pair', () => {

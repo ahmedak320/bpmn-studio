@@ -999,7 +999,7 @@ export const ARIS_SYMBOL_DESCRIPTORS: readonly DmtSymbolDescriptor[] = Object.fr
     labelKey: 'aris.symbol.function',
     accessibleLabel: 'Function',
     icon: 'double-chevron',
-    fallbackAccent: '#009933',
+    fallbackAccent: '#339933',
     defaultBounds: { width: 100, height: 70 },
     bandWidth: FUNCTION_BAND_WIDTH
   }),
@@ -1010,7 +1010,7 @@ export const ARIS_SYMBOL_DESCRIPTORS: readonly DmtSymbolDescriptor[] = Object.fr
     labelKey: 'aris.symbol.systemFunction',
     accessibleLabel: 'System function',
     icon: 'application-window',
-    fallbackAccent: '#009933',
+    fallbackAccent: '#339933',
     defaultBounds: { width: 100, height: 70 },
     bandWidth: FUNCTION_BAND_WIDTH
   }),

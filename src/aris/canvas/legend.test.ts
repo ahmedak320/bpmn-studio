@@ -106,7 +106,7 @@ describe('drawLegendSymbol — descriptor painting', () => {
     // The descriptor-authored accent, not a guessed constant: the legend must
     // match whatever the convention catalog makes the canvas paint.
     expect(accentFill(fn)).toBe(conventionDefaultFill('OT_FUNC', 'ST_FUNC'))
-    expect(accentFill(fn)).toBe('#339900')
+    expect(accentFill(fn)).toBe('#339933')
     expect(accentFill(event)).toBe(conventionDefaultFill('OT_EVT', 'ST_EV'))
     expect(accentFill(event)).toBe('#edbbdc')
   })

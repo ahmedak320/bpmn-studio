@@ -120,7 +120,9 @@ describe('occurrenceColorToCss accepts both spellings that reach the canvas', ()
     // The AML spelling: an unsigned 0xBBGGRR integer serialized without padding.
     expect(occurrenceColorToCss('cccccc')).toBe('#cccccc')
     expect(occurrenceColorToCss('99')).toBe('#990000')
-    expect(occurrenceColorToCss('339900')).toBe('#009933')
+    // Wave 9 P8 (fixplan §4.3): the raw function brush `339900` byte-swaps to `#009933`, then the
+    // display correction remaps that print-outlier green to the drift-correct `#339933`.
+    expect(occurrenceColorToCss('339900')).toBe('#339933')
     expect(occurrenceColorToCss('d7c49d')).toBe('#9dc4d7')
     expect(occurrenceColorToCss('dcbbed')).toBe('#edbbdc')
     // The details rail and convention catalog spelling is already RGB.
@@ -152,9 +154,10 @@ describe('the canvas draws the occurrence style it was given', () => {
 
     expect(accentOf('ObjOcc.app-color').getAttribute('fill')).toBe('#9dc4d7')
     expect(accentOf('ObjOcc.event-color').getAttribute('fill')).toBe('#edbbdc')
-    expect(accentOf('ObjOcc.function').getAttribute('fill')).toBe('#009933')
-    // Catalog defaults are authored as RGB and remain byte-for-byte unchanged.
-    expect(accentOf('ObjOcc.default').getAttribute('fill')).toBe('#339900')
+    // Wave 9 P8 (fixplan §4.3): the decoded function-brush green `#009933` is corrected to the
+    // drift-correct `#339933` at the display seam; the catalog default now stores the same value.
+    expect(accentOf('ObjOcc.function').getAttribute('fill')).toBe('#339933')
+    expect(accentOf('ObjOcc.default').getAttribute('fill')).toBe('#339933')
     expect(surfaceOf('ObjOcc.app-color').getAttribute('fill')).toBe('#ffffff')
   })
 
@@ -163,8 +166,8 @@ describe('the canvas draws the occurrence style it was given', () => {
       document: documentWith([{ id: 'ObjOcc.1' }, { id: 'ObjOcc.2', fillColor: 'cccccc' }]),
       modelId: MODEL_ID
     })
-    // Unstyled: the registry's own fill for ST_FUNC (plan R1 DMT default).
-    expect(accentOf('ObjOcc.1').getAttribute('fill')).toBe('#339900')
+    // Unstyled: the registry's own fill for ST_FUNC (plan R1 DMT default; Wave 9 P8 green).
+    expect(accentOf('ObjOcc.1').getAttribute('fill')).toBe('#339933')
     // Styled: the occurrence's brush wins (§12.2 "source style data wins when present").
     expect(accentOf('ObjOcc.2').getAttribute('fill')).toBe('#cccccc')
     expect(surfaceOf('ObjOcc.2').getAttribute('fill')).toBe('#ffffff')
@@ -184,7 +187,9 @@ describe('the canvas draws the occurrence style it was given', () => {
       modelId: MODEL_ID
     })
     const surface = surfaceOf('ObjOcc.1')
-    expect(surface.getAttribute('stroke')).toBe('#009933')
+    // Wave 9 P8: the display correction is value-keyed on the decoded green `#009933` (in real AML
+    // only ever the function brush); this synthetic stroke uses `339900`, so it is corrected too.
+    expect(surface.getAttribute('stroke')).toBe('#339933')
     // strokeWidth 4 × ARIS_PEN_UNIT (2.646) — Wave 9 P2 pen-width scale.
     expect(surface.getAttribute('stroke-width')).toBe('10.584')
     expect(surface.getAttribute('stroke-dasharray')).toBe('6 4')
@@ -287,7 +292,7 @@ describe('an edited style changes the rendered output (§11.4 restyle occurrence
   it('repaints the shape the moment restyleOccurrence runs, and undo puts it back', () => {
     harness = bootCanvas({ document: documentWith([{ id: 'ObjOcc.1' }]), modelId: MODEL_ID })
     const before = accentOf('ObjOcc.1').getAttribute('fill')
-    expect(before).toBe('#339900')
+    expect(before).toBe('#339933')
 
     harness.canvas.authoring.restyleOccurrence('ObjOcc.1', { fillColor: '#00ff00' })
     expect(accentOf('ObjOcc.1').getAttribute('fill')).toBe('#00ff00')
@@ -313,7 +318,7 @@ describe('an edited style changes the rendered output (§11.4 restyle occurrence
     })
     expect(accentOf('ObjOcc.1').getAttribute('fill')).toBe('#cccccc')
     harness.canvas.authoring.restyleOccurrence('ObjOcc.1', { fillColor: null })
-    expect(accentOf('ObjOcc.1').getAttribute('fill')).toBe('#339900')
+    expect(accentOf('ObjOcc.1').getAttribute('fill')).toBe('#339933')
   })
 })
 

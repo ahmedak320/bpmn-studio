@@ -101,7 +101,7 @@ describe('ARIS symbol registry', () => {
     const surface = result.descriptor.drawing.elements[surfaceIndexes[0]!]
     const accent = result.descriptor.drawing.elements[accentIndexes[0]!]
     expect(surface && 'fill' in surface ? surface.fill : undefined).toBe('#ffffff')
-    expect(accent && 'fill' in accent ? accent.fill : undefined).toBe('#339900')
+    expect(accent && 'fill' in accent ? accent.fill : undefined).toBe('#339933')
   })
 
   it('implements the complete reviewed 36-presentation DMT fingerprint set', () => {

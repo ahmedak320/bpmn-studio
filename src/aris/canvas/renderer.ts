@@ -255,9 +255,33 @@ export function occurrenceColorToCss(raw: string | null | undefined): string | u
   if (raw === null || raw === undefined) return undefined
   const trimmed = raw.trim()
   if (trimmed === '' || trimmed === '-1') return undefined
-  if (trimmed.startsWith('#')) return trimmed
+  if (trimmed.startsWith('#')) return correctFunctionGreen(trimmed)
   if (!/^[0-9a-fA-F]{1,8}$/.test(trimmed)) return trimmed
-  return amlColorRefToCss(trimmed) ?? undefined
+  return correctFunctionGreen(amlColorRefToCss(trimmed) ?? undefined)
+}
+
+/**
+ * Wave 9 P8 (fixplan §4.3): CMYK-appearance correction for the ARIS function green.
+ *
+ * Every function occurrence carries an explicit authored AML brush `Color="339900"` (78× on
+ * ST_FUNC / ST_SYS_FUNC_ACT). That COLORREF byte-swaps to `#009933` — a gross outlier (RMSE 24
+ * vs the sampled print, red channel off by 41) against the original's measured function green,
+ * whose correct pre-CMYK sRGB is `#339933` (drift-model residual ≈ the ±5 anchor noise floor;
+ * see p8-analysis §3/§5). This is a DISPLAY-only correction applied at the single shared colour
+ * seam the canvas and the fidelity comparator both flow fills through: the decoded `#009933` is
+ * produced ONLY by the `339900` function brush — that value appears 0× as any other authored
+ * colour and `339900` decodes to nothing else — so keying the remap on it touches no other
+ * element. The stored/exported AML keeps the authored raw `339900` (the derived export is
+ * byte-addressed off the immutable original text); only the painted/compared colour is corrected.
+ * The general COLORREF codec (`amlColorRefToCss`) is deliberately left unchanged.
+ */
+const FUNCTION_GREEN_DECODED = '#009933'
+const FUNCTION_GREEN_CORRECTED = '#339933'
+
+function correctFunctionGreen(css: string | undefined): string | undefined {
+  return css !== undefined && css.toLowerCase() === FUNCTION_GREEN_DECODED
+    ? FUNCTION_GREEN_CORRECTED
+    : css
 }
 
 const DASHARRAY_BY_LINE_STYLE: Readonly<Record<string, string | null>> = Object.freeze({

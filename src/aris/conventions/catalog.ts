@@ -77,7 +77,11 @@ export const ARIS_CONVENTION_SYMBOLS: readonly ArisConventionSymbol[] = Object.f
     family: 'function',
     silhouette: 'card',
     icon: 'double-chevron',
-    defaultFill: '#339900',
+    // Wave 9 P8 (fixplan §4.3): the corrected function green. The AML brush is raw `339900`, whose
+    // COLORREF decode `#009933` is a print outlier (RMSE 24); `#339933` is the drift-correct sRGB
+    // (p8-analysis §5). Imported occurrences reach the same value via the display correction in
+    // `renderer.occurrenceColorToCss`; this is the legend/palette/new-object default.
+    defaultFill: '#339933',
     paletteGroup: 'flow',
     paletteOrder: 10,
     modelTypes: ['MT_EEPC'],
@@ -92,7 +96,8 @@ export const ARIS_CONVENTION_SYMBOLS: readonly ArisConventionSymbol[] = Object.f
     family: 'function',
     silhouette: 'card',
     icon: 'application-window',
-    defaultFill: '#339900',
+    // Wave 9 P8 (fixplan §4.3): corrected function green — see the ST_FUNC row above.
+    defaultFill: '#339933',
     paletteGroup: 'flow',
     paletteOrder: 11,
     modelTypes: ['MT_EEPC'],
@@ -185,7 +190,8 @@ export const ARIS_CONVENTION_SYMBOLS: readonly ArisConventionSymbol[] = Object.f
     family: 'valueChain',
     silhouette: 'value-chain-successor',
     icon: 'double-chevron',
-    defaultFill: '#339900',
+    // Wave 9 P8 (fixplan §4.3): corrected function green — see the ST_FUNC row above.
+    defaultFill: '#339933',
     paletteGroup: 'flow',
     paletteOrder: 13,
     modelTypes: ['MT_VAL_ADD_CHN_DGM'],
@@ -200,7 +206,8 @@ export const ARIS_CONVENTION_SYMBOLS: readonly ArisConventionSymbol[] = Object.f
     family: 'valueChain',
     silhouette: 'value-chain-start',
     icon: 'double-chevron',
-    defaultFill: '#339900',
+    // Wave 9 P8 (fixplan §4.3): corrected function green — see the ST_FUNC row above.
+    defaultFill: '#339933',
     paletteGroup: 'flow',
     paletteOrder: 12.5,
     modelTypes: ['MT_VAL_ADD_CHN_DGM'],
@@ -261,7 +268,8 @@ export const ARIS_CONVENTION_SYMBOLS: readonly ArisConventionSymbol[] = Object.f
     family: 'orgPeople',
     silhouette: 'card',
     icon: 'committee-team',
-    defaultFill: '#996600',
+    // Wave 9 P8: store the DECODED sRGB (raw COLORREF `996600` → `#006699`) — see the blue rows.
+    defaultFill: '#006699',
     paletteGroup: 'org',
     paletteOrder: 86.5,
     modelTypes: ['MT_EEPC'],
@@ -277,7 +285,9 @@ export const ARIS_CONVENTION_SYMBOLS: readonly ArisConventionSymbol[] = Object.f
     family: 'orgPeople',
     silhouette: 'card',
     icon: 'person',
-    defaultFill: '#d7c49d',
+    // Wave 9 P8: store the DECODED sRGB (raw COLORREF `d7c49d` → `#9dc4d7`) so the legend/palette
+    // match the imported occurrences, which already render the decoded value.
+    defaultFill: '#9dc4d7',
     paletteGroup: 'org',
     paletteOrder: 83,
     modelTypes: ['MT_EEPC'],
@@ -292,7 +302,9 @@ export const ARIS_CONVENTION_SYMBOLS: readonly ArisConventionSymbol[] = Object.f
     family: 'orgPeople',
     silhouette: 'card',
     icon: 'person',
-    defaultFill: '#d7c49d',
+    // Wave 9 P8: store the DECODED sRGB (raw COLORREF `d7c49d` → `#9dc4d7`) so the legend/palette
+    // match the imported occurrences, which already render the decoded value.
+    defaultFill: '#9dc4d7',
     paletteGroup: 'org',
     paletteOrder: 80,
     modelTypes: ['MT_EEPC'],
