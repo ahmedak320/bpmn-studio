@@ -44,7 +44,7 @@ async function createBlankEpc(page: Page, name: string): Promise<void> {
   await expect(page.locator('[data-orbitpm-aris-canvas]')).toBeVisible()
 }
 
-test('rail tools: tabs, no floating palette, and docked click plus drag placement', async ({
+test('rail tools: docked placement, hover title, friendly details, right-click change-type', async ({
   page
 }) => {
   await page.setViewportSize({ width: 1500, height: 950 })
@@ -71,15 +71,26 @@ test('rail tools: tabs, no floating palette, and docked click plus drag placemen
     canvasBox!.x + canvasBox!.width * 0.45,
     canvasBox!.y + canvasBox!.height * 0.6
   )
-  await expect(
-    canvas.locator(
-      'g.djs-element[data-element-id^="ObjOcc."]:has([data-aris-catalog-id="information.log"])'
-    )
-  ).toHaveCount(1)
+  const logShape = canvas.locator(
+    'g.djs-element[data-element-id^="ObjOcc."]:has([data-aris-catalog-id="information.log"])'
+  )
+  await expect(logShape).toHaveCount(1)
   await expect(detailsTab).toHaveAttribute('aria-selected', 'true')
-  await expect(rail.locator('[data-orbitpm-aris-details]')).toBeVisible()
+  const details = rail.locator('[data-orbitpm-aris-details]')
+  await expect(details).toBeVisible()
+  await expect(details).toContainText('Log block')
+  await expect(details).not.toContainText('OT_INFO_CARR')
 
   await page.keyboard.press('Escape')
+  await page.mouse.click(
+    canvasBox!.x + canvasBox!.width * 0.2,
+    canvasBox!.y + canvasBox!.height * 0.2
+  )
+  await logShape.hover()
+  await expect(page.locator('[data-orbitpm-aris-type-tip]')).toContainText('Log block', {
+    timeout: 2000
+  })
+
   await toolsTab.click()
   await tools.locator('.aris-library-search__input').fill('sms')
   const sms = tools.locator('button[data-aris-catalog-id="information.sms"]')
@@ -98,4 +109,45 @@ test('rail tools: tabs, no floating palette, and docked click plus drag placemen
       'g.djs-element[data-element-id^="ObjOcc."]:has([data-aris-catalog-id="information.sms"])'
     )
   ).toHaveCount(1)
+
+  await page.keyboard.press('Escape')
+  await toolsTab.click()
+  await tools.locator('.aris-library-search__input').fill('event')
+  await tools.locator('button[data-aris-catalog-id="epc.event"]').click()
+  await page.mouse.click(
+    canvasBox!.x + canvasBox!.width * 0.35,
+    canvasBox!.y + canvasBox!.height * 0.3
+  )
+  const eventShape = canvas.locator(
+    'g.djs-element[data-element-id^="ObjOcc."]:has([data-aris-catalog-id="epc.event"])'
+  )
+  await expect(eventShape).toHaveCount(1)
+  await page.keyboard.press('Escape')
+  await eventShape.click()
+
+  const contextPad = canvas.locator('.djs-context-pad.open')
+  await expect(contextPad).toBeVisible()
+  await contextPad
+    .locator('[data-action^="quick-connect.outgoing.ct-activ-1.epc-function."]')
+    .click()
+  const connections = canvas.locator('.djs-connection[data-element-id]')
+  await expect(connections).toHaveCount(1)
+  const connectionsBeforeChange = await connections.count()
+
+  await eventShape.click({ button: 'right' })
+  const menu = page.getByRole('menu', { name: 'Element actions' })
+  await menu.getByRole('menuitem', { name: 'Change object type…' }).click()
+  await page
+    .getByRole('dialog', { name: 'Change object type' })
+    .locator('button[data-aris-catalog-id="epc.function"]')
+    .click()
+
+  await expect(connections).toHaveCount(connectionsBeforeChange)
+  await expect(details).toContainText('Function block')
+  await expect(page.locator('[data-orbitpm-aris-epc-finding="epc.alternation"]')).toContainText(
+    'Function'
+  )
+  await page.locator('[data-orbitpm-aris-undo]').click()
+  await expect(connections).toHaveCount(connectionsBeforeChange)
+  await expect(details).toContainText('Event block')
 })

@@ -21,6 +21,7 @@ export type ArisCommandKind =
   | 'resizeOccurrence'
   | 'restyleOccurrence'
   | 'setOccurrenceSymbol'
+  | 'setDefinitionType'
   | 'setAttributeOccurrencePlacement'
   | 'createDefinition'
   | 'createOccurrence'
@@ -580,6 +581,34 @@ function applySetOccurrenceSymbol(
   )
 }
 
+function applySetDefinitionType(
+  document: ArisWorkingDocument,
+  command: ArisEditCommand
+): ArisWorkingDocument {
+  const payload = command.after as {
+    readonly definitionId: string
+    readonly type: string
+    readonly defaultSymbol: string | null
+  }
+  const definition = assertDefined(
+    document.objectDefinitions.get(payload.definitionId),
+    'object definition',
+    command
+  )
+  return {
+    ...document,
+    objectDefinitions: replaceMap(
+      document.objectDefinitions,
+      payload.definitionId,
+      Object.freeze({
+        ...definition,
+        type: payload.type,
+        defaultSymbol: payload.defaultSymbol
+      })
+    )
+  }
+}
+
 function applySetAttributeOccurrencePlacement(
   document: ArisWorkingDocument,
   command: ArisEditCommand
@@ -939,6 +968,7 @@ const APPLIERS: Readonly<
   resizeOccurrence: applyResizeOccurrence,
   restyleOccurrence: applyRestyleOccurrence,
   setOccurrenceSymbol: applySetOccurrenceSymbol,
+  setDefinitionType: applySetDefinitionType,
   setAttributeOccurrencePlacement: applySetAttributeOccurrencePlacement,
   createDefinition: applyCreateDefinition,
   createOccurrence: applyCreateOccurrence,
@@ -970,6 +1000,15 @@ function validatePreconditions(command: ArisEditCommand, document: ArisWorkingDo
     case 'setAttributeOccurrencePlacement': {
       const payload = command.after as { readonly occurrenceId: string }
       assertDefined(findOccurrence(document, payload.occurrenceId), 'occurrence', command)
+      break
+    }
+    case 'setDefinitionType': {
+      const payload = command.after as { readonly definitionId: string }
+      assertDefined(
+        document.objectDefinitions.get(payload.definitionId),
+        'object definition',
+        command
+      )
       break
     }
     case 'setConnectionRoute':

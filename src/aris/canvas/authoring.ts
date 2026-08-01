@@ -68,6 +68,7 @@ import {
   restyleOccurrenceCommand,
   setAttributeCommand,
   setConnectionRouteCommand,
+  setDefinitionTypeCommand,
   setLocalizedNameCommand,
   setModelAssignmentCommand,
   setOccurrenceSymbolCommand,
@@ -89,6 +90,12 @@ export interface CreateObjectResult {
   readonly definitionId: string
   readonly occurrenceId: string
   readonly commands: readonly ArisEditCommand[]
+}
+
+export interface ChangeObjectTypeTarget {
+  readonly objectType: string
+  readonly symbolNum: string
+  readonly catalogId?: string
 }
 
 /** What the UI must confirm before an object definition disappears. */
@@ -401,6 +408,67 @@ export class ArisAuthoring {
       definitionId: newDefinitionId,
       occurrenceId: newOccurrenceId,
       commands
+    })
+  }
+
+  /** Change a definition's type everywhere while retaining its identity and metadata. */
+  changeObjectType(occurrenceId: string, target: ChangeObjectTypeTarget): void {
+    const document = this.store.document
+    const occurrence = requireOccurrence(document, occurrenceId)
+    const definition = requireObjectDefinition(document, occurrence.definitionId)
+
+    if (definition.type === target.objectType) {
+      if (occurrence.symbol !== target.symbolNum) {
+        this.setOccurrenceSymbol(occurrenceId, target.symbolNum)
+      }
+      return
+    }
+    if (!isSupportedObjectType(target.objectType)) {
+      throw new ArisCanvasCommandError(
+        'unsupported-object-type',
+        `${target.objectType} is not authorable.`
+      )
+    }
+    if (this.canReplaceNewObject(occurrenceId)) {
+      this.replaceNewObject(occurrenceId, target)
+      return
+    }
+
+    const modelTypeOf = (modelId: string): string => document.models.get(modelId)?.type ?? 'MT_EEPC'
+    const oldDescriptor = resolveArisSymbol({
+      modelType: modelTypeOf(occurrence.modelId),
+      objectType: definition.type,
+      symbolNum: occurrence.symbol
+    }).descriptor
+    const newDescriptor = resolveArisSymbol({
+      modelType: modelTypeOf(occurrence.modelId),
+      objectType: target.objectType,
+      symbolNum: target.symbolNum
+    }).descriptor
+
+    this.bridge.execute('change-object-type', (doc, context) => {
+      const commands: ArisEditCommand[] = [
+        setDefinitionTypeCommand(context, doc, definition.id, {
+          type: target.objectType,
+          defaultSymbol: target.symbolNum
+        })
+      ]
+      for (const model of doc.models.values()) {
+        for (const sibling of model.occurrences) {
+          if (sibling.definitionId !== definition.id) continue
+          commands.push(setOccurrenceSymbolCommand(context, doc, sibling.id, target.symbolNum))
+          const bounds = sibling.bounds
+          if (
+            bounds.width === oldDescriptor.defaultBounds.width &&
+            bounds.height === oldDescriptor.defaultBounds.height
+          ) {
+            commands.push(
+              resizeOccurrenceCommand(context, doc, sibling.id, newDescriptor.defaultBounds)
+            )
+          }
+        }
+      }
+      return transactionCommand(context, commands)
     })
   }
 

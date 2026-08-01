@@ -133,6 +133,62 @@ describe('command system', () => {
     expect(next.document.models.get('m1')!.occurrences[0].definitionId).toBe('od1')
   })
 
+  it('changes a definition type and default symbol reversibly', async () => {
+    const { stack } = await makeStack()
+    const command: ArisEditCommand = {
+      commandId: 'change-type-1',
+      baseRevision: 0,
+      kind: 'setDefinitionType',
+      affectedSourceIds: ['od1'],
+      before: { definitionId: 'od1', type: 'OT_FUNC', defaultSymbol: 'ST_FUNC' },
+      after: { definitionId: 'od1', type: 'OT_EVT', defaultSymbol: 'ST_EVT' },
+      origin: 'user'
+    }
+
+    const afterApply = stack.apply(command)
+    expect(afterApply.document.objectDefinitions.get('od1')).toMatchObject({
+      type: 'OT_EVT',
+      defaultSymbol: 'ST_EVT'
+    })
+
+    const afterUndo = afterApply.undo()
+    expect(afterUndo.document.objectDefinitions.get('od1')).toMatchObject({
+      type: 'OT_FUNC',
+      defaultSymbol: 'ST_FUNC'
+    })
+  })
+
+  it('guards setDefinitionType references and revisions', async () => {
+    const { stack } = await makeStack()
+    const command = (definitionId: string, baseRevision: number): ArisEditCommand => ({
+      commandId: 'change-type-guard',
+      baseRevision,
+      kind: 'setDefinitionType',
+      affectedSourceIds: [definitionId],
+      before: { definitionId, type: 'OT_FUNC', defaultSymbol: 'ST_FUNC' },
+      after: { definitionId, type: 'OT_EVT', defaultSymbol: 'ST_EVT' },
+      origin: 'user'
+    })
+
+    let missingError: unknown
+    try {
+      stack.apply(command('missing-definition', 0))
+    } catch (error) {
+      missingError = error
+    }
+    expect(missingError).toBeInstanceOf(ArisCommandError)
+    expect((missingError as ArisCommandError).code).toBe('missing-reference')
+
+    let revisionError: unknown
+    try {
+      stack.apply(command('od1', 99))
+    } catch (error) {
+      revisionError = error
+    }
+    expect(revisionError).toBeInstanceOf(ArisCommandError)
+    expect((revisionError as ArisCommandError).code).toBe('stale-revision')
+  })
+
   it('groups multi-object operations into one transaction', async () => {
     const { stack } = await makeStack()
     const transaction: ArisEditCommand = {

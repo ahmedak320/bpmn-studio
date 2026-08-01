@@ -25,8 +25,7 @@ import {
 
 import { getDir, t } from '../../i18n'
 import type { ArisCanvas } from '../canvas/ArisCanvas'
-import type { ArisBusinessObject } from '../canvas/elements'
-import { rootElementId } from '../canvas/elements'
+import { arisBusinessObject, rootElementId, type ArisBusinessObject } from '../canvas/elements'
 import type { ArisRenderer } from '../canvas/renderer'
 import type { ArisCleanLayoutEngine } from '../canvas/layoutSeam'
 import type { ArisChatCommand } from '../chat/patchSchema'
@@ -74,6 +73,7 @@ import {
 import { PaneResizer } from '../../common/PaneResizer'
 import { ArisDetailsRail, type ArisDetailsRailHighlight } from './ArisDetailsRail'
 import { ArisToolsPanel } from './ArisToolsPanel'
+import { ArisCanvasContextMenu } from './ArisCanvasContextMenu'
 import {
   ARIS_RAIL_MAX_WIDTH,
   ARIS_RAIL_MIN_WIDTH,
@@ -192,6 +192,13 @@ const EMPTY_SELECTION: ArisCanvasSelectionState = Object.freeze({
   selectedIds: Object.freeze([])
 })
 
+interface CanvasContextMenuState {
+  readonly elementId: string
+  readonly x: number
+  readonly y: number
+  readonly returnFocus: HTMLElement | null
+}
+
 const ARIS_RAIL_TABS: readonly ArisRailTab[] = Object.freeze(['details', 'tools'])
 
 export function ArisStudioTab({
@@ -235,6 +242,7 @@ export function ArisStudioTab({
   // Bumped when the canvas becomes ready, so the content-language effect and the
   // translate controller re-run against the live canvas.
   const [canvasTick, setCanvasTick] = useState(0)
+  const [canvasContextMenu, setCanvasContextMenu] = useState<CanvasContextMenuState | null>(null)
   const translateRef = useRef<ArisTranslateControllerHandle | null>(null)
   const [autoTranslateState, setAutoTranslateState] = useState<ArisAutoTranslateState>('idle')
   const [fixDialogOpen, setFixDialogOpen] = useState(false)
@@ -320,6 +328,34 @@ export function ArisStudioTab({
   const getCanvas = useCallback((): ArisCanvas | null => {
     void canvasTick
     return canvasRef.current
+  }, [canvasTick])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    setCanvasContextMenu(null)
+    if (!canvas) return
+    const handler = (rawEvent: unknown): void => {
+      const event = rawEvent as {
+        readonly element?: { readonly id?: string; readonly businessObject?: unknown }
+        readonly originalEvent?: {
+          readonly clientX?: number
+          readonly clientY?: number
+          preventDefault: () => void
+        }
+      }
+      const element = event.element
+      if (!element?.id || arisBusinessObject(element)?.kind !== 'occurrence') return
+      event.originalEvent?.preventDefault()
+      const activeElement = document.activeElement
+      setCanvasContextMenu({
+        elementId: element.id,
+        x: event.originalEvent?.clientX ?? 0,
+        y: event.originalEvent?.clientY ?? 0,
+        returnFocus: activeElement instanceof HTMLElement ? activeElement : null
+      })
+    }
+    canvas.eventBus.on('element.contextmenu', handler)
+    return () => canvas.eventBus.off('element.contextmenu', handler)
   }, [canvasTick])
 
   // Keep the toolbar badge byte-for-byte consistent with the review dialog rows.
@@ -1230,6 +1266,18 @@ export function ArisStudioTab({
           </div>
         )}
       </div>
+
+      {canvasContextMenu && canvasRef.current && (
+        <ArisCanvasContextMenu
+          canvas={canvasRef.current}
+          elementId={canvasContextMenu.elementId}
+          x={canvasContextMenu.x}
+          y={canvasContextMenu.y}
+          returnFocus={canvasContextMenu.returnFocus}
+          onClose={() => setCanvasContextMenu(null)}
+          onToast={onToast}
+        />
+      )}
 
       <button
         type="button"

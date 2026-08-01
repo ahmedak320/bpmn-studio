@@ -71,6 +71,7 @@ import { ArisCommandBridge } from './commandBridge'
 import { ArisContextPadProvider } from './contextPadProvider'
 import { ArisDocumentStore } from './documentStore'
 import { HeadlessPalette } from './headlessPalette'
+import { ArisHoverTooltip } from './hoverTooltip'
 import { ArisModeling } from './arisModeling'
 import { ArisPaletteProvider } from './paletteProvider'
 import { ArisQuickPick } from './quickPick'
@@ -101,6 +102,7 @@ export const ArisCanvasModule: DiagramModuleDeclaration = {
     'palette',
     'arisPaletteProvider',
     'arisQuickPick',
+    'arisHoverTooltip',
     'arisContextPadProvider',
     'arisSelectionHighlight',
     'arisClipboard',
@@ -122,6 +124,7 @@ export const ArisCanvasModule: DiagramModuleDeclaration = {
   palette: ['type', HeadlessPalette],
   arisPaletteProvider: ['type', ArisPaletteProvider],
   arisQuickPick: ['type', ArisQuickPick],
+  arisHoverTooltip: ['type', ArisHoverTooltip],
   arisContextPadProvider: ['type', ArisContextPadProvider],
   arisSelectionHighlight: ['type', ArisSelectionHighlight],
   arisClipboard: ['type', ArisClipboard],

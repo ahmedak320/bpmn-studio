@@ -321,6 +321,26 @@ export function setOccurrenceSymbolCommand(
   )
 }
 
+export function setDefinitionTypeCommand(
+  context: ArisCommandContext,
+  document: ArisWorkingDocument,
+  definitionId: string,
+  target: { readonly type: string; readonly defaultSymbol: string }
+): ArisEditCommand {
+  const definition = requireObjectDefinition(document, definitionId)
+  return build(
+    context,
+    'setDefinitionType',
+    [definitionId],
+    Object.freeze({
+      definitionId,
+      type: definition.type,
+      defaultSymbol: definition.defaultSymbol
+    }),
+    Object.freeze({ definitionId, ...target })
+  )
+}
+
 export function deleteOccurrenceCommand(
   context: ArisCommandContext,
   document: ArisWorkingDocument,

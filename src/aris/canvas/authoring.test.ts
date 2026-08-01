@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ArisCanvasCommandError } from './commandBridge'
 import { findConnectionOccurrence, findFreeText, findLane, findOccurrence } from './commandFactory'
@@ -473,6 +473,108 @@ describe('authoring operations (Section 11.4)', () => {
     expect(canvas.document.objectDefinitions.get(replacement.definitionId)?.type).toBe(
       'OT_ORG_UNIT'
     )
+  })
+
+  it('changes a shared connected object type without losing identity or authored data', () => {
+    const { document, first, second } = twoModelDocument()
+    harness = bootCanvas({ document, modelId: first })
+    const { canvas } = harness
+    const changed = canvas.authoring.createObject({
+      objectType: 'OT_FUNC',
+      name: 'Approve',
+      localeId: 'en-US',
+      position: { x: 40, y: 60 }
+    })
+    canvas.authoring.renameDefinition(changed.definitionId, 'اعتماد', 'ar-AE')
+    canvas.authoring.setDefinitionAttribute(changed.definitionId, 'AT_DESC', [
+      { localeId: 'en-US', text: 'Approve the request' }
+    ])
+    const source = canvas.authoring.createObject({
+      objectType: 'OT_EVT',
+      name: 'Requested',
+      position: { x: 40, y: 260 }
+    })
+    const connectionId = canvas.authoring.connect(source.occurrenceId, changed.occurrenceId)
+
+    canvas.setActiveModel(second)
+    const siblingId = canvas.authoring.createAdditionalOccurrence({
+      definitionId: changed.definitionId,
+      position: { x: 300, y: 100 },
+      size: { width: 160, height: 90 }
+    })
+    canvas.setActiveModel(first)
+
+    const beforeDefinition = canvas.document.objectDefinitions.get(changed.definitionId)!
+    const beforeConnection = findConnectionOccurrence(canvas.document, connectionId)
+    const commandCountBefore = canvas.commandLog.length
+
+    canvas.authoring.changeObjectType(changed.occurrenceId, {
+      objectType: 'OT_EVT',
+      symbolNum: 'ST_EV',
+      catalogId: 'epc.event'
+    })
+
+    const afterDefinition = canvas.document.objectDefinitions.get(changed.definitionId)
+    expect(afterDefinition).toMatchObject({ type: 'OT_EVT', defaultSymbol: 'ST_EV' })
+    expect(afterDefinition?.attributes).toEqual(beforeDefinition.attributes)
+    expect(afterDefinition?.names).toEqual(beforeDefinition.names)
+    expect(findOccurrence(canvas.document, changed.occurrenceId)).toMatchObject({
+      symbol: 'ST_EV',
+      bounds: { width: 100, height: 60 }
+    })
+    expect(findOccurrence(canvas.document, siblingId)).toMatchObject({
+      symbol: 'ST_EV',
+      bounds: { width: 160, height: 90 }
+    })
+    expect(findConnectionOccurrence(canvas.document, connectionId)).toEqual(beforeConnection)
+    expect(canvas.commandLog).toHaveLength(commandCountBefore + 1)
+    expect(canvas.commandLog.at(-1)?.kind).toBe('transaction')
+
+    canvas.undo()
+    expect(canvas.document.objectDefinitions.get(changed.definitionId)).toMatchObject({
+      type: 'OT_FUNC',
+      defaultSymbol: 'ST_FUNC'
+    })
+    expect(findOccurrence(canvas.document, changed.occurrenceId)).toMatchObject({
+      symbol: 'ST_FUNC',
+      bounds: { width: 100, height: 70 }
+    })
+    expect(findOccurrence(canvas.document, siblingId)).toMatchObject({
+      symbol: 'ST_FUNC',
+      bounds: { width: 160, height: 90 }
+    })
+    expect(findConnectionOccurrence(canvas.document, connectionId)).toEqual(beforeConnection)
+
+    expect(() =>
+      canvas.authoring.changeObjectType(changed.occurrenceId, {
+        objectType: 'OT_NOT_SUPPORTED',
+        symbolNum: 'ST_UNKNOWN'
+      })
+    ).toThrow(ArisCanvasCommandError)
+
+    const setSymbol = vi.spyOn(canvas.authoring, 'setOccurrenceSymbol').mockImplementation(() => {})
+    canvas.authoring.changeObjectType(changed.occurrenceId, {
+      objectType: 'OT_FUNC',
+      symbolNum: 'ST_SYS_FUNC_ACT'
+    })
+    expect(setSymbol).toHaveBeenCalledWith(changed.occurrenceId, 'ST_SYS_FUNC_ACT')
+    setSymbol.mockRestore()
+
+    const pristine = canvas.authoring.createObject({
+      objectType: 'OT_PERS_TYPE',
+      position: { x: 500, y: 40 }
+    })
+    const replace = vi.spyOn(canvas.authoring, 'replaceNewObject')
+    canvas.authoring.changeObjectType(pristine.occurrenceId, {
+      objectType: 'OT_ORG_UNIT',
+      symbolNum: 'ST_ORG_UNIT_1',
+      catalogId: 'organization.org-unit'
+    })
+    expect(replace).toHaveBeenCalledWith(pristine.occurrenceId, {
+      objectType: 'OT_ORG_UNIT',
+      symbolNum: 'ST_ORG_UNIT_1',
+      catalogId: 'organization.org-unit'
+    })
   })
 
   it('refuses to replace a shared or connected object', () => {
