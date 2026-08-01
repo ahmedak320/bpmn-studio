@@ -83,13 +83,19 @@ describe('buildArisLegend — layout and content', () => {
     expect(legend.tiles.find((tile) => tile.catalogId === 'epc.function')?.nameEn).toBe('Function')
   })
 
-  it('labels the RACI rows with their convention names', () => {
+  it('labels the RACI rows bilingually from the registered dictionaries', () => {
     const legend = buildArisLegend(BOUNDS)
-    expect(legend.raci.rows.map((row) => row.label)).toEqual([
+    expect(legend.raci.rows.map((row) => row.labelEn)).toEqual([
       'Responsible',
       'Approval',
       'Consulted',
       'Informed'
+    ])
+    expect(legend.raci.rows.map((row) => row.labelAr)).toEqual([
+      'مسؤول عن التنفيذ',
+      'الموافقة والاعتماد',
+      'يستشار عند التنفيذ',
+      'يُعلم بالتنفيذ أو النتيجة'
     ])
   })
 })
@@ -141,5 +147,40 @@ describe('drawArisLegend — SVG output', () => {
     for (const letter of ['R', 'A', 'C', 'I']) {
       expect(raci!.textContent).toContain(letter)
     }
+  })
+
+  it('draws each RACI row bilingual and end-anchored with the letter on the right', () => {
+    const legend = buildArisLegend(BOUNDS)
+    const parent = document.createElementNS(SVG_NS, 'g')
+    drawArisLegend(parent, legend)
+    const raci = parent.querySelector('[data-aris-print-frame-raci]')!
+    // Document order: the title text first, then per row a letter node
+    // followed by its bilingual label node (mirrors the append order below).
+    const texts = [...raci.querySelectorAll('text')]
+    legend.raci.rows.forEach((row, index) => {
+      const letterNode = texts[1 + index * 2]!
+      const labelNode = texts[2 + index * 2]!
+      expect(letterNode.textContent).toBe(`${row.letter}:`)
+      expect(labelNode.textContent).toBe(`${row.labelAr}/${row.labelEn}`)
+      expect(labelNode.textContent).toContain('/')
+      // RTL layout: the bold badge letter sits to the right of its
+      // end-anchored bilingual label, matching the printed legend.
+      expect(Number(letterNode.getAttribute('x'))).toBeGreaterThan(
+        Number(labelNode.getAttribute('x'))
+      )
+      expect(labelNode.getAttribute('text-anchor')).toBe('end')
+      expect(labelNode.getAttribute('direction')).toBe('rtl')
+    })
+  })
+
+  it('draws the bilingual RACI title sized to fit the box', () => {
+    const legend = buildArisLegend(BOUNDS)
+    const parent = document.createElementNS(SVG_NS, 'g')
+    drawArisLegend(parent, legend)
+    const raci = parent.querySelector('[data-aris-print-frame-raci]')!
+    const title = raci.querySelectorAll('text')[0]!
+    expect(title.textContent).toBe(ar['aris.printFrame.raci.title'])
+    const rowHeight = legend.raci.bounds.height / (legend.raci.rows.length + 1)
+    expect(Number(title.getAttribute('font-size'))).toBeCloseTo(rowHeight * 0.34, 3)
   })
 })

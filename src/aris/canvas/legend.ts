@@ -45,10 +45,11 @@ export interface ArisLegendTile {
   readonly bounds: PrintFrameRect
 }
 
-/** One row of the RACI key: the badge letter and its label. */
+/** One row of the RACI key: the badge letter and its bilingual label. */
 export interface ArisLegendRaciRow {
   readonly letter: 'R' | 'A' | 'C' | 'I'
-  readonly label: string
+  readonly labelEn: string
+  readonly labelAr: string
 }
 
 /** The laid-out legend: symbol tiles plus the RACI key block. */
@@ -168,12 +169,14 @@ export function buildArisLegend(bounds: PrintFrameRect): ArisLegendModel {
         height: bounds.height - inset * 2
       }),
       rows: Object.freeze(
-        RACI_ROWS.map((row) =>
-          Object.freeze({
+        RACI_ROWS.map((row) => {
+          const key = row.labelKey as Key
+          return Object.freeze({
             letter: row.letter,
-            label: arisPrintFrameText(row.labelKey)
+            labelEn: en[key] ?? arisPrintFrameText(row.labelKey),
+            labelAr: ar[key] ?? ''
           })
-        )
+        })
       )
     })
   })
@@ -436,27 +439,40 @@ export function drawArisLegend(parent: SVGElement, legend: ArisLegendModel): voi
   svgAppend(
     raciGroup,
     drawText(
-      'RACI',
+      ar['aris.printFrame.raci.title'],
       raci.bounds.x + raci.bounds.width / 2,
       raci.bounds.y + rowHeight / 2,
-      rowHeight * 0.42,
+      rowHeight * 0.34,
       {
         bold: true,
         fill: LEGEND_RACI_STROKE
       }
     )
   )
+  // The printed legend end-anchors each bilingual «Arabic/English» row with
+  // the bold R/A/C/I badge at the right edge — an RTL reading order — rather
+  // than the LTR "letter, then label" layout an English-only key would use.
   raci.rows.forEach((row, index) => {
     const cy = raci.bounds.y + rowHeight * (index + 1.5)
     svgAppend(
       raciGroup,
-      drawText(row.letter, raci.bounds.x + rowHeight * 0.55, cy, rowHeight * 0.42, { bold: true })
+      drawText(
+        `${row.letter}:`,
+        raci.bounds.x + raci.bounds.width - rowHeight * 0.55,
+        cy,
+        rowHeight * 0.42,
+        { bold: true }
+      )
     )
     svgAppend(
       raciGroup,
-      drawText(`${row.label} :`, raci.bounds.x + rowHeight * 0.95, cy, rowHeight * 0.34, {
-        anchor: 'start'
-      })
+      drawText(
+        `${row.labelAr}/${row.labelEn}`,
+        raci.bounds.x + raci.bounds.width - rowHeight * 1.05,
+        cy,
+        rowHeight * 0.34,
+        { anchor: 'end' }
+      )
     )
   })
   svgAppend(group, raciGroup)
