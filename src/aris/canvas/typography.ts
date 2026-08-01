@@ -119,18 +119,42 @@ function wrapParagraphLines(
   weight: ArisTextWeight
 ): readonly string[] {
   if (maxWidth === null) return Object.freeze([paragraph])
-  if (measureTextWidth(paragraph, fontSize, weight) <= maxWidth) return Object.freeze([paragraph])
+  // 4% reserve — Arabic advance tables are estimates (textWrap.ts:258-260), so
+  // a run of them wraps against 96% of the box to keep the shaped glyphs inside.
+  const width = /\p{Script=Arabic}/u.test(paragraph) ? maxWidth * 0.96 : maxWidth
+  if (measureTextWidth(paragraph, fontSize, weight) <= width) return Object.freeze([paragraph])
   const words = paragraph.split(/\s+/).filter((word) => word.length > 0)
   const lines: string[] = []
   let current = ''
   for (const word of words) {
     const candidate = current === '' ? word : `${current} ${word}`
-    if (current !== '' && measureTextWidth(candidate, fontSize, weight) > maxWidth) {
+    if (measureTextWidth(candidate, fontSize, weight) <= width) {
+      current = candidate
+      continue
+    }
+    if (current !== '') {
       lines.push(current)
+      current = ''
+    }
+    if (measureTextWidth(word, fontSize, weight) <= width) {
       current = word
       continue
     }
-    current = candidate
+    // A single word is wider than the box: hard-break it by character (ported
+    // from the older engine's wrapSingleLine, textWrap.ts:377-398).
+    let chunk = ''
+    let chunkWidth = 0
+    for (const ch of word) {
+      const w = measureTextWidth(ch, fontSize, weight)
+      if (chunk !== '' && chunkWidth + w > width) {
+        lines.push(chunk)
+        chunk = ''
+        chunkWidth = 0
+      }
+      chunk += ch
+      chunkWidth += w
+    }
+    current = chunk
   }
   if (current !== '') lines.push(current)
   return Object.freeze(lines.length === 0 ? [''] : lines)

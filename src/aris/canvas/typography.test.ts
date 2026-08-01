@@ -11,6 +11,7 @@ import {
   labelFontWeight,
   layoutAnchoredLines,
   layoutLabelLines,
+  measureTextWidth,
   normalizeLabelParagraphs,
   resolveAttributePlacementFont,
   resolveFreeTextFont,
@@ -55,11 +56,48 @@ describe('wrapLabelLines', () => {
   it('defaults to the regular Helvetica table, and measures wider (more wraps) with weight="bold"', () => {
     const text = 'Approve the User Terms and Conditions'
     // Un-weighted call keeps today's behavior: regular table, same as passing 'regular'.
-    expect(wrapLabelLines(text, 170, 35.278)).toEqual(wrapLabelLines(text, 170, 35.278, 'regular'))
-    const regularLines = wrapLabelLines(text, 170, 35.278, 'regular')
-    const boldLines = wrapLabelLines(text, 170, 35.278, 'bold')
+    // Width 240 keeps every individual word inside the box (no hard char-break),
+    // so the wider bold advances show purely as one extra word-wrap.
+    expect(wrapLabelLines(text, 240, 35.278)).toEqual(wrapLabelLines(text, 240, 35.278, 'regular'))
+    const regularLines = wrapLabelLines(text, 240, 35.278, 'regular')
+    const boldLines = wrapLabelLines(text, 240, 35.278, 'bold')
     expect(boldLines.length).toBeGreaterThan(regularLines.length)
     expect(boldLines.join(' ')).toBe(text)
+  })
+
+  it('hard-breaks a single unbreakable token wider than the box, every line fitting the width', () => {
+    // `Laws/Policies/Regulations` is the reference free-text title's longest
+    // token; with no whitespace to wrap on, the greedy word loop would leave
+    // it a single overflowing line without a per-character fallback.
+    const lines = wrapLabelLines('Laws/Policies/Regulations', 60, 12)
+    expect(lines.length).toBeGreaterThan(1)
+    for (const line of lines) {
+      expect(measureTextWidth(line, 12)).toBeLessThanOrEqual(60)
+    }
+  })
+
+  it('hard-breaks an overlong Arabic token into chunks that each fit the width', () => {
+    // A 30-char Arabic run with no spaces (the reserve keeps chunks inside 96%
+    // of the box, so the painted glyphs never spill past the estimated edge).
+    const token = 'مططططططططططططططططططططططططططط' // 29 medium+narrow glyphs, no whitespace
+    const lines = wrapLabelLines(token, 50, 12)
+    expect(lines.length).toBeGreaterThan(1)
+    for (const line of lines) {
+      expect(measureTextWidth(line, 12)).toBeLessThanOrEqual(50)
+    }
+  })
+
+  it('wraps an Arabic paragraph earlier than a same-width Latin control', () => {
+    // Same box, same size: the 4% Arabic reserve plus wider medium-tier
+    // advances make the Arabic run break into at least as many lines as the
+    // Latin control, and strictly more for these matched-length strings.
+    const width = 220
+    const size = 20
+    const arabic = 'قرار رئيس دائرة التخطيط العمراني والبلدية المحلية لمدينة'
+    const latin = 'aa aa aa aa aa aa aa aa aa aa aa'
+    const arabicLines = wrapLabelLines(arabic, width, size)
+    const latinLines = wrapLabelLines(latin, width, size)
+    expect(arabicLines.length).toBeGreaterThan(latinLines.length)
   })
 })
 

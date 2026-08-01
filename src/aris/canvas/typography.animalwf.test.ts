@@ -11,7 +11,9 @@ import { buildSemanticArisDocument } from '../source/semanticIndex'
 import { tokenizeXmlDocument } from '../source/xmlTokenizer'
 import { arisBusinessObject } from './elements'
 import { ARIS_PRINT_FRAME_LAYER } from './renderer'
+import { labelFontWeight } from './typography'
 import { measureTextWidth } from '../renderer/textWrap'
+import { getArisSymbolDescriptors } from '../symbols/registry'
 import { bootCanvas, type Harness } from './testing/harness'
 
 /**
@@ -229,4 +231,58 @@ describe('AnimalWF V8: canvas typography', () => {
       }
     })
   }
+})
+
+/**
+ * Lane P4 (Wave 12) — text overflow in step blocks. The three register-owner
+ * anchors below are the export's worst caption-overflow cases: a bold 93-char
+ * English system-function line, a multi-paragraph requirement card, and an
+ * 82-char Arabic law card. Before the caption wrap measured against the
+ * resolved font weight (and hard-broke overlong tokens), each painted its text
+ * past the block edge. Every painted line must now fit its content-box width —
+ * the resolved weight, and 96% of the width for an Arabic run.
+ */
+describe('AnimalWF P4: caption fits inside its content box', () => {
+  const OVERFLOW_ANCHORS = [
+    'ObjOcc.3xqe8yXO9Z7-u-L--1SxJQyyYltu-x-L-33-c',
+    'ObjOcc.3xqe8yXO9Z7-u-L--9kko9AQBKf-x-L-33-c',
+    'ObjOcc.3xqe8yXO9Z7-u-L--V4a55hZP5d-x-L-33-c'
+  ]
+
+  it('wraps every overflow anchor caption to fit its content-box width', () => {
+    harness = bootCanvas({ document: workingDocument, modelId: REGISTER_OWNER })
+    const registry = harness.canvas.elementRegistry
+    const descriptors = getArisSymbolDescriptors()
+    let checked = 0
+    for (const anchorId of OVERFLOW_ANCHORS) {
+      const occurrence = model(REGISTER_OWNER).occurrences.find((entry) => entry.id === anchorId)
+      expect(occurrence).toBeDefined()
+      const descriptor = descriptors.find((entry) => entry.symbolNum === occurrence!.symbol)
+      expect(descriptor).toBeDefined()
+      // The content box in canvas units: the descriptor's content-box width
+      // scaled by the card's own width / the descriptor viewBox width.
+      const contentWidth =
+        (descriptor!.contentBox.width / descriptor!.drawing.viewBox.width) *
+        occurrence!.bounds.width
+      const group = registry.getGraphics(anchorId).querySelector('[data-aris-kind="occurrence"]')
+      const caption = group?.querySelector('text[data-aris-caption]')
+      expect(caption).not.toBeNull()
+      const fontSize = Number(caption!.getAttribute('font-size'))
+      const weight = labelFontWeight(caption!.getAttribute('font-weight'))
+      const tspans = [...caption!.querySelectorAll('tspan')]
+      const lines =
+        tspans.length > 0
+          ? tspans.map((node) => node.textContent ?? '')
+          : [caption!.textContent ?? '']
+      expect(lines.length).toBeGreaterThan(0)
+      for (const line of lines) {
+        const isArabic = /\p{Script=Arabic}/u.test(line)
+        // Arabic runs wrap against 96% of the box (4% estimate reserve).
+        const limit = (isArabic ? contentWidth * 0.96 : contentWidth) + 1
+        expect(measureTextWidth(line, fontSize, weight)).toBeLessThanOrEqual(limit)
+      }
+      checked += 1
+    }
+    expect(checked).toBe(OVERFLOW_ANCHORS.length)
+  })
 })

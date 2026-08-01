@@ -14,6 +14,7 @@ import { buildSemanticArisDocument } from '../source/semanticIndex'
 import { tokenizeXmlDocument } from '../source/xmlTokenizer'
 import { buildFromSource } from '../model/buildFromSource'
 import { ARIS_PRINT_FRAME_LAYER } from './renderer'
+import { wrapLabelLines } from './typography'
 import { bootCanvas, type Harness } from './testing/harness'
 
 const TYPOGRAPHY_AML = `<AML>
@@ -85,6 +86,21 @@ const TYPOGRAPHY_AML = `<AML>
         </AttrDef>
       </CxnDef>
     </ObjDef>
+    <ObjDef ObjDef.ID="ObjDef.4" TypeNum="OT_FUNC">
+      <AttrDef AttrDef.Type="AT_NAME">
+        <AttrValue LocaleId="1033">
+          <StyledElement>
+            <Bold/>
+              <StyledElement>
+                <Paragraph Alignment="UNDEFINED" Indent="0"/>
+                  <StyledElement>
+                    <PlainText TextValue="Approve the User Terms and Conditions"/>
+                  </StyledElement>
+              </StyledElement>
+          </StyledElement>
+        </AttrValue>
+      </AttrDef>
+    </ObjDef>
     <Model Model.ID="Model.1" Model.Type="MT_EEPC">
       <AttrDef AttrDef.Type="AT_ID">
         <AttrValue LocaleId="1033">
@@ -117,11 +133,20 @@ const TYPOGRAPHY_AML = `<AML>
         <Size Size.dX="554" Size.dY="151" />
         <AttrOcc AttrTypeNum="AT_NAME" Alignment="CENTER" FontSS.IdRef="FontSS.1" SymbolFlag="TEXT" />
       </ObjOcc>
+      <ObjOcc ObjOcc.ID="ObjOcc.4" ObjDef.IdRef="ObjDef.4" SymbolNum="ST_FUNC">
+        <Position Pos.X="765" Pos.Y="3000" />
+        <Size Size.dX="300" Size.dY="240" />
+        <AttrOcc AttrTypeNum="AT_NAME" Alignment="CENTER" FontSS.IdRef="FontSS.1" SymbolFlag="TEXT" />
+      </ObjOcc>
       <FFTextOcc FFTextDef.IdRef="FFTextDef.1" FontSS.IdRef="FontSS.1" SymbolFlag="TEXT" Alignment="CENTER" Zorder="16">
         <Position Pos.X="987" Pos.Y="114" />
       </FFTextOcc>
       <FFTextOcc FFTextDef.IdRef="FFTextDef.2" FontSS.IdRef="FontSS.1" SymbolFlag="TEXT" Alignment="CENTER" Zorder="17">
         <Position Pos.X="1823" Pos.Y="122" />
+      </FFTextOcc>
+      <FFTextOcc FFTextDef.IdRef="FFTextDef.3" FontSS.IdRef="FontSS.1" SymbolFlag="TEXT" Alignment="CENTER" Zorder="18">
+        <Position Pos.X="5000" Pos.Y="3000" />
+        <Size Size.dX="400" Size.dY="120" />
       </FFTextOcc>
     </Model>
   </Group>
@@ -141,6 +166,18 @@ const TYPOGRAPHY_AML = `<AML>
                         </StyledElement>
                     </StyledElement>
                 </StyledElement>
+            </StyledElement>
+        </StyledElement>
+      </AttrValue>
+    </AttrDef>
+  </FFTextDef>
+  <FFTextDef FFTextDef.ID="FFTextDef.3" IsModelAttr="TEXT">
+    <AttrDef AttrDef.Type="AT_NAME">
+      <AttrValue LocaleId="1033">
+        <StyledElement>
+          <Paragraph Alignment="UNDEFINED" Indent="0"/>
+            <StyledElement>
+              <PlainText TextValue="Reference"/>
             </StyledElement>
         </StyledElement>
       </AttrValue>
@@ -226,6 +263,23 @@ describe('V8 typography on the mounted canvas', () => {
     expect(xs.size).toBe(1)
   })
 
+  it('wraps a bold caption against the bold advance table, not the regular one', () => {
+    harness = bootCanvas({ document: workingDocument, modelId: 'Model.1' })
+    const caption = groupOf('ObjOcc.4').querySelector('text[data-aris-caption]')!
+    const tspans = [...caption.querySelectorAll('tspan')]
+    const text = 'Approve the User Terms and Conditions'
+    // ST_FUNC content box = 80/100 of the 300-unit card = 240 units wide; the
+    // caption font resolves to bold Arial (the AT_NAME run is <Bold/>).
+    const contentWidth = (80 / 100) * 300
+    const size = 35.278
+    const boldWrap = wrapLabelLines(text, contentWidth, size, 'bold')
+    const regularWrap = wrapLabelLines(text, contentWidth, size, 'regular')
+    // Red-first guard: the box width is chosen so the two tables disagree, so a
+    // regular-table measurement would paint the wrong number of lines.
+    expect(boldWrap.length).not.toBe(regularWrap.length)
+    expect(tspans.map((node) => node.textContent)).toEqual([...boldWrap])
+  })
+
   it('paints the numbering annotation in the placement font (bold), at its source rect', () => {
     harness = bootCanvas({ document: workingDocument, modelId: 'Model.1' })
     const label = groupOf('ObjOcc.1').querySelector('text[data-aris-attribute-label="AT_ID"]')!
@@ -290,5 +344,35 @@ describe('V8 typography on the mounted canvas', () => {
     expect(value.getAttribute('y')).toBe('122')
     // The bound note's own sheet size (35.278) reaches the painted value.
     expect(value.getAttribute('font-size')).toBe('35')
+  })
+
+  it('insets a sized full-box free-text note so its caption wraps inside the frame', () => {
+    harness = bootCanvas({ document: workingDocument, modelId: 'Model.1' })
+    const freeTextId = workingDocument.models
+      .get('Model.1')!
+      .freeText.find((note) => note.definitionId === 'FFTextDef.3')!.id
+    const group = groupOf(`text:${freeTextId}`)
+    const text = group.querySelector('text[data-aris-caption]')!
+    // The full-box path now passes an inset content box, so the caption text
+    // node is marked `content` (drawCaption only adds that when given a box).
+    expect(text.getAttribute('data-aris-part')).toBe('content')
+  })
+
+  it('clips a caption to the full shape bounds via a group-local clipPath', () => {
+    harness = bootCanvas({ document: workingDocument, modelId: 'Model.1' })
+    const group = groupOf('ObjOcc.1')
+    const clipPath = group.querySelector('clipPath')!
+    expect(clipPath).not.toBeNull()
+    const clipId = clipPath.getAttribute('id')!
+    expect(clipId.startsWith('aris-caption-clip-')).toBe(true)
+    // The clip rect is the FULL 670×240 card bounds, not the content box.
+    const rect = clipPath.querySelector('rect')!
+    expect(rect.getAttribute('width')).toBe('670')
+    expect(rect.getAttribute('height')).toBe('240')
+    // The clip group references it and still holds the editable caption node.
+    const clipGroup = group.querySelector(`g[clip-path="url(#${clipId})"]`)!
+    expect(clipGroup).not.toBeNull()
+    const caption = clipGroup.querySelector('text[data-aris-caption]')
+    expect(caption).not.toBeNull()
   })
 })

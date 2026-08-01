@@ -66,6 +66,7 @@ import { derivedRaciLabelText, type ArisRaciTuple } from './raci'
 import { svgAppend, svgElement } from './svg'
 import {
   ARIS_LABEL_LINE_HEIGHT,
+  labelFontWeight,
   layoutAnchoredLines,
   layoutLabelLines,
   normalizeLabelParagraphs,
@@ -527,6 +528,9 @@ function drawLineBlockText(
   return node
 }
 
+/** Monotonic id source for the per-caption clip paths (document-unique). */
+let captionClipSeq = 0
+
 function drawCaption(
   text: string,
   width: number,
@@ -543,12 +547,23 @@ function drawCaption(
   const fontSize = font?.fontSize ?? CAPTION_FONT_SIZE
   // Wrap within the caption's box: the reference PDFs set function/event
   // names over 2–3 centred lines inside the content box (V8).
-  const lines = wrapLabelLines(text, region.width, fontSize)
+  const lines = wrapLabelLines(text, region.width, fontSize, labelFontWeight(font?.fontWeight))
   const layout = layoutLabelLines(lines, region, fontSize, 'middle')
-  return drawLineBlockText(layout, 'middle', font, {
+  const textNode = drawLineBlockText(layout, 'middle', font, {
     'data-aris-caption': 'true',
     ...(box === undefined ? {} : { 'data-aris-part': 'content' })
   })
+  // Hard-stop overflow: clip the caption to the FULL shape bounds (never the
+  // content box, so a legitimately-larger caption is never trimmed early). The
+  // `<clipPath>` lives inside the returned group so the PDF-export SVG clone
+  // carries the clip with it. The `<text>` keeps `data-aris-caption` — the
+  // inline editor locates the caption by that marker (see directEdit.ts).
+  const clipId = `aris-caption-clip-${(captionClipSeq += 1)}`
+  const clipPath = svgElement('clipPath', { id: clipId })
+  svgAppend(clipPath, svgElement('rect', { x: 0, y: 0, width, height }))
+  const clipped = svgElement('g', { 'clip-path': `url(#${clipId})` })
+  svgAppend(clipped, clipPath, textNode)
+  return clipped
 }
 
 function partByElementIndex(
@@ -626,7 +641,7 @@ function drawLabelText(
   // A connection label's box is auto-sized to its text, so wrapping against
   // it would fight the source placement; explicit paragraph breaks still
   // stack. The anchor stays the alignment's (CENTER straddles the route).
-  const lines = wrapLabelLines(text, null, fontSize)
+  const lines = wrapLabelLines(text, null, fontSize, labelFontWeight(font?.fontWeight))
   const layout = layoutLabelLines(
     lines,
     { x: 0, y: 0, width, height },
@@ -653,7 +668,7 @@ function drawAttributeLabel(
   font: ArisLabelFont | ArisResolvedLabelFont | null = null
 ): SVGElement {
   const fontSize = font?.fontSize ?? CAPTION_FONT_SIZE
-  const lines = wrapLabelLines(label.text, null, fontSize)
+  const lines = wrapLabelLines(label.text, null, fontSize, labelFontWeight(font?.fontWeight))
   const layout = layoutLabelLines(lines, label, fontSize, 'middle')
   return drawLineBlockText(layout, 'middle', font, {
     'data-aris-attribute-label': label.attributeType
@@ -1128,7 +1143,12 @@ export class ArisRenderer extends BaseRenderer {
         // block anchors at (0, 0) — its centre for AnimalWF's all-CENTER
         // notes.
         const { anchor } = alignmentAnchor(this.freeTextAlignment(note), 0)
-        const lines = wrapLabelLines(businessObject.text, null, fontSize)
+        const lines = wrapLabelLines(
+          businessObject.text,
+          null,
+          fontSize,
+          labelFontWeight(font?.fontWeight)
+        )
         const layout = layoutAnchoredLines(lines, { x: 0, y: 0 }, fontSize)
         svgAppend(group, drawLineBlockText(layout, anchor, font, { 'data-aris-caption': 'true' }))
         svgAppend(parentGfx, group)
@@ -1150,7 +1170,12 @@ export class ArisRenderer extends BaseRenderer {
         // box.x + width/2 = (pos.x − dX/2) + dX/2 = pos.x.
         const alignment = this.freeTextAlignment(note)
         const { anchor } = alignmentAnchor(alignment, 0)
-        const lines = wrapLabelLines(businessObject.text, shape.width, fontSize)
+        const lines = wrapLabelLines(
+          businessObject.text,
+          shape.width,
+          fontSize,
+          labelFontWeight(font?.fontWeight)
+        )
         const lineHeight = round(fontSize * ARIS_LABEL_LINE_HEIGHT)
         const layout = layoutLabelLines(
           lines,
@@ -1179,7 +1204,15 @@ export class ArisRenderer extends BaseRenderer {
           })
         )
       }
-      svgAppend(group, drawCaption(businessObject.text, shape.width, shape.height, font))
+      svgAppend(
+        group,
+        drawCaption(businessObject.text, shape.width, shape.height, font, {
+          x: 8,
+          y: 2,
+          width: shape.width - 16,
+          height: shape.height - 4
+        })
+      )
       svgAppend(parentGfx, group)
       return group
     }
