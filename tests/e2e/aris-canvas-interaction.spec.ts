@@ -12,7 +12,7 @@ import { disableAutoTranslate } from './helpers/prefs'
 // `pointerEvents:'none'` over the whole canvas subtree; Wave 8 (8e3bbe6)
 // removed it. While it was live, Ctrl+wheel page-zoomed the browser
 // (ZoomScroll's wheel listener is bound only after a `mouseover` reaches the
-// diagram svg), the palette was dead, drag-pan was dead (MoveCanvas arms on
+// diagram svg), the tools panel was dead, drag-pan was dead (MoveCanvas arms on
 // canvas focus, which a hit-test-dead svg can never gain) and empty-canvas
 // clicks did nothing. No other e2e covers wheel zoom/scroll or drag-pan, so
 // this file proves all four behaviors on the built artifact:
@@ -20,7 +20,7 @@ import { disableAutoTranslate } from './helpers/prefs'
 //     defaultPrevented (the browser never page-zooms);
 //  2. plain wheel scrolls the viewport (translation changes, scale does not);
 //  3. a >15px primary-button drag on empty canvas pans;
-//  4. a palette tool click + canvas click authors an occurrence — with the
+//  4. a rail tool click + canvas click authors an occurrence — with the
 //     empty-model hint still on screen, the exact state the regression
 //     shipped in — and clicking an occurrence selects it (context pad opens).
 //
@@ -118,7 +118,7 @@ async function expectCaptionText(caption: Locator, expected: string): Promise<vo
     .toBe(expected)
 }
 
-test('Ctrl+wheel zooms in-canvas and never the page; wheel scrolls; drag pans; palette and selection clicks work', async ({
+test('Ctrl+wheel zooms in-canvas and never the page; wheel scrolls; drag pans; tools and selection clicks work', async ({
   page
 }) => {
   test.setTimeout(120_000)
@@ -127,26 +127,21 @@ test('Ctrl+wheel zooms in-canvas and never the page; wheel scrolls; drag pans; p
   await createBlankEpc(page, 'Interaction EPC')
 
   const canvas = page.locator('[data-orbitpm-aris-canvas]')
-  const palette = canvas.locator('.djs-palette')
-  await expect(palette).toBeVisible()
+  const tools = page.locator('[data-orbitpm-aris-tools]')
+  await expect(tools).toBeVisible()
   const canvasBox = await canvas.boundingBox()
   expect(canvasBox).not.toBeNull()
 
   // --- 4a. Palette click + canvas click author an occurrence, WITH the
   // empty-model hint still visible. The hint card is pointer-events:none
-  // (only its dismiss button is interactive) and the single-column palette
-  // (48px wide at left:20) ends left of the card (insetInlineStart:76), so
-  // neither click may be intercepted. Deliberately NOT dismissing the hint:
+  // (only its dismiss button is interactive), so neither click may be
+  // intercepted. Deliberately NOT dismissing the hint:
   // the Wave-3 regression shipped in exactly this state.
   await expect(page.locator('[data-orbitpm-aris-empty-hint]')).toBeVisible()
-  const funcEntry = palette.locator('[data-action="create.ot_func"]')
-  const entryBox = await funcEntry.boundingBox()
-  expect(entryBox).not.toBeNull()
-  // Top-left of the entry, same convention as aris-new-model.spec.ts — the
-  // label span can swallow center clicks in some layouts.
-  await page.mouse.click(entryBox!.x + 4, entryBox!.y + 4)
-  // Drop low and right: clear of the palette (left edge), the hint card
-  // (top-left) and the minimap (top-right).
+  const funcEntry = tools.locator('[data-action="create.ot_func"]')
+  await funcEntry.click()
+  // Drop low and right: clear of the hint card (top-left) and minimap
+  // (top-right).
   const dropX = canvasBox!.x + canvasBox!.width * 0.55
   const dropY = canvasBox!.y + canvasBox!.height * 0.75
   await page.mouse.click(dropX, dropY)
@@ -160,11 +155,7 @@ test('Ctrl+wheel zooms in-canvas and never the page; wheel scrolls; drag pans; p
   // ARIS_MAX_FIT_SCALE — so the zoom-in below always has headroom).
   await page.getByRole('button', { name: 'Zoom Fit', exact: true }).click()
 
-  // A point on EMPTY canvas, resolved at runtime to be clear of every floating
-  // overlay: the authorized DMT-symbol-library palette is now a ~360px rail over
-  // the canvas's leading edge (a fixed left-of-centre fraction would land on it,
-  // and a wheel there scrolls the palette instead of the diagram), so this scans
-  // the trailing side for a background point clear of the palette, the top-right
+  // A point on EMPTY canvas, resolved at runtime to be clear of the top-right
   // minimap and the lone occurrence.
   const empty = await clearCanvasPoint(page)
   const emptyX = empty.x
@@ -246,10 +237,8 @@ test('Ctrl+wheel zooms in-canvas and never the page; wheel scrolls; drag pans; p
   expect(afterPan.scale).toBeCloseTo(beforePan.scale, 5)
 
   // --- 4b. Clicking an existing occurrence selects it --------------------
-  // Re-fit and pan the shape clear of the ~360px DMT-library palette (which
-  // floats over the canvas's leading edge) so a real pointer reaches it rather
-  // than being intercepted by the palette; `revealOccurrencePoint` returns the
-  // shape's viewport centre once it is verified clear of both overlays.
+  // Re-fit and pan the shape clear of canvas overlays so a real pointer reaches
+  // it; `revealOccurrencePoint` returns its viewport centre once verified.
   const occurrence = occurrences.first()
   const occurrenceId = await occurrence.getAttribute('data-element-id')
   expect(occurrenceId).not.toBeNull()
@@ -279,7 +268,7 @@ test('Ctrl+wheel zooms in-canvas and never the page; wheel scrolls; drag pans; p
   await expect(canvas.locator('.djs-context-pad.open')).toBeVisible()
 })
 
-test('palette placement opens inline editing, commits an SVG caption, supports double-click edits and swaps a quick-pick symbol', async ({
+test('tools placement opens inline editing, commits an SVG caption, supports double-click edits and swaps a quick-pick symbol', async ({
   page
 }) => {
   test.setTimeout(120_000)
@@ -288,15 +277,13 @@ test('palette placement opens inline editing, commits an SVG caption, supports d
   await createBlankEpc(page, 'Inline editing EPC')
 
   const canvas = page.locator('[data-orbitpm-aris-canvas]')
-  const palette = canvas.locator('.djs-palette')
-  await expect(palette).toBeVisible()
+  const tools = page.locator('[data-orbitpm-aris-tools]')
+  await expect(tools).toBeVisible()
   const canvasBox = await canvas.boundingBox()
   expect(canvasBox).not.toBeNull()
 
-  const functionEntry = palette.locator('[data-action="create.ot_func"]')
-  const entryBox = await functionEntry.boundingBox()
-  expect(entryBox).not.toBeNull()
-  await page.mouse.click(entryBox!.x + 4, entryBox!.y + 4)
+  const functionEntry = tools.locator('[data-action="create.ot_func"]')
+  await functionEntry.click()
   await page.mouse.click(
     canvasBox!.x + canvasBox!.width * 0.55,
     canvasBox!.y + canvasBox!.height * 0.7

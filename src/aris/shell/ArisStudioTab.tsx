@@ -13,9 +13,17 @@
  * the clean layout exactly.
  */
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent
+} from 'react'
 
-import { t } from '../../i18n'
+import { getDir, t } from '../../i18n'
 import type { ArisCanvas } from '../canvas/ArisCanvas'
 import type { ArisBusinessObject } from '../canvas/elements'
 import { rootElementId } from '../canvas/elements'
@@ -65,7 +73,14 @@ import {
 } from './ArisCanvasView'
 import { PaneResizer } from '../../common/PaneResizer'
 import { ArisDetailsRail, type ArisDetailsRailHighlight } from './ArisDetailsRail'
-import { ARIS_RAIL_MAX_WIDTH, ARIS_RAIL_MIN_WIDTH, useArisRailLayout } from './arisRailLayout'
+import { ArisToolsPanel } from './ArisToolsPanel'
+import {
+  ARIS_RAIL_MAX_WIDTH,
+  ARIS_RAIL_MIN_WIDTH,
+  useArisRailLayout,
+  useArisRailTab,
+  type ArisRailTab
+} from './arisRailLayout'
 import type { ArisDetailsEditingApi } from './arisDetailsEditing'
 import { arisText, buildArisDetailsDocument, type ArisStudioDocument } from './arisStudioDocument'
 import {
@@ -177,6 +192,8 @@ const EMPTY_SELECTION: ArisCanvasSelectionState = Object.freeze({
   selectedIds: Object.freeze([])
 })
 
+const ARIS_RAIL_TABS: readonly ArisRailTab[] = Object.freeze(['details', 'tools'])
+
 export function ArisStudioTab({
   title,
   studio,
@@ -224,7 +241,52 @@ export function ArisStudioTab({
   const [linkPickerOpen, setLinkPickerOpen] = useState(false)
   const dir: 'ltr' | 'rtl' = lang === 'ar' ? 'rtl' : 'ltr'
   const railId = `orbitpm-aris-rail-${useId().replaceAll(':', '')}`
+  const railTabsId = `orbitpm-aris-rail-tabs-${useId().replaceAll(':', '')}`
   const rail = useArisRailLayout()
+  const [railTab, setRailTab] = useArisRailTab()
+  const railTabRefs = useRef<Partial<Record<ArisRailTab, HTMLButtonElement | null>>>({})
+  const shouldFocusRailTab = useRef(false)
+  const lastDetailsRef = useRef(selection.detailsElement)
+
+  const railTabId = useCallback((tab: ArisRailTab) => `${railTabsId}-tab-${tab}`, [railTabsId])
+  const railPanelId = useCallback((tab: ArisRailTab) => `${railTabsId}-panel-${tab}`, [railTabsId])
+  const onRailTabKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
+      const forward = getDir() === 'rtl' ? 'ArrowLeft' : 'ArrowRight'
+      const backward = getDir() === 'rtl' ? 'ArrowRight' : 'ArrowLeft'
+      const last = ARIS_RAIL_TABS.length - 1
+      let next: number | null = null
+      if (event.key === forward) next = index === last ? 0 : index + 1
+      else if (event.key === backward) next = index === 0 ? last : index - 1
+      else if (event.key === 'Home') next = 0
+      else if (event.key === 'End') next = last
+      if (next === null) return
+      event.preventDefault()
+      shouldFocusRailTab.current = true
+      setRailTab(ARIS_RAIL_TABS[next]!)
+    },
+    [setRailTab]
+  )
+
+  useEffect(() => {
+    if (!shouldFocusRailTab.current) return
+    shouldFocusRailTab.current = false
+    railTabRefs.current[railTab]?.focus()
+  }, [railTab])
+
+  // Rail-tab policy (plan L-P2 Task 4): the rail boots on Tools (the docked
+  // palette) and auto-switches to Details ONLY on an explicit detail-oriented
+  // gesture — a NEW canvas selection (below) or a finding reveal (the
+  // railHighlight effect). Merely importing a document with findings must NOT
+  // steal the tab: findings stay discoverable through the canvas warning
+  // markers and the toolbar issues badge. Never auto-switch back to Tools.
+  useEffect(() => {
+    const previous = lastDetailsRef.current
+    const next = selection.detailsElement
+    const changed = previous?.kind !== next?.kind || previous?.id !== next?.id
+    lastDetailsRef.current = next
+    if (next && changed) setRailTab('details')
+  }, [selection.detailsElement, setRailTab])
 
   const renderableModelId = useMemo(() => {
     if (modelId && studio.models.some((model) => model.id === modelId && model.renderable)) {
@@ -528,6 +590,10 @@ export function ArisStudioTab({
 
   const railHighlightToken = useRef(0)
   const [railHighlight, setRailHighlight] = useState<ArisDetailsRailHighlight | null>(null)
+
+  useEffect(() => {
+    if (railHighlight) setRailTab('details')
+  }, [railHighlight, setRailTab])
 
   /**
    * The one gesture shared by validation rows (and, later, canvas markers):
@@ -1205,31 +1271,98 @@ export function ArisStudioTab({
         style={{
           display: rail.collapsed ? 'none' : undefined,
           inlineSize: rail.width,
-          flex: '0 0 auto'
+          flex: '0 0 auto',
+          gridTemplateRows: 'auto minmax(0, 1fr)',
+          overflow: 'hidden'
         }}
       >
-        <ArisDetailsRail
-          details={detailsDocument}
-          element={selection.detailsElement}
-          elementLabel={selectionLabel}
-          modelId={renderableModelId}
-          onDownloadAttachment={onDownloadAttachment}
-          document={liveDocument}
-          lang={lang}
-          editing={detailsEditing}
-          onEditError={(message) => onToast(message, 'error')}
-          highlight={railHighlight}
-          onOpenAssignedModel={(modelId) => {
-            const businessObject = selection.businessObject
-            const definitionId =
-              businessObject?.kind === 'occurrence' ? businessObject.definitionId : modelId
-            const definitionName =
-              businessObject?.kind === 'occurrence' ? businessObject.name : modelId
-            openAssignedModelId(modelId, definitionId, definitionName)
-          }}
-        />
+        <div
+          role="tablist"
+          aria-label={tk('aris.rail.tabsAria', 'Details and tools panels')}
+          style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}
+        >
+          {ARIS_RAIL_TABS.map((tab, index) => (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              id={railTabId(tab)}
+              aria-selected={railTab === tab}
+              aria-controls={railPanelId(tab)}
+              tabIndex={railTab === tab ? 0 : -1}
+              data-orbitpm-aris-rail-tab={tab}
+              ref={(node) => {
+                railTabRefs.current[tab] = node
+              }}
+              className="orbitpm-lite-chrome-btn"
+              style={{
+                fontSize: 12,
+                padding: '0.15rem 0.5rem',
+                borderColor: railTab === tab ? 'var(--orbitpm-primary-bg)' : 'var(--orbitpm-border)'
+              }}
+              onClick={() => setRailTab(tab)}
+              onKeyDown={(event) => onRailTabKeyDown(event, index)}
+            >
+              {tab === 'details'
+                ? tk('aris.rail.details', 'Details')
+                : tk('aris.rail.tab.tools', 'Tools')}
+            </button>
+          ))}
+        </div>
 
-        <ArisEpcRail findings={validationFindings} onSelectFinding={handleRevealFinding} />
+        <div
+          role="tabpanel"
+          id={railPanelId('details')}
+          aria-labelledby={railTabId('details')}
+          hidden={railTab !== 'details'}
+          data-orbitpm-aris-rail-panel="details"
+          style={{
+            minHeight: 0,
+            overflow: 'auto',
+            display: railTab === 'details' ? 'grid' : undefined,
+            gap: 12,
+            alignContent: 'start'
+          }}
+        >
+          <ArisDetailsRail
+            details={detailsDocument}
+            element={selection.detailsElement}
+            elementLabel={selectionLabel}
+            modelId={renderableModelId}
+            onDownloadAttachment={onDownloadAttachment}
+            document={liveDocument}
+            lang={lang}
+            editing={detailsEditing}
+            onEditError={(message) => onToast(message, 'error')}
+            highlight={railHighlight}
+            onOpenAssignedModel={(modelId) => {
+              const businessObject = selection.businessObject
+              const definitionId =
+                businessObject?.kind === 'occurrence' ? businessObject.definitionId : modelId
+              const definitionName =
+                businessObject?.kind === 'occurrence' ? businessObject.name : modelId
+              openAssignedModelId(modelId, definitionId, definitionName)
+            }}
+          />
+
+          <ArisEpcRail findings={validationFindings} onSelectFinding={handleRevealFinding} />
+        </div>
+
+        <div
+          role="tabpanel"
+          id={railPanelId('tools')}
+          aria-labelledby={railTabId('tools')}
+          hidden={railTab !== 'tools'}
+          data-orbitpm-aris-rail-panel="tools"
+          style={{ minHeight: 0, overflow: 'hidden' }}
+        >
+          <ArisToolsPanel
+            key={canvasTick}
+            canvas={canvasRef.current}
+            modelType={liveDocument.models.get(renderableModelId ?? '')?.type ?? 'MT_EEPC'}
+            lang={lang}
+          />
+        </div>
       </aside>
 
       <ArisTranslateController

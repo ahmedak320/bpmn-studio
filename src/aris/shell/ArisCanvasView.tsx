@@ -34,7 +34,6 @@ import type { Element } from 'diagram-js/lib/model/Types'
 
 import type { ArisDetailsElement } from '../details/seam'
 import type { ArisWorkingDocument } from '../model/types'
-import { installPaletteDrag } from './arisPaletteDrag'
 
 export interface ArisCanvasSelectionState {
   /** The selected element projected into the Phase 10 details vocabulary. */
@@ -173,14 +172,12 @@ export function ArisCanvasView({
     eventBus.on('commandStack.changed', republish)
 
     handlersRef.current.onReady?.(canvas)
-    const uninstallDrag = installPaletteDrag(container)
     republish()
     setBootGeneration((current) => current + 1)
 
     return () => {
       eventBus.off(['selection.changed', 'elements.changed', ARIS_DOCUMENT_CHANGED], republish)
       eventBus.off('commandStack.changed', republish)
-      uninstallDrag()
       canvasRef.current = null
       handlersRef.current.onSelectionChange?.(EMPTY_SELECTION)
       canvas.destroy()

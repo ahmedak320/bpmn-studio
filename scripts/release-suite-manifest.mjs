@@ -78,6 +78,7 @@ export const REQUIRED_BROWSER_SUITES = Object.freeze([
   'tests/e2e/aris-import-split.spec.ts',
   'tests/e2e/aris-nested-processes.spec.ts',
   'tests/e2e/aris-new-model.spec.ts',
+  'tests/e2e/aris-rail-tools.spec.ts',
   'tests/e2e/aris-release-artifact.spec.ts',
   'tests/e2e/aris-sequence-1.spec.ts',
   'tests/e2e/aris-validation.spec.ts',

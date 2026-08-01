@@ -125,9 +125,8 @@ async function selectModel(page: Page, modelId: string): Promise<void> {
  * synthesized `dispatchEvent`, which diagram-js ignores).
  */
 async function selectOccurrence(page: Page, occurrenceId: string, fitLabel: string): Promise<void> {
-  // The DMT-symbol-library palette is a ~360px rail over the canvas's leading
-  // edge, so after Zoom Fit a real occurrence can land under it; wheel-pan the
-  // shape clear of the palette/minimap (as a user would) before clicking it.
+  // After Zoom Fit a real occurrence can land under the minimap; wheel-pan it
+  // clear of canvas overlays (as a user would) before clicking it.
   await selectOccurrenceOnCanvas(page, occurrenceId, { fitLabel })
 }
 
@@ -223,11 +222,10 @@ test('Arabic mirrors the explorer to the trailing edge while the ARIS canvas geo
     before.push({ id, relX: box!.x - ltrCanvasBox!.x, relY: box!.y - ltrCanvasBox!.y })
   }
 
-  const paletteDirection = await page
-    .locator('.orbitpm-aris-canvas .djs-palette')
-    .first()
-    .evaluate((node) => getComputedStyle(node).direction)
-  expect(paletteDirection).toBe('ltr')
+  const tools = page.locator('[data-orbitpm-aris-rail] [data-orbitpm-aris-tools]')
+  await expect(tools).toBeVisible()
+  expect(await tools.evaluate((node) => getComputedStyle(node).direction)).toBe('ltr')
+  await expect(page.locator('[data-orbitpm-aris-canvas] .djs-palette')).toHaveCount(0)
 
   await page.getByRole('button', { name: /^Interface:/ }).click()
   await expect(page.locator('html')).toHaveAttribute('dir', 'rtl')
@@ -252,11 +250,10 @@ test('Arabic mirrors the explorer to the trailing edge while the ARIS canvas geo
     expect(box!.y - rtlCanvasBox!.y).toBeCloseTo(before[index].relY, 0)
   }
 
-  const paletteDirectionRtl = await page
-    .locator('.orbitpm-aris-canvas .djs-palette')
-    .first()
-    .evaluate((node) => getComputedStyle(node).direction)
-  expect(paletteDirectionRtl).toBe('ltr')
+  expect(await tools.evaluate((node) => getComputedStyle(node).direction)).toBe('rtl')
+  await expect(
+    tools.locator('button[data-aris-catalog-id="epc.event"] .aris-palette-entry__label')
+  ).toHaveText('حدث')
 
   // While the geometry stays unmirrored, the caption *content* follows the
   // interface language (view-only, off the undo stack — `contentLang ?? lang`

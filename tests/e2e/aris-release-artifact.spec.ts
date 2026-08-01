@@ -161,10 +161,13 @@ for (const scenario of [
       .locator('[data-orbitpm-aris-canvas] [data-element-id^="ObjOcc."]')
       .first()
       .waitFor({ state: 'attached', timeout: 120_000 })
-    // The Accounting and Fidelity sections were retired; the rail now shows
-    // Details + the validation section only.
+    // The Accounting and Fidelity sections were retired; the rail is now
+    // Details/Tools tabs, with the validation section on the Details tab.
     await expect(page.locator('[data-orbitpm-aris-accounting]')).toHaveCount(0)
     await expect(page.locator('[data-orbitpm-aris-fidelity]')).toHaveCount(0)
+    // The rail boots on the docked Tools tab; open Details as a reviewing user
+    // would. Attribute selector, so the same line drives both en and ar runs.
+    await page.locator('[data-orbitpm-aris-rail-tab="details"]').click()
     await expect(page.locator('[data-orbitpm-aris-validation]')).toBeVisible()
 
     // The bilingual chrome is live in this exact file, in this exact engine.

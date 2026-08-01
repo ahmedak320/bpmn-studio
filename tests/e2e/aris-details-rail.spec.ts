@@ -66,6 +66,13 @@ test('details rail collapses, expands, drag-resizes, and persists across reload'
   const canvas = page.locator('[data-orbitpm-aris-canvas]')
   await expect(railEl).toBeVisible()
 
+  const toolsTab = railEl.locator('[data-orbitpm-aris-rail-tab="tools"]')
+  const detailsTab = railEl.locator('[data-orbitpm-aris-rail-tab="details"]')
+  await expect(toolsTab).toHaveAttribute('aria-selected', 'true')
+  await detailsTab.click()
+  await expect(detailsTab).toHaveAttribute('aria-selected', 'true')
+  await expect(railEl.locator('[data-orbitpm-aris-details]')).toBeVisible()
+
   const railBox = await railEl.boundingBox()
   expect(railBox).not.toBeNull()
   expect(railBox!.width).toBeGreaterThanOrEqual(335)

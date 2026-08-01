@@ -48,7 +48,6 @@ import KeyboardModule from 'diagram-js/lib/features/keyboard'
 import KeyboardMoveSelectionModule from 'diagram-js/lib/features/keyboard-move-selection'
 import EditorActionsModule from 'diagram-js/lib/features/editor-actions'
 import ContextPadModule from 'diagram-js/lib/features/context-pad'
-import PaletteModule from 'diagram-js/lib/features/palette'
 import OverlaysModule from 'diagram-js/lib/features/overlays'
 import SearchModule from 'diagram-js/lib/features/search'
 import RulesModule from 'diagram-js/lib/features/rules'
@@ -71,6 +70,7 @@ import { ArisClipboard } from './clipboard'
 import { ArisCommandBridge } from './commandBridge'
 import { ArisContextPadProvider } from './contextPadProvider'
 import { ArisDocumentStore } from './documentStore'
+import { HeadlessPalette } from './headlessPalette'
 import { ArisModeling } from './arisModeling'
 import { ArisPaletteProvider } from './paletteProvider'
 import { ArisQuickPick } from './quickPick'
@@ -98,6 +98,7 @@ export const ArisCanvasModule: DiagramModuleDeclaration = {
     'arisRenderer',
     'arisRules',
     'arisResizeBehavior',
+    'palette',
     'arisPaletteProvider',
     'arisQuickPick',
     'arisContextPadProvider',
@@ -116,6 +117,9 @@ export const ArisCanvasModule: DiagramModuleDeclaration = {
   arisRenderer: ['type', ArisRenderer],
   arisRules: ['type', ArisRules],
   arisResizeBehavior: ['type', ArisResizeBehavior],
+  // Keep diagram-js's palette DI contract without mounting `.djs-palette`;
+  // the visible tools live in the docked React rail.
+  palette: ['type', HeadlessPalette],
   arisPaletteProvider: ['type', ArisPaletteProvider],
   arisQuickPick: ['type', ArisQuickPick],
   arisContextPadProvider: ['type', ArisContextPadProvider],
@@ -151,7 +155,6 @@ export const ARIS_DIAGRAM_JS_MODULES: readonly DiagramModuleDeclaration[] = Obje
   LassoToolModule as DiagramModuleDeclaration,
   OverlaysModule as DiagramModuleDeclaration,
   ContextPadModule as DiagramModuleDeclaration,
-  PaletteModule as DiagramModuleDeclaration,
   SearchModule as DiagramModuleDeclaration,
   KeyboardModule as DiagramModuleDeclaration,
   KeyboardMoveSelectionModule as DiagramModuleDeclaration,

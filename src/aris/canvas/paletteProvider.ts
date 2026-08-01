@@ -1,12 +1,11 @@
 /**
- * Descriptor-driven DMT drawing library for diagram-js's palette surface.
+ * Headless placement service for the descriptor-driven DMT drawing library.
  *
  * The convention catalog remains the identity/order authority. V10 deliberately
  * applies its "all manual presentations are placeable" override here instead
  * of changing catalog verification metadata.
  */
 
-import type Canvas from 'diagram-js/lib/core/Canvas'
 import type ElementFactory from 'diagram-js/lib/core/ElementFactory'
 import type ElementRegistry from 'diagram-js/lib/core/ElementRegistry'
 import type EventBus from 'diagram-js/lib/core/EventBus'
@@ -14,20 +13,15 @@ import type GraphicsFactory from 'diagram-js/lib/core/GraphicsFactory'
 import type Create from 'diagram-js/lib/features/create/Create'
 import type HandTool from 'diagram-js/lib/features/hand-tool/HandTool'
 import type LassoTool from 'diagram-js/lib/features/lasso-tool/LassoTool'
-import type Palette from 'diagram-js/lib/features/palette/Palette'
 import type { Element, Shape } from 'diagram-js/lib/model/Types'
 
-import { subscribe, t, type Key } from '../../i18n'
+import { t, type Key } from '../../i18n'
 import { dmtLibraryText } from '../shell/dmtLibraryI18n'
 import { resolveArisCatalogSymbol, resolveArisSymbol } from '../symbols'
 import type { ArisModeling, ArisCreateShapeAttrs } from './arisModeling'
-import { ARIS_DOCUMENT_CHANGED } from './commandBridge'
-import { descriptorPreviewMarkup } from './descriptorPreview'
 import {
-  DMT_LIBRARY_GROUPS,
   dmtLibraryItem,
   dmtLibraryItems,
-  searchDmtLibrary,
   type DmtLibraryGroupId,
   type DmtLibraryItem
 } from './dmtLibrary'
@@ -35,21 +29,6 @@ import { ArisDocumentStore } from './documentStore'
 import { arisBusinessObject } from './elements'
 
 import './dmtLibrary.css'
-
-export interface ArisPaletteEntry {
-  readonly group: string
-  readonly className: string
-  readonly title: string
-  readonly html: string
-  readonly action: {
-    readonly dragstart?: (event: Event) => void
-    readonly click?: (event: Event) => void
-  }
-  readonly arisObjectType?: string
-  readonly arisSymbolNum?: string
-  readonly arisCatalogId?: string
-  readonly arisDescriptorFingerprint?: string
-}
 
 export interface PaletteTarget {
   readonly id: string
@@ -71,48 +50,12 @@ interface PaletteChangedEvent {
   readonly elements?: readonly Element[]
 }
 
-const HAND_GLYPH =
-  '<g stroke="currentColor" fill="none" stroke-width="1.5"><path d="M7 13V8a1.2 1.2 0 0 1 2.4 0v4m0-5a1.2 1.2 0 0 1 2.4 0v5m0-4a1.2 1.2 0 0 1 2.4 0v4m0-2a1.2 1.2 0 0 1 2.2 0v3a5 5 0 0 1-5 5h-2a4 4 0 0 1-3-1.6L7 16"/></g>'
-const LASSO_GLYPH =
-  '<g stroke="currentColor" fill="none" stroke-width="1.5"><rect x="4" y="6" width="16" height="12" rx="2" stroke-dasharray="3 2"/></g>'
-const FREE_TEXT_GLYPH =
-  '<g stroke="currentColor" fill="none" stroke-width="1.5"><line x1="6" y1="7" x2="18" y2="7"/><line x1="12" y1="7" x2="12" y2="18"/></g>'
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;')
-}
-
-function utilityEntryHtml(svgInner: string, label: string): string {
-  const escaped = escapeHtml(label)
-  return (
-    `<button type="button" class="entry aris-palette-entry" draggable="true" aria-label="${escaped}">` +
-    `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${svgInner}</svg>` +
-    `<span class="aris-palette-entry__label">${escaped}</span>` +
-    `</button>`
-  )
-}
-
-function libraryEntryHtml(target: PaletteTarget): string {
-  const escapedLabel = escapeHtml(target.title)
-  const aria = escapeHtml(
-    dmtLibraryText('aris.library.item.aria', {
-      name: target.title,
-      variants: target.variantCount
-    })
-  )
-  return (
-    `<button type="button" class="entry aris-palette-entry aris-palette-entry--symbol" ` +
-    `draggable="true" aria-label="${aria}" data-aris-catalog-id="${escapeHtml(target.catalogId)}" ` +
-    `data-aris-variant-count="${target.variantCount}">` +
-    descriptorPreviewMarkup(target.catalogId) +
-    `<span class="aris-palette-entry__label">${escapedLabel}</span>` +
-    `</button>`
-  )
+interface LegacyPaletteEntry {
+  readonly className: string
+  readonly title: string
+  readonly html: string
+  readonly arisObjectType?: string
+  readonly arisSymbolNum?: string
 }
 
 function safeIdPart(value: string): string {
@@ -136,15 +79,8 @@ function defaultCatalogIdFor(modelType: string, item: DmtLibraryItem): string | 
   )
 }
 
-function visibleEntryButtons(container: HTMLElement): HTMLButtonElement[] {
-  return [...container.querySelectorAll<HTMLButtonElement>('.group:not([hidden]) > .entry')].filter(
-    (entry) => !entry.hidden && !entry.disabled
-  )
-}
-
 export class ArisPaletteProvider {
   static $inject = [
-    'palette',
     'create',
     'elementFactory',
     'arisDocumentStore',
@@ -152,24 +88,15 @@ export class ArisPaletteProvider {
     'handTool',
     'lassoTool',
     'eventBus',
-    'canvas',
     'elementRegistry',
     'graphicsFactory'
   ]
 
   private readonly presentationByOccurrence = new Map<string, string>()
-  private readonly collapsedGroups = new Set<string>()
   private pendingCatalogId: string | null = null
   private placementInvoker: HTMLElement | null = null
-  private renderedModelType: string
-  // Live search-box nodes, re-pointed after every diagram-js `_update()` rebuild
-  // so the once-wired keyboard handler always drives the current input.
-  private searchInput: HTMLInputElement | null = null
-  private searchStatus: HTMLElement | null = null
-  private paletteKeysWired = false
 
   constructor(
-    palette: Palette,
     private readonly create: Create,
     private readonly elementFactory: ElementFactory,
     private readonly store: ArisDocumentStore,
@@ -177,26 +104,14 @@ export class ArisPaletteProvider {
     private readonly handTool: HandTool,
     private readonly lassoTool: LassoTool,
     eventBus: EventBus,
-    private readonly canvas: Canvas,
     private readonly elementRegistry: ElementRegistry,
     private readonly graphicsFactory: GraphicsFactory
   ) {
-    this.renderedModelType = this.modelType()
-    eventBus.on('palette.changed', () => this.enhancePalette())
-
     // CanvasSync replaces business objects before `elements.changed`. Reapply a
     // provider-owned exact presentation before change-support redraws it.
     eventBus.on('elements.changed', 1500, (event: PaletteChangedEvent) => {
       for (const element of event.elements ?? []) this.applyRememberedPresentation(element)
     })
-    eventBus.on(ARIS_DOCUMENT_CHANGED, () => {
-      const modelType = this.modelType()
-      if (modelType !== this.renderedModelType) {
-        this.renderedModelType = modelType
-        this.refreshPalette(palette)
-      }
-    })
-
     // diagram-js's priority-1000 create handler has replaced the draft with the
     // committed occurrence by this point. Patch it before quick-pick (260).
     eventBus.on('create.end', 300, (event: unknown) => {
@@ -215,14 +130,22 @@ export class ArisPaletteProvider {
       this.placementInvoker = null
       if (invoker?.isConnected) invoker.focus()
     })
-
-    const unsubscribeLanguage = subscribe(() => this.refreshPalette(palette))
-    eventBus.on('diagram.destroy', unsubscribeLanguage)
-    palette.registerProvider(this)
   }
 
   private modelType(): string {
     return this.store.document.models.get(this.store.activeModelId)?.type ?? 'MT_EEPC'
+  }
+
+  activateHandTool(event: Event): void {
+    this.handTool.activateHand(event as unknown as MouseEvent)
+  }
+
+  activateLassoTool(event: Event): void {
+    this.lassoTool.activateSelection(event as unknown as MouseEvent)
+  }
+
+  createFreeText(label: string): void {
+    this.modeling.createFreeText(label, { x: 0, y: 0 })
   }
 
   /** Every model-appropriate convention item, including catalog-disabled rows. */
@@ -268,61 +191,40 @@ export class ArisPaletteProvider {
     return Object.freeze(entries)
   }
 
-  getPaletteEntries(): Record<string, ArisPaletteEntry> {
-    const handLabel = t('aris.palette.hand')
-    const lassoLabel = t('aris.palette.lasso')
-    const freeTextLabel = t('aris.palette.freeText')
-    const entries: Record<string, ArisPaletteEntry> = {
+  /**
+   * Metadata-only compatibility for the pre-rail objectTypes characterization.
+   * Nothing consumes this at runtime and no diagram-js Palette service exists.
+   */
+  getPaletteEntries(): Readonly<Record<string, LegacyPaletteEntry>> {
+    const labelMarkup = (label: string): string =>
+      `<span class="aris-palette-entry__label">${label}</span>`
+    const entries: Record<string, LegacyPaletteEntry> = {
       'hand-tool': {
-        group: 'tools',
         className: 'aris-palette-hand-tool',
-        title: handLabel,
-        html: utilityEntryHtml(HAND_GLYPH, handLabel),
-        action: {
-          click: (event: Event) => this.handTool.activateHand(event as unknown as MouseEvent)
-        }
+        title: t('aris.palette.hand'),
+        html: labelMarkup(t('aris.palette.hand'))
       },
       'lasso-tool': {
-        group: 'tools',
         className: 'aris-palette-lasso-tool',
-        title: lassoLabel,
-        html: utilityEntryHtml(LASSO_GLYPH, lassoLabel),
-        action: {
-          click: (event: Event) => this.lassoTool.activateSelection(event as unknown as MouseEvent)
-        }
+        title: t('aris.palette.lasso'),
+        html: labelMarkup(t('aris.palette.lasso'))
       },
       'create.free-text': {
-        group: 'annotations',
         className: 'aris-palette-free-text',
-        title: freeTextLabel,
-        html: utilityEntryHtml(FREE_TEXT_GLYPH, freeTextLabel),
-        action: {
-          click: () => this.modeling.createFreeText(freeTextLabel, { x: 0, y: 0 })
-        }
+        title: t('aris.palette.freeText'),
+        html: labelMarkup(t('aris.palette.freeText'))
       }
     }
-
     for (const target of this.targets()) {
-      const start = (event: Event): void => {
-        this.startPlacement(event, target)
-      }
       entries[target.id] = {
-        group: target.group,
         className: `aris-palette-${target.objectType.toLocaleLowerCase()}`,
-        title: dmtLibraryText('aris.library.item.tooltip', {
-          name: target.title,
-          objectType: target.objectType,
-          symbolNum: target.symbolNum
-        }),
-        html: libraryEntryHtml(target),
+        title: dmtLibraryText('aris.library.item.tooltip', { name: target.title }),
+        html: labelMarkup(target.title),
         arisObjectType: target.objectType,
-        arisSymbolNum: target.symbolNum,
-        arisCatalogId: target.catalogId,
-        arisDescriptorFingerprint: target.descriptorFingerprint,
-        action: { dragstart: start, click: start }
+        arisSymbolNum: target.symbolNum
       }
     }
-    return entries
+    return Object.freeze(entries)
   }
 
   /** Enter diagram-js placement mode for an exact catalog presentation. */
@@ -332,7 +234,7 @@ export class ArisPaletteProvider {
       event.currentTarget instanceof HTMLElement
         ? event.currentTarget
         : event.target instanceof HTMLElement
-          ? event.target.closest<HTMLElement>('.entry')
+          ? event.target.closest<HTMLElement>('[data-action]')
           : null
     const draft = this.draftShape(target)
     this.create.start(event as unknown as MouseEvent, draft)
@@ -404,167 +306,6 @@ export class ArisPaletteProvider {
     if (!redraw) return
     const graphics = this.elementRegistry.getGraphics(element)
     if (graphics) this.graphicsFactory.update('shape', element, graphics)
-  }
-
-  private enhancePalette(): void {
-    const palette = this.canvas.getContainer().querySelector<HTMLElement>('.djs-palette')
-    const entries = palette?.querySelector<HTMLElement>('.djs-palette-entries')
-    if (!palette || !entries) return
-    palette.setAttribute('role', 'region')
-    palette.setAttribute('aria-label', dmtLibraryText('aris.library.aria'))
-
-    // diagram-js fires `palette.changed` after a full `_update()` rebuild (which
-    // wipes this augmentation via domClear) AND on bare `_toggleState()` calls
-    // (open/close/canvas.resized) that leave the DOM intact. Everything below is
-    // therefore idempotent: existing nodes are reused, never prepended twice.
-
-    // One sticky search box per rebuild.
-    let search = entries.querySelector<HTMLElement>(':scope > .aris-library-search')
-    if (search === null) {
-      search = document.createElement('div')
-      search.className = 'aris-library-search'
-      const input = document.createElement('input')
-      input.type = 'search'
-      input.className = 'aris-library-search__input'
-      input.placeholder = dmtLibraryText('aris.library.search')
-      input.setAttribute('aria-label', dmtLibraryText('aris.library.search'))
-      input.autocomplete = 'off'
-      input.addEventListener('input', () => this.applySearchFilter())
-      const status = document.createElement('span')
-      status.className = 'aris-library-search__status'
-      status.setAttribute('role', 'status')
-      status.setAttribute('aria-live', 'polite')
-      search.append(input, status)
-      entries.prepend(search)
-    }
-    this.searchInput = search.querySelector<HTMLInputElement>('.aris-library-search__input')
-    this.searchStatus = search.querySelector<HTMLElement>('.aris-library-search__status')
-
-    // One collapsible header per group.
-    const labels = new Map<string, string>([
-      ['tools', dmtLibraryText('aris.library.group.tools')],
-      ['annotations', dmtLibraryText('aris.library.group.annotations')],
-      ...DMT_LIBRARY_GROUPS.map((group) => [group.id, dmtLibraryText(group.labelKey)] as const)
-    ])
-    for (const group of entries.querySelectorAll<HTMLElement>(':scope > .group')) {
-      const groupId = group.dataset.group ?? ''
-      const name = labels.get(groupId)
-      if (name === undefined) continue
-      let heading = group.querySelector<HTMLButtonElement>(':scope > .aris-library-group__toggle')
-      if (heading === null) {
-        const created = document.createElement('button')
-        created.type = 'button'
-        created.className = 'aris-library-group__toggle'
-        created.addEventListener('click', (event) => {
-          event.stopPropagation()
-          if (this.collapsedGroups.has(groupId)) this.collapsedGroups.delete(groupId)
-          else this.collapsedGroups.add(groupId)
-          this.syncGroupToggle(created, groupId, name)
-          this.applySearchFilter()
-        })
-        group.prepend(created)
-        heading = created
-      }
-      this.syncGroupToggle(heading, groupId, name)
-    }
-
-    // Keyboard navigation is wired exactly once on the persistent entries
-    // container. The handler reads the live search field through
-    // `this.searchInput`, so it keeps working after a rebuild swaps the input.
-    if (!this.paletteKeysWired) {
-      this.paletteKeysWired = true
-      entries.addEventListener('keydown', (event) => {
-        const input = this.searchInput
-        const target = event.target
-        if (!(target instanceof HTMLElement)) return
-        if (event.key === 'Escape' && input !== null && input.value.length > 0) {
-          input.value = ''
-          this.applySearchFilter()
-          input.focus()
-          event.preventDefault()
-          return
-        }
-        if (target === input) return
-        const buttons = visibleEntryButtons(entries)
-        const current = buttons.indexOf(target.closest<HTMLButtonElement>('.entry')!)
-        if (current < 0) return
-        let next = current
-        if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
-          next = (current + 1) % buttons.length
-        } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
-          next = (current - 1 + buttons.length) % buttons.length
-        } else if (event.key === 'Home') {
-          next = 0
-        } else if (event.key === 'End') {
-          next = buttons.length - 1
-        } else if (event.key.length === 1 && /\S/u.test(event.key) && input !== null) {
-          input.value += event.key
-          this.applySearchFilter()
-          input.focus()
-          event.preventDefault()
-          return
-        } else {
-          return
-        }
-        buttons[next]?.focus()
-        event.preventDefault()
-      })
-    }
-
-    // Re-assert filter/collapse state so a rebuild or a bare toggle re-render
-    // leaves entries consistent with the current query and collapsed set.
-    this.applySearchFilter()
-  }
-
-  /** Sync one group header's text/ARIA with the collapsed set. */
-  private syncGroupToggle(heading: HTMLButtonElement, groupId: string, name: string): void {
-    const collapsed = this.collapsedGroups.has(groupId)
-    heading.textContent = name
-    heading.setAttribute('aria-expanded', collapsed ? 'false' : 'true')
-    heading.setAttribute(
-      'aria-label',
-      dmtLibraryText('aris.library.group.toggle', {
-        state: dmtLibraryText(
-          collapsed ? 'aris.library.group.expand' : 'aris.library.group.collapse'
-        ),
-        name
-      })
-    )
-  }
-
-  /** Show/hide entries and groups from the current query + collapsed set. */
-  private applySearchFilter(): void {
-    const entries = this.canvas
-      .getContainer()
-      .querySelector<HTMLElement>('.djs-palette .djs-palette-entries')
-    const input = this.searchInput
-    const status = this.searchStatus
-    if (!entries || input === null || status === null) return
-    const query = input.value
-    const matches = new Set(searchDmtLibrary(query, this.modelType()).map((item) => item.catalogId))
-    const filtering = query.trim().length > 0
-    let visible = 0
-    for (const group of entries.querySelectorAll<HTMLElement>(':scope > .group')) {
-      const isLibraryGroup = DMT_LIBRARY_GROUPS.some(
-        (candidate) => candidate.id === group.dataset.group
-      )
-      let groupVisible = 0
-      for (const entry of group.querySelectorAll<HTMLElement>(':scope > .entry')) {
-        const catalogId = entry.dataset.arisCatalogId
-        const match = !filtering || (catalogId !== undefined && matches.has(catalogId))
-        const collapsed = !filtering && this.collapsedGroups.has(group.dataset.group ?? '')
-        entry.hidden = !match || collapsed
-        if (match && !collapsed) groupVisible += 1
-      }
-      group.hidden = filtering && (!isLibraryGroup || groupVisible === 0)
-      visible += groupVisible
-    }
-    status.textContent = filtering && visible === 0 ? dmtLibraryText('aris.library.noResults') : ''
-  }
-
-  private refreshPalette(palette: Palette): void {
-    const refresh = (palette as Palette & { _update?: () => void })._update
-    if (typeof refresh === 'function') refresh.call(palette)
   }
 }
 

@@ -259,6 +259,10 @@ async function openValidationSource(page: Page): Promise<void> {
     .waitFor({ state: 'attached', timeout: 30_000 })
   // Fit the (tiny) model so every shape and its warning marker sits in view.
   await page.getByRole('button', { name: 'Zoom Fit', exact: true }).click()
+  // The rail boots on the docked Tools tab (issue #2); Details only auto-opens
+  // on a selection or a finding reveal. Open the Details tab the way a user
+  // reviewing findings does, so the validation section is on screen.
+  await page.locator('[data-orbitpm-aris-rail-tab="details"]').click()
 }
 
 const validationRail = '[data-orbitpm-aris-validation]'
@@ -446,6 +450,10 @@ async function openAttributeFixSource(page: Page): Promise<void> {
     .first()
     .waitFor({ state: 'attached', timeout: 30_000 })
   await page.getByRole('button', { name: 'Zoom Fit', exact: true }).click()
+  // The rail boots on the docked Tools tab (issue #2); Details only auto-opens
+  // on a selection or a finding reveal. Open the Details tab the way a user
+  // reviewing findings does, so the validation section is on screen.
+  await page.locator('[data-orbitpm-aris-rail-tab="details"]').click()
 }
 
 test('a missing-attribute validation row fixes through the details pending-attribute editor in one undoable step', async ({

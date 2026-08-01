@@ -26,10 +26,7 @@ export const DMT_LIBRARY_MESSAGE_KEYS = Object.freeze({
   'aris.library.item.tooltip': '{name}',
   'aris.library.quickConnect': '{relation}: add {peer} {direction} the selected object',
   'aris.library.direction.before': 'before',
-  'aris.library.direction.after': 'after',
-  'aris.library.dock': 'Dock object library',
-  'aris.library.undock': 'Undock object library',
-  'aris.library.move': 'Drag to move the object library. Double-click to reset its position.'
+  'aris.library.direction.after': 'after'
 })
 
 export type DmtLibraryMessageKey = keyof typeof DMT_LIBRARY_MESSAGE_KEYS

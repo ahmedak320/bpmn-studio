@@ -29,7 +29,7 @@ import { disableAutoTranslate } from './helpers/prefs'
 // Harness convention copied verbatim from tests/e2e/aris-explorer-tree.spec.ts:
 // the built dist/index.html served over a loopback HTTP origin (real OPFS
 // refuses to operate under file://), plus the WebKit persistent-context
-// accommodation OPFS needs. The palette-placement gesture — and the
+// accommodation OPFS needs. The rail-tools placement gesture — and the
 // post-placement quick-pick + inline caption editor a fresh family-symbol
 // shape always opens — is the same one tests/e2e/aris-canvas-interaction.spec.ts
 // already proves against a blank EPC canvas.
@@ -93,7 +93,7 @@ async function fillPrompt(page: Page, value: string): Promise<void> {
 }
 
 /**
- * Places a Function on the active (blank) canvas via the palette, then
+ * Places a Function on the active (blank) canvas via the docked tools rail, then
  * disposes of the two post-placement popovers a fresh family-symbol shape
  * always opens (`tests/e2e/aris-canvas-interaction.spec.ts` proves both): the
  * "Swap symbol" quick-pick and the inline caption editor. Returns the new
@@ -101,19 +101,13 @@ async function fillPrompt(page: Page, value: string): Promise<void> {
  */
 async function placeFunction(page: Page, caption: string): Promise<string> {
   const canvas = page.locator('[data-orbitpm-aris-canvas]')
-  const palette = canvas.locator('.djs-palette')
-  await expect(palette).toBeVisible()
-  const canvasBox = await canvas.boundingBox()
-  expect(canvasBox).not.toBeNull()
+  const tools = page.locator('[data-orbitpm-aris-rail] [data-orbitpm-aris-tools]')
+  await expect(tools).toBeVisible()
 
-  const functionEntry = palette.locator('[data-action="create.ot_func"]')
-  const entryBox = await functionEntry.boundingBox()
-  expect(entryBox).not.toBeNull()
-  await page.mouse.click(entryBox!.x + 4, entryBox!.y + 4)
-  // The authorized DMT-symbol-library palette is a ~360px rail floating over the
-  // canvas's leading edge, so a fixed left-of-centre drop fraction now lands on
-  // the palette (the placement click is swallowed and no occurrence is created);
-  // resolve a drop point clear of the palette and the minimap instead.
+  const functionEntry = tools.locator('[data-action="create.ot_func"]')
+  await functionEntry.click()
+  // Resolve a drop point clear of canvas overlays such as the empty-model hint
+  // and minimap before completing the click-to-place gesture.
   const drop = await clearCanvasPoint(page)
   await page.mouse.click(drop.x, drop.y)
 
@@ -163,9 +157,8 @@ test('linking a Function to a workspace model nests it in the tree, survives a r
   }
 
   try {
-    // A generous viewport so the workspace tree, the ~360px DMT-library palette
-    // and the canvas all have room (the default 1280×720 leaves the palette
-    // covering nearly the whole narrow canvas).
+    // A generous viewport so the workspace tree, docked tools rail and canvas
+    // all have room.
     await opfsPage.setViewportSize({ width: 1500, height: 950 })
     await gotoLanding(opfsPage)
 

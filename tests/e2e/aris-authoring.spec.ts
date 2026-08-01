@@ -35,7 +35,7 @@ const REFERENCE_AML = resolve(HERE, '../../../reference/AnimalWF/ARISAMLExport.x
  * the product's own list cannot silently shrink this test with it.
  *
  * In the reworked DMT symbol library (`src/aris/canvas/dmtLibrary.ts` +
- * `paletteProvider.ts`) the palette derives one *default* create entry per
+ * `paletteProvider.ts`) the tools panel derives one *default* create entry per
  * object type, keyed `create.<objectType lower-cased>`; non-default symbol
  * presentations get a `.<symbolNum>` suffix. The AND/OR/XOR rule operators are
  * three OT_RULE symbol variants (`ST_OPR_AND_1` is the default `create.ot_rule`,
@@ -130,8 +130,8 @@ async function selectModel(page: Page, modelId: string): Promise<void> {
  * The id of an occurrence a person could actually click whose live presentation
  * is a specific catalog symbol (matched on the renderer's own
  * `data-aris-catalog-id`, src/aris/canvas/renderer.ts): big enough to hit, fully
- * inside the canvas box, and clear of the palette and minimap, both of which
- * float above the diagram. The AnimalWF models are large real EPCs, so "the
+ * inside the canvas box, and clear of the minimap. The AnimalWF models are
+ * large real EPCs, so "the
  * first occurrence in DOM order" is routinely off-screen after Zoom Fit. Returns
  * '' when no occurrence of that symbol is reachable by pointer in this model, so
  * the caller can move on to the next model — pinning the object type this way
@@ -148,7 +148,7 @@ async function clickableOccurrenceIdOfCatalog(
       const canvas = document.querySelector('[data-orbitpm-aris-canvas]')
       if (!canvas) return ''
       const canvasRect = canvas.getBoundingClientRect()
-      const overlays = ['.djs-palette', '.djs-minimap']
+      const overlays = ['.djs-minimap']
         .flatMap((selector) => Array.from(canvas.querySelectorAll(selector)))
         .map((node) => node.getBoundingClientRect())
       for (const node of Array.from(document.querySelectorAll(scope))) {
@@ -208,7 +208,7 @@ test('every AnimalWF model opens on the real canvas and draws exactly the record
   expect(opened.every((entry) => entry.promised > 0)).toBe(true)
 })
 
-test('the palette offers a create entry for every supported ARIS object type and rule operator, and each one authors a real occurrence', async ({
+test('the rail tools panel offers every supported ARIS object type and rule operator, and each one authors a real occurrence', async ({
   page
 }) => {
   test.setTimeout(180_000)
@@ -216,61 +216,59 @@ test('the palette offers a create entry for every supported ARIS object type and
   const modelId = await activeModelId(page)
   await selectModel(page, modelId)
 
-  const palette = page.locator('[data-orbitpm-aris-canvas] .djs-palette')
-  await expect(palette).toBeVisible()
+  const tools = page.locator('[data-orbitpm-aris-rail] [data-orbitpm-aris-tools]')
+  await expect(tools).toBeVisible()
 
-  // Every palette entry renders a human-readable label (§11.4 create entries plus
-  // the free-text annotation), and the drag grip is wired onto the palette.
+  // Every tools entry renders a human-readable label (§11.4 create entries plus
+  // the free-text annotation).
   await expect
-    .poll(async () => palette.locator('.aris-palette-entry__label').count())
+    .poll(async () => tools.locator('.aris-palette-entry__label').count())
     .toBeGreaterThanOrEqual(15)
-  await expect(palette.locator('.orbitpm-palette-grip')).toHaveCount(1)
 
   // Every supported object type is offered as its default create entry…
   for (const action of PALETTE_DEFAULT_CREATE_ACTIONS) {
     await expect(
-      palette.locator(`[data-action="${action}"]`),
-      `palette is missing ${action}`
+      tools.locator(`[data-action="${action}"]`),
+      `tools panel is missing ${action}`
     ).toHaveCount(1)
   }
   // …the AND/OR/XOR rule operators are all offered as OT_RULE symbol variants…
   for (const action of PALETTE_RULE_OPERATOR_ACTIONS) {
     await expect(
-      palette.locator(`[data-action="${action}"]`),
-      `palette is missing rule operator ${action}`
+      tools.locator(`[data-action="${action}"]`),
+      `tools panel is missing rule operator ${action}`
     ).toHaveCount(1)
   }
   // …the free-text annotation is offered…
-  await expect(palette.locator('[data-action="create.free-text"]')).toHaveCount(1)
+  await expect(tools.locator('[data-action="create.free-text"]')).toHaveCount(1)
   // …and nothing outside the supported object-type set is offered as a create
   // entry (the library may add symbol variants, but never an unsupported type).
-  const createActions = await palette
+  const createActions = await tools
     .locator('[data-action^="create."]')
     .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-action') ?? ''))
   // The exact create.* count is a knowable constant, not a loose lower bound:
   // `dmtLibraryItems('MT_EEPC')` is the frozen 34-presentation EEPC inventory
-  // (src/aris/canvas/dmtLibrary.ts), and `paletteProvider.getPaletteEntries()`
-  // emits exactly one `create.*` per row plus one `create.free-text`
+  // (src/aris/canvas/dmtLibrary.ts), and ArisToolsPanel emits exactly one
+  // `create.*` per row plus one `create.free-text`
   // ⇒ 34 + 1 = 35. Spelled out (not imported) so a silent loss of any of the 17
   // non-default symbol presentations (system-function, process-interface,
   // committee-team, SLA, law-regulation, internal/external person, risk, …) is
   // caught here instead of hiding behind a `> 17` tolerance.
   const EEPC_CREATE_ENTRY_COUNT = 35
   expect(createActions.length).toBe(EEPC_CREATE_ENTRY_COUNT)
-  await expect(palette.locator('[data-action^="create."]')).toHaveCount(EEPC_CREATE_ENTRY_COUNT)
+  await expect(tools.locator('[data-action^="create."]')).toHaveCount(EEPC_CREATE_ENTRY_COUNT)
   for (const action of createActions) {
     if (action === 'create.free-text') continue
     const objectType = action.slice('create.'.length).split('.')[0]
     expect(
       SUPPORTED_OBJECT_TYPES_LOWER.has(objectType),
-      `palette offers create action for unsupported object type: ${action}`
+      `tools panel offers create action for unsupported object type: ${action}`
     ).toBe(true)
   }
 
   const canvasBox = await page.locator('[data-orbitpm-aris-canvas]').boundingBox()
   expect(canvasBox).not.toBeNull()
-  // Drop point: inside the canvas, clear of the ~360px DMT-library palette
-  // (leading edge) and of the minimap (trailing top corner).
+  // Drop point: inside the canvas and clear of the minimap (trailing top corner).
   const dropX = canvasBox!.x + canvasBox!.width * 0.6
   const dropY = canvasBox!.y + canvasBox!.height * 0.75
 
@@ -283,7 +281,8 @@ test('the palette offers a create entry for every supported ARIS object type and
   ]
   for (const action of authoringActions) {
     const before = await occurrencesOf(page, modelId).count()
-    await palette.locator(`[data-action="${action}"]`).click()
+    await page.locator('[data-orbitpm-aris-rail-tab="tools"]').click()
+    await tools.locator(`[data-action="${action}"]`).click()
     await page.mouse.move(dropX, dropY)
     await page.mouse.down()
     await page.mouse.up()

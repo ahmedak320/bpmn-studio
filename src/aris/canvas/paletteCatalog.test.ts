@@ -48,21 +48,20 @@ describe('authoritative DMT drawing library (Wave 6, V10)', () => {
     expect(systemFunction?.id).toBe('create.ot_func.st_sys_func_act')
   })
 
-  it('exposes the catalog object type / SymbolNum and group on every create entry', () => {
+  it('exposes the catalog object type / SymbolNum and group on every placement target', () => {
     harness = bootCanvas()
-    const entries = harness.canvas.palette.getPaletteEntries()
+    const targets = harness.canvas.palette.targets()
 
-    const systemFunction = Object.values(entries).find(
-      (entry) => entry.arisObjectType === 'OT_FUNC' && entry.arisSymbolNum === 'ST_SYS_FUNC_ACT'
+    const systemFunction = targets.find(
+      (target) => target.objectType === 'OT_FUNC' && target.symbolNum === 'ST_SYS_FUNC_ACT'
     )
     expect(systemFunction).toBeTruthy()
     expect(systemFunction?.group).toBe('flow-decisions')
-    expect(systemFunction?.html).toContain('aris-palette-entry__label')
-    expect(systemFunction?.html).toContain('data-aris-descriptor-fingerprint')
+    expect(systemFunction?.descriptorFingerprint).toBeTruthy()
     expect(systemFunction?.title).toBeTruthy()
 
     // Organizational groups land under their catalog palette group.
-    const role = Object.values(entries).find((entry) => entry.arisObjectType === 'OT_PERS_TYPE')
+    const role = targets.find((target) => target.objectType === 'OT_PERS_TYPE')
     expect(role?.group).toBe('roles-organization')
   })
 
@@ -97,21 +96,7 @@ describe('authoritative DMT drawing library (Wave 6, V10)', () => {
     }
   })
 
-  it('builds a searchable, collapsible and named palette surface', () => {
-    harness = bootCanvas()
-    const { container } = harness
-    expect(
-      container
-        .querySelector<HTMLInputElement>('.aris-library-search__input')
-        ?.getAttribute('aria-label')
-    ).toBeTruthy()
-    expect(container.querySelectorAll('.aris-library-group__toggle').length).toBeGreaterThanOrEqual(
-      6
-    )
-    expect(container.querySelector('.djs-palette')?.getAttribute('aria-label')).toBeTruthy()
-  })
-
-  it('places a catalog-disabled variant with its exact descriptor identity', () => {
+  it('places a catalog-disabled variant with its exact descriptor identity', async () => {
     harness = bootCanvas()
     const { canvas } = harness
     const target = canvas.palette
@@ -145,18 +130,66 @@ describe('authoritative DMT drawing library (Wave 6, V10)', () => {
     expect(
       graphics.querySelector('[data-aris-kind="occurrence"]')?.getAttribute('data-aris-icon')
     ).toBe('service-level-shield')
+    await new Promise((resolve) => setTimeout(resolve, 0))
   })
 
-  it('rebuilds the visible library when the active model type changes', () => {
+  it('arms placement from a button outside the canvas container', async () => {
+    harness = bootCanvas()
+    const { canvas, container } = harness
+    const target = canvas.palette.targets().find((candidate) => candidate.catalogId === 'epc.event')
+    if (!target) throw new Error('The event target is missing.')
+
+    const button = document.createElement('button')
+    document.body.append(button)
+    expect(container.contains(button)).toBe(false)
+
+    let draft: ReturnType<typeof canvas.palette.startPlacement> | null = null
+    button.addEventListener('click', (event) => {
+      event.stopPropagation()
+      draft = canvas.palette.startPlacement(event, target)
+    })
+    button.click()
+    expect(draft).not.toBeNull()
+
+    const root = canvas.canvas.getRootElement()
+    canvas.eventBus.fire('create.end', {
+      context: {
+        shape: draft,
+        elements: [draft],
+        canExecute: true,
+        target: root,
+        hints: {}
+      },
+      shape: draft,
+      elements: [draft],
+      snapped: { x: true, y: true },
+      x: 240,
+      y: 180
+    })
+
+    const occurrence = canvas.document.models.get(canvas.activeModelId)?.occurrences[0]
+    expect(occurrence?.symbol).toBe('ST_EV')
+    expect(canvas.document.objectDefinitions.get(occurrence?.definitionId ?? '')?.type).toBe(
+      'OT_EVT'
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    button.remove()
+  })
+
+  it('returns targets for the active model type after a model switch', () => {
     const fixture = twoModelDocument()
     harness = bootCanvas({ document: fixture.document, modelId: fixture.first })
-    expect(harness.container.querySelector('[data-aris-catalog-id="epc.event"]')).toBeTruthy()
+    expect(
+      harness.canvas.palette.targets().some((target) => target.catalogId === 'epc.event')
+    ).toBe(true)
 
     harness.canvas.setActiveModel(fixture.second)
 
-    expect(harness.container.querySelector('[data-aris-catalog-id="epc.event"]')).toBeNull()
     expect(
-      harness.container.querySelector('[data-aris-catalog-id="vacd.start-chain"]')
-    ).toBeTruthy()
+      harness.canvas.palette.targets().some((target) => target.catalogId === 'epc.event')
+    ).toBe(false)
+    expect(
+      harness.canvas.palette.targets().some((target) => target.catalogId === 'vacd.start-chain')
+    ).toBe(true)
   })
 })
