@@ -86,6 +86,9 @@ import {
 import {
   LITE_PROVIDERS,
   OPENROUTER_STRUCTURED_OUTPUT_MODELS,
+  PDF_CREATE_MODEL,
+  PDF_CREATE_MODEL_LABEL,
+  PDF_CREATE_PROVIDER,
   defaultLiteModelId,
   firstLiteModelForAttachment,
   getLiteProvider,
@@ -354,8 +357,22 @@ export function ArisGenerationPanel({
   const trimmedHint = hint.trim()
   const attachment = tab === 'document' ? documentFile : descriptionPdf
 
+  // P13 production lock (implementation_plan.md #9 / lane L-P13-prod, user
+  // directive 2026-08-02): a create-from-PDF request is ALWAYS routed to Claude
+  // Opus 4.8 via OpenRouter's verified native-PDF document-vision route,
+  // regardless of the user's provider/model selection — no other model may ever
+  // receive a create-from-PDF request. The lock is a DERIVED override: it never
+  // mutates the persisted selection, so the other tabs and the non-PDF paths
+  // keep exactly the provider/model the user chose. Whenever the active
+  // attachment is a PDF (on either the Description or the PDF/Picture tab), the
+  // send, the capability recheck and the key/submit gates all use the effective
+  // (locked) route below.
+  const pdfCreateLockActive = attachment?.accepted.kind === 'pdf'
+  const effectiveProviderId: LiteProviderId = pdfCreateLockActive ? PDF_CREATE_PROVIDER : providerId
+  const effectiveModelId = pdfCreateLockActive ? PDF_CREATE_MODEL : modelId
+
   const provider = getLiteProvider(providerId)
-  const providerReady = hasKey(providerId)
+  const providerReady = hasKey(effectiveProviderId)
   const noKeysAtAll = LITE_PROVIDERS.every((entry) => !hasKey(entry.id))
 
   // Keep every AI surface on the one explicit provider/model selection. There
@@ -477,10 +494,21 @@ export function ArisGenerationPanel({
   const pickAttachment = useCallback(
     (file: File, target: 'description-pdf' | 'document', modelOverride?: string) => {
       setStatus(null)
+      // P13 lock: a PDF is ALWAYS checked (and later sent) against the locked
+      // Claude Opus 4.8 route, never the user's selected provider/model — so a
+      // PDF picked while an unreviewed/incapable model is selected is accepted
+      // by the locked route rather than rejected, and can never be sent on any
+      // other model. Images keep the user's selection (and the §16.6 M7 switch).
+      const isPdf = classifyArisAiAttachmentFile(file)?.kind === 'pdf'
       // `modelOverride` lets the one-click switch re-check against the model it
       // just selected without waiting for the state update to flush (§16.6 M7).
-      const effectiveModel = modelOverride ?? modelId
-      const check = checkArisAiAttachment({ providerId, modelId: effectiveModel, file })
+      const checkProviderId = isPdf ? PDF_CREATE_PROVIDER : providerId
+      const effectiveModel = isPdf ? PDF_CREATE_MODEL : (modelOverride ?? modelId)
+      const check = checkArisAiAttachment({
+        providerId: checkProviderId,
+        modelId: effectiveModel,
+        file
+      })
       if (!check.ok) {
         setAttachmentNotice(check.message)
         if (target === 'document') setDocumentFile(null)
@@ -592,15 +620,17 @@ export function ArisGenerationPanel({
         if (callProvider) return callProvider(request, signal)
         // Enum-locked json_schema on structured-output OpenRouter routes (M5):
         // CT_FLOW becomes unrepresentable. Every other route keeps json_object.
+        // The effective (P13-locked for PDFs) route is what actually goes out.
         const responseSchema =
-          providerId === 'openrouter' && OPENROUTER_STRUCTURED_OUTPUT_MODELS.has(modelId.trim())
+          effectiveProviderId === 'openrouter' &&
+          OPENROUTER_STRUCTURED_OUTPUT_MODELS.has(effectiveModelId.trim())
             ? { name: 'aris_ai_draft_v1', schema: buildArisAiDraftJsonSchema() }
             : undefined
         const call = makeBrowserCallLLM(
           {
-            providerId,
-            model: modelId,
-            apiKey: getKey(providerId),
+            providerId: effectiveProviderId,
+            model: effectiveModelId,
+            apiKey: getKey(effectiveProviderId),
             referer: typeof location !== 'undefined' ? location.origin : undefined,
             title: 'OrbitPM ARIS Studio Lite'
           },
@@ -619,7 +649,7 @@ export function ArisGenerationPanel({
         )
         return typeof result === 'string' ? result : JSON.stringify(result)
       },
-    [callProvider, modelId, providerId]
+    [callProvider, effectiveModelId, effectiveProviderId]
   )
 
   const createWithAi = useCallback(async () => {
@@ -639,9 +669,12 @@ export function ArisGenerationPanel({
       // the picker's verdict can be stale if the model changed after picking.
       let encoded: GenAttachment | undefined
       if (attachment) {
+        // §16.6 step 1-2 against the EFFECTIVE route: for a PDF this is the
+        // P13-locked Claude Opus 4.8 route, so the send can never fall onto the
+        // user's selected (possibly incapable) model.
         const recheck = checkArisAiAttachment({
-          providerId,
-          modelId,
+          providerId: effectiveProviderId,
+          modelId: effectiveModelId,
           file: attachment.file
         })
         if (!recheck.ok) {
@@ -756,12 +789,12 @@ export function ArisGenerationPanel({
     busy,
     buildSend,
     documentFile,
+    effectiveModelId,
+    effectiveProviderId,
     encodeAttachment,
-    modelId,
     name,
     onCreateModel,
     prompt,
-    providerId,
     tab,
     trimmedDescription
   ])
@@ -905,6 +938,49 @@ export function ArisGenerationPanel({
           </select>
         </label>
       )}
+    </>
+  )
+
+  // P13 lock: while a PDF is attached the provider/model picker is replaced by a
+  // disabled, non-interactive display of the forced Claude Opus 4.8 route, with
+  // a clear affordance telling the user create-from-PDF always uses that model.
+  // Reuses the catalog label (PDF_CREATE_MODEL_LABEL) — no new label literal.
+  const lockedPdfControls = (
+    <>
+      <label style={labelStyle}>
+        <span style={labelText}>{tk('aris.create.provider', 'Provider')}</span>
+        <select
+          value={PDF_CREATE_PROVIDER}
+          data-orbitpm-aris-create-provider=""
+          data-orbitpm-aris-create-pdf-locked=""
+          disabled
+          style={inputStyle}
+        >
+          <option value={PDF_CREATE_PROVIDER} lang="en" dir="ltr">
+            {getLiteProvider(PDF_CREATE_PROVIDER).label}
+          </option>
+        </select>
+      </label>
+      <label style={labelStyle}>
+        <span style={labelText}>{tk('aris.create.model', 'Model')}</span>
+        <input
+          type="text"
+          value={PDF_CREATE_MODEL_LABEL}
+          data-orbitpm-aris-create-model=""
+          data-orbitpm-aris-create-pdf-locked=""
+          disabled
+          readOnly
+          lang="en"
+          dir="ltr"
+          style={inputStyle}
+        />
+      </label>
+      <div style={infoBox} data-orbitpm-aris-create-pdf-lock="">
+        {tk(
+          'aris.create.pdf.lock',
+          'Create-from-PDF always uses Claude Opus 4.8 — the only model verified to read a PDF faithfully — so the model picker is locked while a PDF is attached. Remove the PDF to choose another model.'
+        )}
+      </div>
     </>
   )
 
@@ -1057,7 +1133,7 @@ export function ArisGenerationPanel({
               />
             </label>
 
-            {providerControls}
+            {pdfCreateLockActive ? lockedPdfControls : providerControls}
 
             <label style={labelStyle}>
               <span style={labelText}>{t('aris.ai.description')}</span>
@@ -1159,7 +1235,7 @@ export function ArisGenerationPanel({
               />
             </label>
 
-            {providerControls}
+            {pdfCreateLockActive ? lockedPdfControls : providerControls}
 
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button

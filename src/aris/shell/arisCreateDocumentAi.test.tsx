@@ -254,31 +254,52 @@ describe('§4.3/§16.7 — cancellation on the PDF/Picture tab', () => {
   })
 })
 
-describe('§16.6 M7 — PDFs are GATED on image-only models, with a one-click switch', () => {
-  it('offers a switch to a pdf-capable model when a PDF is picked on the image-only qwen route', () => {
-    renderPanel()
-    // qwen3-vl is vision but PDF-gated (the ZDR-leak gate) — a PDF must never
-    // reach it.
+function lockAffordance(): string {
+  return panel().querySelector('[data-orbitpm-aris-create-pdf-lock]')?.textContent ?? ''
+}
+
+function lockedModelInput(): HTMLInputElement | null {
+  return panel().querySelector<HTMLInputElement>(
+    'input[data-orbitpm-aris-create-model][data-orbitpm-aris-create-pdf-locked]'
+  )
+}
+
+describe('L-P13-prod — a PDF is LOCKED to Claude Opus 4.8, superseding the §16.6 M7 switch', () => {
+  it('accepts a PDF picked on the image-only qwen route (no switch offered) and locks the picker to Opus', async () => {
+    // qwen3-vl is vision but PDF-gated (the ZDR-leak gate) — WITHOUT the lock a
+    // PDF picked here would be rejected with a one-click switch. The P13 lock
+    // instead forces the create-from-PDF route to Claude Opus 4.8, so the PDF is
+    // accepted regardless of the selected model and no switch is ever offered.
+    const harness = renderPanel()
     selectModel('qwen/qwen3-vl-235b-a22b-instruct')
     expect(getLiteModelCapabilities('openrouter', 'qwen/qwen3-vl-235b-a22b-instruct').pdf).toBe(
       false
     )
+    // The PDF-create route resolves to the locked Opus model, not a registry scan.
+    expect(firstLiteModelForAttachment('openrouter', 'pdf')).toBe('anthropic/claude-opus-4.8')
+
     click('[data-orbitpm-aris-create-document-tab]')
     chooseFile(DOCUMENT_FILE_INPUT, pdfFile('spec.pdf'))
 
-    // The capability rejection is surfaced, and a switch is offered.
-    expect(noticeText()).toContain('cannot accept a PDF')
-    const expected = firstLiteModelForAttachment('openrouter', 'pdf')!
-    expect(getLiteModelCapabilities('openrouter', expected).pdf).toBe(true)
-    const button = switchButton()
-    expect(button).not.toBeNull()
-    expect(button!.textContent).toContain(expected)
-
-    // Clicking adopts the suggested model and the PDF becomes accepted.
-    fireEvent.click(button!)
-    expect(modelValue()).toBe(expected)
+    // Accepted (no rejection, no switch) and the picker is locked to Opus 4.8.
     expect(noticeText()).toContain('Attached spec.pdf')
     expect(switchButton()).toBeNull()
+    const locked = lockedModelInput()
+    expect(locked).not.toBeNull()
+    expect(locked!.disabled).toBe(true)
+    expect(locked!.value).toContain('Claude Opus 4.8')
+    expect(lockAffordance()).toContain('Claude Opus 4.8')
+
+    // And the PDF actually drives a generation despite qwen being selected —
+    // proof it was accepted and sent on the locked route, not qwen.
+    submit()
+    await waitFor(() => expect(harness.created.length).toBe(1))
+    expect(harness.requests[0]!.attachment?.kind).toBe('pdf')
+
+    // Removing the PDF unlocks the picker and restores the user's selection.
+    click('[data-orbitpm-aris-create-document-clear]')
+    expect(lockedModelInput()).toBeNull()
+    expect(modelValue()).toBe('qwen/qwen3-vl-235b-a22b-instruct')
   })
 
   it('offers a switch to an image-capable model when a PNG is picked on the text-only glm route', () => {

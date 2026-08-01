@@ -2438,6 +2438,8 @@ export const en = {
     'The workbook was rejected because a row references an object type this build does not recognize.',
   'aris.excel.issue.unknown-symbol-type':
     'The workbook was rejected because a row references a symbol type this build does not recognize.',
+  'aris.excel.issue.symbol-type-inferred':
+    'A drawable symbol type was inferred from the object type and name.',
   'aris.excel.issue.invalid-symbol-type':
     "The workbook was rejected because a row's symbol type does not match its object type.",
   'aris.excel.issue.invalid-connection-type':
@@ -2452,6 +2454,8 @@ export const en = {
     'The workbook was rejected because more than one row declares the same identifier.',
   'aris.excel.issue.missing-reference':
     'The workbook was rejected because a row references an identifier that does not exist in the workbook.',
+  'aris.excel.issue.reference-normalized':
+    'A reference was normalized to the uniquely matching workbook identifier.',
   'aris.excel.issue.object-definition-conflict':
     'The workbook was rejected because two rows define the same object with conflicting data.',
   'aris.excel.issue.connection-endpoint-cycle':
@@ -2462,6 +2466,8 @@ export const en = {
     'A model is approaching the safe limit for control-flow objects.',
   'aris.excel.issue.object-transaction-limit':
     'The workbook was rejected because it contains more objects than the safe single-import limit allows.',
+  'aris.excel.issue.connections-auto-chained':
+    'Control-flow objects were connected in workbook order because the model had no connection rows.',
   'aris.excel.issue.empty-workbook':
     'The workbook was rejected because it contains no importable content.',
   'aris.excel.issue.internal-error':
@@ -2476,12 +2482,22 @@ export const en = {
     'Open the workbook in a spreadsheet application, let it recalculate, save it, then import it again.',
   'aris.excel.guidance.cached-formula-value':
     'Verify the cached formula values are correct before relying on the imported data.',
+  'aris.excel.guidance.value-required':
+    'Fill in the required cell value, then import the workbook again.',
   'aris.excel.guidance.missing-reference':
     'Add the missing referenced row to the workbook, or remove the reference, then import it again.',
   'aris.excel.guidance.duplicate-id':
     'Make every identifier in the workbook unique, then import it again.',
   'aris.excel.guidance.unknown-object-type':
     'Correct the object type to a value from the official ARIS workbook template, then import it again.',
+  'aris.excel.guidance.unknown-symbol-type':
+    'Verify the custom symbol is intentional; it will use the visible fallback when no exact drawing exists.',
+  'aris.excel.guidance.symbol-type-inferred':
+    'Review the inferred symbol and enter an explicit symbol type if a different presentation is intended.',
+  'aris.excel.guidance.reference-normalized':
+    'Use the canonical identifier spelling shown in the workbook to avoid this repair on future imports.',
+  'aris.excel.guidance.connections-auto-chained':
+    'Review the generated sequence and add explicit connection rows when branching or a different order is intended.',
   'aris.excel.guidance.invalid-route-points':
     "Correct the connection's route points to valid coordinates, then import it again.",
   'aris.excel.guidance.control-flow-object-limit':
@@ -2791,6 +2807,8 @@ export const en = {
   'aris.create.attachment.selected': 'Attached {name} ({size}, {type}).',
   'aris.create.attachment.switchModel': 'Switch to {model} and attach',
   'aris.create.attachment.tooLarge': '{name} is too large to attach for {provider}.',
+  'aris.create.pdf.lock':
+    'Create-from-PDF always uses Claude Opus 4.8 — the only model verified to read a PDF faithfully — so the model picker is locked while a PDF is attached. Remove the PDF to choose another model.',
   'aris.create.attachment.unsupportedType':
     'Only PDF, PNG, JPEG, WebP, and GIF files can be attached.',
   'aris.create.attachments.label':
@@ -5421,6 +5439,7 @@ export const ar: Record<keyof typeof en, string> = {
     'رُفض المصنف لأن أحد الصفوف يشير إلى نوع كائن لا يتعرف عليه هذا الإصدار.',
   'aris.excel.issue.unknown-symbol-type':
     'رُفض المصنف لأن أحد الصفوف يشير إلى نوع رمز لا يتعرف عليه هذا الإصدار.',
+  'aris.excel.issue.symbol-type-inferred': 'تم استنتاج نوع رمز قابل للرسم من نوع الكائن واسمه.',
   'aris.excel.issue.invalid-symbol-type':
     'رُفض المصنف لأن نوع الرمز في أحد الصفوف لا يطابق نوع الكائن الخاص به.',
   'aris.excel.issue.invalid-connection-type':
@@ -5433,6 +5452,7 @@ export const ar: Record<keyof typeof en, string> = {
   'aris.excel.issue.duplicate-id': 'رُفض المصنف لأن أكثر من صف يعلن المعرّف نفسه.',
   'aris.excel.issue.missing-reference':
     'رُفض المصنف لأن أحد الصفوف يشير إلى معرّف غير موجود في المصنف.',
+  'aris.excel.issue.reference-normalized': 'تم توحيد مرجع إلى معرّف المصنف الوحيد المطابق له.',
   'aris.excel.issue.object-definition-conflict':
     'رُفض المصنف لأن صفين يعرّفان الكائن نفسه ببيانات متعارضة.',
   'aris.excel.issue.connection-endpoint-cycle':
@@ -5443,6 +5463,8 @@ export const ar: Record<keyof typeof en, string> = {
     'يقترب أحد النماذج من الحد الآمن لعدد كائنات تدفق التحكم.',
   'aris.excel.issue.object-transaction-limit':
     'رُفض المصنف لأنه يحتوي على كائنات أكثر من الحد الآمن لعملية استيراد واحدة.',
+  'aris.excel.issue.connections-auto-chained':
+    'تم ربط كائنات تدفق التحكم وفق ترتيب المصنف لأن النموذج لا يحتوي على صفوف روابط.',
   'aris.excel.issue.empty-workbook': 'رُفض المصنف لأنه لا يحتوي على محتوى قابل للاستيراد.',
   'aris.excel.issue.internal-error': 'تعذّرت معالجة المصنف بسبب خطأ داخلي غير متوقع.',
   'aris.excel.guidance.legacy-bpmn-workbook':
@@ -5455,11 +5477,20 @@ export const ar: Record<keyof typeof en, string> = {
     'افتح المصنف في برنامج جداول بيانات، واسمح له بإعادة الحساب، ثم احفظه واستورده مرة أخرى.',
   'aris.excel.guidance.cached-formula-value':
     'تحقق من صحة القيم المخزنة مؤقتًا للمعادلات قبل الاعتماد على البيانات المستوردة.',
+  'aris.excel.guidance.value-required': 'املأ قيمة الخلية المطلوبة، ثم استورد المصنف مرة أخرى.',
   'aris.excel.guidance.missing-reference':
     'أضف الصف المرجعي المفقود إلى المصنف، أو احذف الإشارة إليه، ثم استورده مرة أخرى.',
   'aris.excel.guidance.duplicate-id': 'اجعل كل معرّف في المصنف فريدًا، ثم استورده مرة أخرى.',
   'aris.excel.guidance.unknown-object-type':
     'صحّح نوع الكائن إلى قيمة من قالب مصنف ARIS الرسمي، ثم استورده مرة أخرى.',
+  'aris.excel.guidance.unknown-symbol-type':
+    'تحقق من أن الرمز المخصص مقصود؛ سيُستخدم البديل المرئي عند عدم توفر رسم مطابق تمامًا.',
+  'aris.excel.guidance.symbol-type-inferred':
+    'راجع الرمز المستنتج وأدخل نوع رمز صريحًا إذا كان المقصود عرضًا مختلفًا.',
+  'aris.excel.guidance.reference-normalized':
+    'استخدم كتابة المعرّف القياسية الظاهرة في المصنف لتجنب هذا الإصلاح في عمليات الاستيراد اللاحقة.',
+  'aris.excel.guidance.connections-auto-chained':
+    'راجع التسلسل المُنشأ وأضف صفوف روابط صريحة عند الحاجة إلى تفرع أو ترتيب مختلف.',
   'aris.excel.guidance.invalid-route-points':
     'صحّح نقاط مسار الرابط إلى إحداثيات صالحة، ثم استورده مرة أخرى.',
   'aris.excel.guidance.control-flow-object-limit':
@@ -5756,6 +5787,8 @@ export const ar: Record<keyof typeof en, string> = {
   'aris.create.attachment.selected': 'أُرفِق {name} ({size}، {type}).',
   'aris.create.attachment.switchModel': 'التبديل إلى {model} والإرفاق',
   'aris.create.attachment.tooLarge': 'حجم {name} أكبر من أن يُرفَق لدى {provider}.',
+  'aris.create.pdf.lock':
+    'يستخدم الإنشاء من ملف PDF دائمًا Claude Opus 4.8 — النموذج الوحيد المُتحقَّق من قراءته لملف PDF بدقة — لذا يُقفَل اختيار النموذج أثناء إرفاق ملف PDF. أزِل ملف PDF لاختيار نموذج آخر.',
   'aris.create.attachment.unsupportedType': 'يمكن إرفاق ملفات PDF وPNG وJPEG وWebP وGIF فقط.',
   'aris.create.attachments.label':
     'مرفق اختياري — يُقرأ ملف DOCX على هذا الجهاز، ويُرسَل ملف PDF إلى المزوّد',

@@ -175,7 +175,7 @@ describe('§16.2 — DOCX is extracted locally and never uploaded', () => {
 })
 
 describe('§16.2/§16.3 — the PDF capability gate', () => {
-  it('refuses a PDF on a route whose model is not verified for documents', () => {
+  it('locks a PDF to Claude Opus 4.8 even when an unreviewed model is selected (P13 supersedes the unverified rejection)', () => {
     renderPanel()
     // The default OpenRouter route exposes a free-text model id (allowCustomModel),
     // so an unreviewed id is typed directly the way a drifted registry entry would.
@@ -184,9 +184,24 @@ describe('§16.2/§16.3 — the PDF capability gate', () => {
 
     chooseFile('input[accept="application/pdf,.pdf"]', pdfFile())
 
-    expect(
-      panel().querySelector('[data-orbitpm-aris-create-attachment-notice]')?.textContent
-    ).toContain('not a reviewed model')
+    // WITHOUT the P13 lock this PDF would be rejected as "not a reviewed model".
+    // The lock forces the create-from-PDF route to Claude Opus 4.8, so the PDF is
+    // accepted and the picker is locked to that model — a PDF can never be sent
+    // on the unreviewed (or any non-Opus) model.
+    const notice = panel().querySelector(
+      '[data-orbitpm-aris-create-attachment-notice]'
+    )?.textContent
+    expect(notice).toContain('process.pdf')
+    expect(notice).not.toContain('not a reviewed model')
+    const locked = panel().querySelector<HTMLInputElement>(
+      'input[data-orbitpm-aris-create-model][data-orbitpm-aris-create-pdf-locked]'
+    )
+    expect(locked).not.toBeNull()
+    expect(locked!.disabled).toBe(true)
+    expect(locked!.value).toContain('Claude Opus 4.8')
+    expect(panel().querySelector('[data-orbitpm-aris-create-pdf-lock]')?.textContent).toContain(
+      'Claude Opus 4.8'
+    )
   })
 
   it('refuses an oversized PDF at the 20 MiB boundary before reading a byte', () => {

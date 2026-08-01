@@ -86,6 +86,41 @@ const OPENROUTER_MODELS: ModelSpec[] = [
 ]
 
 /**
+ * P13 production lock (implementation_plan.md authorized change #9 / lane
+ * L-P13-prod, user directive 2026-08-02). Create-from-PDF is pinned to Claude
+ * Opus 4.8 — the ONLY model that faithfully reads a NATIVE PDF in the P13 A/B
+ * (similarity 0.96; the next best native-PDF reader scored ≤0.47, gemini ≤0.15,
+ * qwen 0.0). The verified browser-callable route is OpenRouter's document-vision
+ * slug `anthropic/claude-opus-4.8`. Every create-from-PDF request is forced onto
+ * this exact provider+model regardless of the user's selection; no other model
+ * may ever receive a create-from-PDF request. This is the single source of truth
+ * for the lock — do not scatter the literal.
+ */
+export const PDF_CREATE_PROVIDER: LiteProviderId = 'openrouter'
+export const PDF_CREATE_MODEL = 'anthropic/claude-opus-4.8'
+
+/** The single locked create-from-PDF model id (see {@link PDF_CREATE_MODEL}). */
+export function pdfCreateModel(): string {
+  return PDF_CREATE_MODEL
+}
+
+/** The forced provider+model route for every create-from-PDF request. */
+export function pdfCreateRoute(): {
+  readonly providerId: LiteProviderId
+  readonly modelId: string
+} {
+  return { providerId: PDF_CREATE_PROVIDER, modelId: PDF_CREATE_MODEL }
+}
+
+/**
+ * The catalog display label for the locked create-from-PDF model, reused as the
+ * (disabled) affordance in the PDF picker so no new catalog/label literal is
+ * introduced. Falls back to the id if the curated list is ever renamed.
+ */
+export const PDF_CREATE_MODEL_LABEL =
+  OPENROUTER_MODELS.find((model) => model.id === PDF_CREATE_MODEL)?.label ?? PDF_CREATE_MODEL
+
+/**
  * Per-model capability overrides for reviewed OpenRouter slugs, consulted by
  * {@link getLiteModelCapabilities} BEFORE the `anthropic/`/`google/` prefix
  * heuristic. Only slugs whose selected ZDR endpoint capability was reviewed by
@@ -206,6 +241,10 @@ export function firstLiteModelForAttachment(
   providerId: LiteProviderId,
   kind: 'pdf' | 'image'
 ): string | null {
+  // P13 production lock: a create-from-PDF request always routes to Claude
+  // Opus 4.8 (the only model verified to read a native PDF), so the PDF
+  // "first capable model" is the locked model itself, not a registry scan.
+  if (kind === 'pdf' && providerId === PDF_CREATE_PROVIDER) return PDF_CREATE_MODEL
   const provider = getLiteProvider(providerId)
   for (const model of provider.models) {
     const capabilities = getLiteModelCapabilities(providerId, model.id)

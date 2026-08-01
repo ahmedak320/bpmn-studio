@@ -2,9 +2,14 @@ import { describe, expect, it } from 'vitest'
 import {
   LITE_PROVIDERS,
   OPENROUTER_STRUCTURED_OUTPUT_MODELS,
+  PDF_CREATE_MODEL,
+  PDF_CREATE_MODEL_LABEL,
+  PDF_CREATE_PROVIDER,
   defaultLiteModelId,
   firstLiteModelForAttachment,
   getLiteModelCapabilities,
+  pdfCreateModel,
+  pdfCreateRoute,
   type LiteProviderId
 } from '../providersLite'
 
@@ -103,9 +108,37 @@ describe('Lite model capability registry', () => {
       const imageModel = firstLiteModelForAttachment('openrouter', 'image')
       expect(imageModel).not.toBeNull()
       expect(getLiteModelCapabilities('openrouter', imageModel!).images).toBe(true)
-      // The first curated pdf-capable model is gemini-3.5-flash-lite (the
-      // curated text routes carry pdf but the first vision slot is gemini).
+      // The first image-capable curated route is the Claude Opus 4.8 slug.
       expect(firstLiteModelForAttachment('openrouter', 'image')).toBe('anthropic/claude-opus-4.8')
+    })
+  })
+
+  describe('L-P13-prod — create-from-PDF is LOCKED to Claude Opus 4.8', () => {
+    it('pins the PDF-create route to OpenRouter anthropic/claude-opus-4.8', () => {
+      expect(PDF_CREATE_PROVIDER).toBe('openrouter')
+      expect(PDF_CREATE_MODEL).toBe('anthropic/claude-opus-4.8')
+      expect(pdfCreateModel()).toBe('anthropic/claude-opus-4.8')
+      expect(pdfCreateRoute()).toEqual({
+        providerId: 'openrouter',
+        modelId: 'anthropic/claude-opus-4.8'
+      })
+    })
+
+    it('the locked model is itself PDF-capable and verified (happy path never fails closed)', () => {
+      expect(getLiteModelCapabilities(PDF_CREATE_PROVIDER, PDF_CREATE_MODEL)).toMatchObject({
+        pdf: true,
+        verified: true
+      })
+    })
+
+    it('firstLiteModelForAttachment(openrouter, "pdf") is the locked model, not a registry scan', () => {
+      // Before the lock the scan returned the first curated text route (glm-5.2);
+      // the PDF path must now always resolve to Claude Opus 4.8.
+      expect(firstLiteModelForAttachment('openrouter', 'pdf')).toBe('anthropic/claude-opus-4.8')
+    })
+
+    it('reuses the catalog label for the locked model (no new label literal)', () => {
+      expect(PDF_CREATE_MODEL_LABEL).toBe('Claude Opus 4.8 (Anthropic)')
     })
   })
 })
