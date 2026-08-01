@@ -537,9 +537,27 @@ export class ArisCanvasSync {
 
   private syncOccurrences(model: ArisModel, desired: Set<string>, dirty: Element[]): void {
     const definitions = this.store.document.objectDefinitions
+    // VACD grouping chevrons (Flags bit 16) and any occurrence that SOURCES a
+    // hierarchy edge (`CT_IS_PRCS_ORNT_SUPER`) are drawn as background container
+    // frames, not full opaque symbols (convention manual p.18). Build the set of
+    // hierarchy-edge sources from the same connection-definition map §syncConnections uses.
+    const connectionDefinitions = this.store.document.connectionDefinitions
+    const hierarchySources = new Set<string>()
+    for (const connection of model.connectionOccurrences) {
+      const definition = connectionDefinitions.get(connection.definitionId)
+      if (definition?.type === 'CT_IS_PRCS_ORNT_SUPER') {
+        hierarchySources.add(connection.sourceOccurrenceId)
+      }
+    }
     for (const occurrence of model.occurrences) {
       desired.add(occurrence.id)
       const definition = definitions.get(occurrence.definitionId)
+      const flagBits = Number.parseInt(occurrence.rawAttributes['Flags'] ?? '0', 10)
+      const isContainer =
+        model.type === 'MT_VAL_ADD_CHN_DGM' &&
+        occurrence.symbol === 'ST_VAL_ADD_CHN_SML_1' &&
+        ((Number.isFinite(flagBits) && (flagBits & 16) !== 0) ||
+          hierarchySources.has(occurrence.id))
       const businessObject: ArisOccurrenceBusinessObject & {
         readonly zOrder: number | null
       } = Object.freeze({
@@ -551,6 +569,7 @@ export class ArisCanvasSync {
         objectType: definition?.type ?? 'OT_UNKNOWN',
         symbolNum: occurrence.symbol,
         name: readLocalized(definition?.names, this.displayLocaleId),
+        isContainer,
         // §12.2: the occurrence's own pen/brush overrides the symbol's authored
         // appearance. The renderer cannot reach the working document, so a
         // style that is not carried here is a style that never draws.
@@ -856,8 +875,24 @@ export class ArisCanvasSync {
       const kind = arisBusinessObject(element)?.kind
       return kind === 'label' || kind === 'connectionLabel' ? 1 : 0
     }
+    // VACD grouping chevrons carry a later z-order than their leaves (container
+    // z=59 vs leaf z=46/48), so honouring z alone paints them on top. Tier them
+    // so lanes (0) then container frames (1) always precede the rest (2), and
+    // only break ties inside a tier by the authored z-order (convention p.18).
+    const tierOf = (element: Element): number => {
+      const businessObject = arisBusinessObject(element)
+      if (businessObject?.kind === 'lane') return 0
+      if (
+        businessObject?.kind === 'occurrence' &&
+        (businessObject as { readonly isContainer?: boolean }).isContainer === true
+      ) {
+        return 1
+      }
+      return 2
+    }
     children.sort(
       (left, right) =>
+        tierOf(left) - tierOf(right) ||
         zOrderOf(left) - zOrderOf(right) ||
         labelRank(left) - labelRank(right) ||
         (originalIndex.get(left.id) ?? 0) - (originalIndex.get(right.id) ?? 0)
@@ -875,6 +910,42 @@ export class ArisCanvasSync {
     }
     for (const [parent, graphics] of graphicsByParent) {
       for (const node of graphics) parent.appendChild(node)
+    }
+
+    // diagram-js wraps every shape in its own `djs-group`, so the per-element
+    // reorder above (one child per wrapper) cannot move a VACD grouping
+    // container behind its leaves. Enforce the container tier on the wrappers
+    // themselves: move each container occurrence's group in front of the
+    // earliest occurrence group in its layer, preserving all other paint order
+    // (only VACD models with containers are touched; EPC models have none).
+    const containerWrappers = new Map<Node, SVGElement[]>()
+    const earliestOccurrence = new Map<Node, SVGElement>()
+    for (const element of children) {
+      const businessObject = arisBusinessObject(element)
+      if (businessObject?.kind !== 'occurrence') continue
+      const graphics = this.elementRegistry.getGraphics(element.id) as SVGElement | undefined
+      const wrapper = graphics?.parentNode as SVGElement | null
+      const layer = wrapper?.parentNode
+      if (!wrapper || !layer) continue
+      const anchor = earliestOccurrence.get(layer)
+      if (
+        !anchor ||
+        (wrapper.compareDocumentPosition(anchor) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+      ) {
+        earliestOccurrence.set(layer, wrapper)
+      }
+      if ((businessObject as { readonly isContainer?: boolean }).isContainer === true) {
+        const list = containerWrappers.get(layer) ?? []
+        list.push(wrapper)
+        containerWrappers.set(layer, list)
+      }
+    }
+    for (const [layer, wrappers] of containerWrappers) {
+      const anchor = earliestOccurrence.get(layer)
+      if (!anchor) continue
+      for (const wrapper of wrappers) {
+        if (wrapper !== anchor) layer.insertBefore(wrapper, anchor)
+      }
     }
   }
 

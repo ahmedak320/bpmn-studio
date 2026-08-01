@@ -188,6 +188,21 @@ const DIRECTED_CONNECTION_TYPES = new Set([
   'CT_READ_1'
 ])
 
+/**
+ * Hierarchy edges the convention manual (p.18) hides: an `ST_VAL_ADD_CHN_SML_1`
+ * grouping chevron's children are drawn *inside* its frame, so the
+ * `CT_IS_PRCS_ORNT_SUPER` line that would connect them is suppressed
+ * («فيتم إخفاء خط العلاقة»). The element is kept but painted invisible and
+ * non-interactive (the existing hidden-line path), never removed.
+ */
+const HIDDEN_HIERARCHY_CONNECTION_TYPES = new Set(['CT_IS_PRCS_ORNT_SUPER'])
+
+/** VACD container-frame paint fallbacks, used when the occurrence carries none. */
+const CONTAINER_BODY_FILL = '#ffffff'
+const CONTAINER_ACCENT_FALLBACK = '#339933'
+const CONTAINER_STROKE_FALLBACK = '#666666'
+const CONTAINER_STROKE_WIDTH = 1
+
 const CONNECTION_DASHARRAY_BY_STYLE: Readonly<Record<string, string | null>> = Object.freeze({
   '0': null,
   solid: null,
@@ -1065,6 +1080,12 @@ export class ArisRenderer extends BaseRenderer {
         )
       }
       const paint = resolvePaint(businessObject.style)
+      if (businessObject.isContainer) {
+        group.setAttribute('data-aris-container', 'true')
+        this.drawContainerOccurrence(group, shape, businessObject, paint)
+        svgAppend(parentGfx, group)
+        return group
+      }
       const fallbackScale = scaleFor(resolution.descriptor, shape.width, shape.height)
       const fallbackBodyIndex = resolution.descriptor.drawing.elements.findIndex(isFilledPrimitive)
       resolution.descriptor.drawing.elements.forEach((primitive, index) => {
@@ -1270,6 +1291,108 @@ export class ArisRenderer extends BaseRenderer {
     return group
   }
 
+  /**
+   * Paint a VACD grouping chevron as a background container frame (convention
+   * manual p.18: draw the parent process as a containing area, not a full opaque
+   * symbol). A white body carries the occurrence's own pen; a thin accent top
+   * strip and a left accent band with a white double-chevron mark the grouping;
+   * the caption is anchored in the top region. Deliberately NO accent wedge, NO
+   * silhouette-scale icon, NO centred caption — those are what made the raw
+   * symbol read as a "huge overlapping block".
+   */
+  private drawContainerOccurrence(
+    group: SVGElement,
+    shape: Shape,
+    businessObject: ArisOccurrenceBusinessObject,
+    paint: ResolvedOccurrencePaint
+  ): void {
+    const w = shape.width
+    const h = shape.height
+    const accent = paint.fill ?? CONTAINER_ACCENT_FALLBACK
+    const bodyStroke = paint.stroke ?? CONTAINER_STROKE_FALLBACK
+    const bodyStrokeWidth =
+      paint.strokeWidth !== undefined ? paint.strokeWidth : CONTAINER_STROKE_WIDTH
+    const strip = Math.min(40, Math.max(16, h * 0.012))
+    const band = Math.min(220, Math.max(60, w * 0.06))
+
+    // White body — the frame's fill. The source pen is honoured so an authored
+    // container outline (Pen 666666 width 10 → 26.5 canvas units) still draws.
+    svgAppend(
+      group,
+      svgElement('rect', {
+        'data-aris-part': 'surface',
+        x: 0,
+        y: 0,
+        width: round(w),
+        height: round(h),
+        fill: CONTAINER_BODY_FILL,
+        stroke: bodyStroke,
+        'stroke-width': round(bodyStrokeWidth)
+      })
+    )
+    // Thin accent top strip.
+    svgAppend(
+      group,
+      svgElement('rect', {
+        'data-aris-part': 'accent',
+        x: 0,
+        y: 0,
+        width: round(w),
+        height: round(strip),
+        fill: accent
+      })
+    )
+    // Accent left band.
+    svgAppend(
+      group,
+      svgElement('rect', {
+        'data-aris-part': 'accent',
+        x: 0,
+        y: 0,
+        width: round(band),
+        height: round(h),
+        fill: accent
+      })
+    )
+    // White double-chevron, uniform-scaled to ~55 % of the band width, centred
+    // in the band. Drawn as open polylines (never a wedge polygon).
+    const size = band * 0.55
+    const cx = band / 2
+    const cy = h / 2
+    const arm = size / 2
+    const stroke = Math.max(4, size * 0.12)
+    for (const offset of [-size * 0.22, size * 0.22]) {
+      const tip = cx + offset
+      svgAppend(
+        group,
+        svgElement('polyline', {
+          'data-aris-part': 'chevron',
+          points:
+            `${round(tip - arm * 0.6)},${round(cy - arm)} ` +
+            `${round(tip + arm * 0.6)},${round(cy)} ` +
+            `${round(tip - arm * 0.6)},${round(cy + arm)}`,
+          fill: 'none',
+          stroke: CONTAINER_BODY_FILL,
+          'stroke-width': round(stroke),
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round'
+        })
+      )
+    }
+    // Top-anchored caption inside the frame (never the symbol's centred caption).
+    if (businessObject.name) {
+      svgAppend(
+        group,
+        drawCaption(businessObject.name, w, h, this.occurrenceCaptionFont(businessObject), {
+          x: band + 16,
+          y: strip + 8,
+          width: Math.max(1, w - band - 32),
+          height: 110
+        })
+      )
+    }
+  }
+
   drawConnection(parentGfx: SVGElement, connection: Connection): SVGElement {
     const businessObject = arisBusinessObject(connection)
     const appearance =
@@ -1287,7 +1410,10 @@ export class ArisRenderer extends BaseRenderer {
         : 1) * ARIS_PEN_UNIT
     const normalizedLineStyle = appearance?.lineStyle?.trim().toLowerCase() ?? 'solid'
     const dasharray = CONNECTION_DASHARRAY_BY_STYLE[normalizedLineStyle]
-    const visible = appearance?.visible !== false && normalizedLineStyle !== 'invisible'
+    const visible =
+      appearance?.visible !== false &&
+      normalizedLineStyle !== 'invisible' &&
+      !(appearance && HIDDEN_HIERARCHY_CONNECTION_TYPES.has(appearance.connectionType))
     const defaultTargetArrow: ConnectionArrow =
       appearance && DIRECTED_CONNECTION_TYPES.has(appearance.connectionType) ? 'open' : 'none'
     const srcArrow = sourceArrow(appearance?.srcArrow, 'none')

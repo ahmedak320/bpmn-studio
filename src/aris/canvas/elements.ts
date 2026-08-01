@@ -82,6 +82,14 @@ export interface ArisOccurrenceBusinessObject {
   readonly style: ArisOccurrenceStyleView
   /** Read-only numbering/annotation placements drawn inside the occurrence's group. */
   readonly attributeLabels?: readonly ArisOccurrenceAttributeLabel[]
+  /**
+   * A VACD grouping chevron — an `ST_VAL_ADD_CHN_SML_1` occurrence carrying the
+   * `Flags` bit 16 (or the source of a `CT_IS_PRCS_ORNT_SUPER` hierarchy edge).
+   * The convention manual (p.18) draws the parent process as a containing area,
+   * not a full opaque symbol, and hides the hierarchy line — so the renderer
+   * paints these as background frames tiered behind their leaves.
+   */
+  readonly isContainer?: boolean
 }
 
 export interface ArisConnectionBusinessObject {
