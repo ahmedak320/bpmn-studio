@@ -636,9 +636,28 @@ function iconGeometry(icon: DmtIconId): readonly ArisDrawingElement[] {
         )
       ]
     case 'requirement':
+      // Wave 14 P6 (fixplan §6): the 600-dpi original (orig-hand-600.png) is a FIST with the index
+      // finger raised — a tall index finger that DOMINATES, three SHORT folded-knuckle stubs
+      // (~30–40% of the index finger's visible height above the palm, stepping down rightward) —
+      // NOT three partially-raised fingers — a rounded palm mass, and a diagonal thumb crossing the
+      // lower-left with a thin crease separating it from the palm. Not the four-finger open hand
+      // this used to draw. Measured via connected-component pixel analysis of the crop (see
+      // icon-board tooling); band-fit: every absolute x stays in [2.5, 19.3] so the icon never pokes
+      // into the caption (symbols.test.ts). The index finger floats free above the palm, exactly as
+      // the crop shows; the three stubs now dip INTO the palm (bottom y=33, past its ~31.2–31.8 top
+      // edge) so only their short rounded tips show above it — a knuckle bump rising from the fist
+      // mass, not a floating finger. The thumb's lower-left end floats free of the palm's left edge
+      // — that gap IS the crease, with no fill-rule hole-punch needed. All subpaths share one white
+      // fill (nonzero rule unions them where the thumb/stubs overlap the palm).
       return [
         path(
-          'M 7 43 L 7 28 C 7 25 10 25 10 28 L 10 20 C 10 17 13 17 13 20 L 13 28 L 15 19 C 16 16 19 17 18 20 L 17 29 L 20 23 C 22 21 24 23 22 26 L 19 37 C 18 42 13 45 7 43 Z',
+          'M 2.6 30 L 2.6 15.3 A 1.3 1.3 0 0 1 5.2 15.3 L 5.2 30 Z ' + // index finger (raised, dominant)
+            'M 7.2 33 L 7.2 26 A 1.3 1.3 0 0 1 9.8 26 L 9.8 33 Z ' + // knuckle stub 1 (~38% of finger)
+            'M 11.8 33 L 11.8 26.7 A 1.35 1.35 0 0 1 14.5 26.7 L 14.5 33 Z ' + // knuckle stub 2 (~34%)
+            'M 16.6 33 L 16.6 27.4 A 1.35 1.35 0 0 1 19.3 27.4 L 19.3 33 Z ' + // knuckle stub 3 (~30%)
+            'M 4.3 37.4 L 9.9 32.3 A 1.5 1.5 0 0 0 8.5 30.6 L 2.9 35.7 A 1.5 1.5 0 0 0 4.3 37.4 Z ' + // thumb
+            'M 4.5 36 C 4.7 33.5 6.5 31.5 9.5 31.2 C 13 30.9 16.5 31 19.3 31.8 ' + // palm top
+            'C 19.3 35 19.3 40 16.8 42.8 C 14.5 45 8.5 45 6 43 C 4.3 41.5 4.2 38.5 4.5 36 Z', // palm bottom
           {
             fill: WHITE,
             stroke: 'none',
@@ -845,9 +864,14 @@ function processInterfaceShape(): DmtSymbolDescriptor {
     accessibleLabel: 'Process interface',
     silhouette: 'process-interface',
     icon: 'flag',
-    hitPath: 'M 0.75 0.75 H 84 L 96 20 V 41 L 86 59 H 12 L 0.75 40 Z',
-    iconBox: { x: 3, y: 3, width: 20, height: 32 },
-    contentBox: { x: 27, y: 3, width: 58, height: 32 },
+    // Wave 14 P9 (fixplan §9): the DMT original is ONE grey right-pointing pentagon banner with a
+    // white inset rounded panel floating on it (thin grey margin above/right, wider below) plus the
+    // flag icon in the grey left margin — not a second grey "surface" polygon whose accent slab read
+    // as a duplicated block under the caption. `hitPath` now matches the silhouette exactly.
+    hitPath: 'M 0.75 0.75 H 86 L 99.25 30 L 86 59.25 H 0.75 Z',
+    defaultBounds: { width: 100, height: 60 },
+    iconBox: { x: 4, y: 14, width: 15, height: 32 },
+    contentBox: { x: 25, y: 10, width: 58, height: 32 },
     groups: [
       {
         id: 'silhouette',
@@ -856,12 +880,11 @@ function processInterfaceShape(): DmtSymbolDescriptor {
         elements: [
           polygon(
             [
-              { x: 12, y: 20 },
-              { x: 86, y: 20 },
-              { x: 99, y: 40 },
-              { x: 86, y: 59 },
-              { x: 12, y: 59 },
-              { x: 1, y: 40 }
+              { x: 0.75, y: 0.75 },
+              { x: 86, y: 0.75 },
+              { x: 99.25, y: 30 },
+              { x: 86, y: 59.25 },
+              { x: 0.75, y: 59.25 }
             ],
             { fill: accent }
           )
@@ -872,33 +895,7 @@ function processInterfaceShape(): DmtSymbolDescriptor {
         scale: 'stretch',
         paintRole: 'none',
         elements: [
-          polygon(
-            [
-              { x: 0.75, y: 0.75 },
-              { x: 84, y: 0.75 },
-              { x: 96, y: 19.5 },
-              { x: 84, y: 38 },
-              { x: 0.75, y: 38 }
-            ],
-            { fill: WHITE, stroke: OUTLINE, strokeWidth: 1.5 }
-          )
-        ]
-      },
-      {
-        id: 'accent',
-        scale: 'stretch',
-        paintRole: 'accent',
-        elements: [
-          polygon(
-            [
-              { x: 0.75, y: 0.75 },
-              { x: 22, y: 0.75 },
-              { x: 34, y: 19.5 },
-              { x: 22, y: 38 },
-              { x: 0.75, y: 38 }
-            ],
-            { fill: accent }
-          )
+          rect(22, 7, 66, 38, { fill: WHITE, stroke: OUTLINE, strokeWidth: 1.2, rx: 2, ry: 2 })
         ]
       },
       {

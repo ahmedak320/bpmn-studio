@@ -11,6 +11,7 @@ import {
   isDmtSymbolDescriptor
 } from './shapes'
 import type {
+  ArisDrawingElement,
   ArisSymbolDescriptor,
   ArisSymbolFidelityFinding,
   ArisSymbolResolutionRequest
@@ -46,6 +47,43 @@ function collectGeometryStrings(): string[] {
   }
   strings.push(descriptorToString(UNKNOWN_SYMBOL_DESCRIPTOR))
   return strings
+}
+
+/**
+ * Extracts every absolute (x, y) point a `path()` `d` string places — each M/L endpoint, each C's
+ * three control/end points, and only the trailing (x, y) of an A (its rx/ry/x-axis-rotation/
+ * large-arc/sweep-flag arguments are not coordinates). Wave 14 P6's `requirement` icon is authored
+ * entirely in absolute M/L/C/A/Z commands, so relative (lowercase) commands are intentionally
+ * unhandled here.
+ */
+function parseAbsoluteCoordinatePairs(
+  d: string
+): readonly { readonly x: number; readonly y: number }[] {
+  const tokens = d.match(/[MLCAZ]|-?\d+(?:\.\d+)?/g) ?? []
+  const pairs: { readonly x: number; readonly y: number }[] = []
+  let index = 0
+  while (index < tokens.length) {
+    const command = tokens[index]
+    if (command === 'M' || command === 'L') {
+      pairs.push({ x: Number(tokens[index + 1]), y: Number(tokens[index + 2]) })
+      index += 3
+    } else if (command === 'C') {
+      for (let point = 0; point < 3; point += 1) {
+        pairs.push({
+          x: Number(tokens[index + 1 + point * 2]),
+          y: Number(tokens[index + 2 + point * 2])
+        })
+      }
+      index += 7
+    } else if (command === 'A') {
+      // rx ry x-axis-rotation large-arc-flag sweep-flag x y — only the last pair is a coordinate.
+      pairs.push({ x: Number(tokens[index + 6]), y: Number(tokens[index + 7]) })
+      index += 8
+    } else {
+      index += 1
+    }
+  }
+  return pairs
 }
 
 describe('ARIS symbol registry', () => {
@@ -125,6 +163,38 @@ describe('ARIS symbol registry', () => {
       expect(
         descriptor.semanticParts.flatMap((part) => part.elementIndexes).sort((a, b) => a - b)
       ).toEqual(descriptor.drawing.elements.map((_, index) => index))
+    }
+  })
+
+  it('keeps the requirement hand icon band-fit — every coordinate clear of the caption (Wave 14 P6)', () => {
+    // The old four-finger glyph reached x=24 and poked into the caption; the raised-index-finger
+    // redraw (fixplan §6) must stay inside the icon's own band, x ∈ [2.5, 19.3]. This parses every
+    // absolute coordinate pair directly out of the authored `d` string — path data is deliberately
+    // NOT hashed by the fingerprint test above, so this is the dedicated regression guard for it.
+    const descriptor = resolveArisCatalogSymbol('data.requirement')
+    if (!descriptor) throw new Error('Expected the data.requirement descriptor to resolve.')
+    // Scope to the `icon` semantic part only — the surrounding card silhouette/surface/accent
+    // band are also authored as `path()` elements in the shared 0–100×0–60 card space (e.g. the
+    // rounded band's corners sit at y=0.75), so filtering by `kind === 'path'` across the WHOLE
+    // descriptor would assert on the card frame, not the hand glyph.
+    const iconIndexes =
+      descriptor.semanticParts.find((part) => part.id === 'icon')?.elementIndexes ?? []
+    expect(iconIndexes.length).toBeGreaterThan(0)
+    const paths = iconIndexes
+      .map((index) => descriptor.drawing.elements[index])
+      .filter(
+        (element): element is Extract<ArisDrawingElement, { kind: 'path' }> =>
+          element !== undefined && element.kind === 'path'
+      )
+    expect(paths.length).toBeGreaterThan(0)
+
+    const coordinates = paths.flatMap((element) => parseAbsoluteCoordinatePairs(element.d))
+    expect(coordinates.length).toBeGreaterThan(0)
+    for (const { x, y } of coordinates) {
+      expect(x).toBeGreaterThanOrEqual(2.4)
+      expect(x).toBeLessThanOrEqual(19.4)
+      expect(y).toBeGreaterThanOrEqual(7)
+      expect(y).toBeLessThanOrEqual(53)
     }
   })
 
