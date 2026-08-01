@@ -270,7 +270,7 @@ Auto effect `ArisTranslateController.tsx:487-556`: gate `autoTranslateEligible` 
 
 ### Steps
 
-- [ ] **T8 — auto-translate rewrite** (`ArisTranslateController.tsx:487-556`). Add props `onAutoTranslateState?: (s: 'idle'|'running'|'done'|'partial'|'failed'|'off') => void` and `autoTranslateMaxItems?: number` (default `AUTO_TRANSLATE_MAX_ITEMS = 500`, replacing the 200 bail — the cap now means "translate the first N, report the remainder"). Flow:
+- [x] **T8 — auto-translate rewrite** (`ArisTranslateController.tsx:487-556`). Add props `onAutoTranslateState?: (s: 'idle'|'running'|'done'|'partial'|'failed'|'off') => void` and `autoTranslateMaxItems?: number` (default `AUTO_TRANSLATE_MAX_ITEMS = 500`, replacing the 200 bail — the cap now means "translate the first N, report the remainder"). Flow:
 
   ```ts
   const result = buildArisLocalizationReview({ document: canvas.document, target, active: contentLang, queueDirections: 'both', ...(resources ? { resources } : {}) })
@@ -298,7 +298,7 @@ Auto effect `ArisTranslateController.tsx:487-556`: gate `autoTranslateEligible` 
 
   Keep the one-shot `autoRanRef`, the unmount abort, free chain only. Tests (rework the silent-degrade describe): bidirectional fill (EN-only + AR-only defs ⇒ both counterparts written); error toast on throw (replaces the "no toast" assertion) + state `failed`; cap/partial with `autoTranslateMaxItems=1` on a 2-item doc ⇒ 1 applied, `autoPartial` toast, state `partial`; pref-off ⇒ no fire, state `off`; staleness (mutate the doc between transport resolution and apply via a deferred transport) ⇒ nothing applied, no success toast.
 
-- [ ] **T9 — studio tab: universal eligibility, consistent badge, state attribute.** `ArisStudioTab.tsx:1235` → `autoTranslateEligible={true}`; add `const [autoTranslateState, setAutoTranslateState] = useState('idle')`, pass `onAutoTranslateState={setAutoTranslateState}` at the controller mount, and put `data-orbitpm-aris-auto-translate={autoTranslateState}` on the toolbar root that also carries the translate button. Replace the badge memo (:262-268):
+- [x] **T9 — studio tab: universal eligibility, consistent badge, state attribute.** `ArisStudioTab.tsx:1235` → `autoTranslateEligible={true}`; add `const [autoTranslateState, setAutoTranslateState] = useState('idle')`, pass `onAutoTranslateState={setAutoTranslateState}` at the controller mount, and put `data-orbitpm-aris-auto-translate={autoTranslateState}` on the toolbar root that also carries the translate button. Replace the badge memo (:262-268):
 
   ```ts
   const missingTranslationCount = useMemo(() => {
@@ -315,14 +315,14 @@ Auto effect `ArisTranslateController.tsx:487-556`: gate `autoTranslateEligible` 
 
   (imports via `../localization` + `../../localization/translationRecovery`; verify with `npm run check:aris-runtime-boundary`.) Tests: `sourceKind='aml'` fires auto-translate (universality); badge equals `listTranslationRecoveryFields(...)` length for a doc where the old counter disagreed (e.g. an unnamed model); the state attribute reflects the callback.
 
-- [ ] **T10 — reconcile unit suites.** Update the assertions T7/T8 knowingly broke; `npm run test:aris:phase2` green.
-- [ ] **E2E.** Add helper (top of `lite-mandatory-translation.spec.ts` or `tests/e2e/helpers/prefs.ts`): `async function disableAutoTranslate(page){ await page.addInitScript(() => localStorage.setItem('orbitpm.lite.cfg.arisAutoTranslate', 'off')) }`. Apply it in the boot of every non-translation spec that imports a file: `aris-authoring`, `aris-canvas-interaction`, `aris-details-editing`, `aris-details-rail`, `aris-explorer-tree`, `aris-i18n-rtl`, `aris-import-split`, `aris-nested-processes`, `aris-new-model`, `aris-sequence-1`, `aris-validation`, `aris-accessibility`, `aris-fidelity-screenshots`, `aris-release-artifact`, `lite-mandatory-reliability`, `lite-mandatory-ai-security` (grep each for `setInputFiles`/`input[type="file"]` to confirm the set). Restructure `lite-mandatory-translation.spec.ts`:
+- [x] **T10 — reconcile unit suites.** Update the assertions T7/T8 knowingly broke; `npm run test:aris:phase2` green.
+- [x] **E2E.** Add helper (top of `lite-mandatory-translation.spec.ts` or `tests/e2e/helpers/prefs.ts`): `async function disableAutoTranslate(page){ await page.addInitScript(() => localStorage.setItem('orbitpm.lite.cfg.arisAutoTranslate', 'off')) }`. Apply it in the boot of every non-translation spec that imports a file: `aris-authoring`, `aris-canvas-interaction`, `aris-details-editing`, `aris-details-rail`, `aris-explorer-tree`, `aris-i18n-rtl`, `aris-import-split`, `aris-nested-processes`, `aris-new-model`, `aris-sequence-1`, `aris-validation`, `aris-accessibility`, `aris-fidelity-screenshots`, `aris-release-artifact`, `lite-mandatory-reliability`, `lite-mandatory-ai-security` (grep each for `setInputFiles`/`input[type="file"]` to confirm the set). Restructure `lite-mandatory-translation.spec.ts`:
   - **TR-translate-review**: `disableAutoTranslate(page)` before opening the matrix; after "Translate now", assert `dialog.getByText(/proposal\(s\) returned/u)` (run summary); use "Accept all proposals" once and keep at least one per-field accept.
   - **TR-auto-import** (new): stub free translate → import the bilingual matrix AML → `await expect(page.locator('[data-orbitpm-aris-auto-translate="done"]')).toBeVisible({ timeout: 60_000 })` → toast `/Translated .* labels automatically/u` → badge hidden → click content-lang toggle → canvas shows the stub → single undo reverts all.
   - **TR-auto-generated**: keep the existing body; allow up to two auto toasts (import + generated); delete the stale BLOCKED-race comment.
   - **TR-auto-animalwf** (new, `test.setTimeout(300_000)`): stub free translate → `setInputFiles('../reference/AnimalWF/ARISAMLExport.xml')` → wait `[data-orbitpm-aris-auto-translate="done"]` (timeout 240 s) → toggle content language → `const texts = await page.locator('[data-orbitpm-aris-canvas] svg text').allTextContents(); expect(texts.filter((t) => /\p{Script=Arabic}/u.test(t)).length).toBeGreaterThan(20)`.
   - Update `tests/e2e/mandatory-translation-evidence.json` (`exactInventory: true`) with the new/renamed titles and a refreshed note.
-- [ ] `scripts/soak-gate.ts`: comment-only note above `#exerciseTranslationCancellation` that the ARIS retarget is tracked separately (it targets the retired shell; no functional change).
+- [x] `scripts/soak-gate.ts`: comment-only note above `#exerciseTranslationCancellation` that the ARIS retarget is tracked separately (it targets the retired shell; no functional change).
 - **Commits:** `feat(aris): auto-translate every opened document in both languages with visible outcomes` · `feat(aris): translate badge counts exactly the review rows` · `test(e2e): universal auto-translate — import coverage, AnimalWF flow, opt-out in unrelated specs`
 
 **Gates:** phase2 + `npx playwright test tests/e2e/lite-mandatory-translation.spec.ts --project=chromium`, then a full `npx playwright test --project=chromium` (the opt-out sweep must be in place first). **Risks:** free-endpoint 429s (bounded by T2 dedup + pool pacing + the 500 cap + the now-visible `rate` failure + TM zero-network re-opens); rollback lever = the single `autoTranslateEligible={true}` line.
@@ -476,8 +476,8 @@ Raw leaks: `tabs.ts` :202-204 `def.type`, :205-208 `def.defaultSymbol`, :218 occ
 
 ### Steps (TDD)
 
-- [ ] Test `tabs.test.ts`: general tab for an occurrence of Log ⇒ exactly ONE type row `{labelKey:'aris.details.general.objectType'}` valued `'Log block'` and NO row whose value matches `/^(OT_|ST_)/`; definition variant likewise; model row value `'Process (EPC)'`; occurrence-attribute row label friendly; relation `connectionType` value friendly. Update fixtures at :48-62 / :209-210.
-- [ ] Impl `tabs.ts`: collapse the definition `type`+`defaultSymbol` rows into one `{ labelKey: 'aris.details.general.objectType', value: arisObjectBlockName({objectType: def.type, symbolNum: def.defaultSymbol}) }`; collapse the occurrence `type`/`symbol` rows the same way (using `occ.symbol`); model row value → `arisModelTypeName(details.model.type)`; attribute rows → `arisAttributeTypeName`; relation rows → `arisConnectionTypeName`. `ArisDetailsRail.tsx:501/:503-507` + `ArisDetailsEditors.tsx:437` → `arisAttributeTypeName`. `ArisEpcRail.tsx` finding render: map `messageParams.objectType` through `arisObjectTypeName({objectType})` before `t(...)` (keeps `src/aris/epc` UI-pure). DELETE dictionary keys `aris.details.general.type|defaultSymbol|symbol` (EN ~:2942, AR ~:5872) in THIS commit (their last uses go here) and run `src/__tests__/i18n.test.ts`.
+- [x] Test `tabs.test.ts`: general tab for an occurrence of Log ⇒ exactly ONE type row `{labelKey:'aris.details.general.objectType'}` valued `'Log block'` and NO row whose value matches `/^(OT_|ST_)/`; definition variant likewise; model row value `'Process (EPC)'`; occurrence-attribute row label friendly; relation `connectionType` value friendly. Update fixtures at :48-62 / :209-210.
+- [x] Impl `tabs.ts`: collapse the definition `type`+`defaultSymbol` rows into one `{ labelKey: 'aris.details.general.objectType', value: arisObjectBlockName({objectType: def.type, symbolNum: def.defaultSymbol}) }`; collapse the occurrence `type`/`symbol` rows the same way (using `occ.symbol`); model row value → `arisModelTypeName(details.model.type)`; attribute rows → `arisAttributeTypeName`; relation rows → `arisConnectionTypeName`. `ArisDetailsRail.tsx:501/:503-507` + `ArisDetailsEditors.tsx:437` → `arisAttributeTypeName`. `ArisEpcRail.tsx` finding render: map `messageParams.objectType` through `arisObjectTypeName({objectType})` before `t(...)` (keeps `src/aris/epc` UI-pure). DELETE dictionary keys `aris.details.general.type|defaultSymbol|symbol` (EN ~:2942, AR ~:5872) in THIS commit (their last uses go here) and run `src/__tests__/i18n.test.ts`.
 - **Commit:** `feat(aris): human-friendly object/model/attribute/connection names across the details rail and EPC findings`
 
 **Verification:** `npx vitest run src/aris/details/tabs.test.ts src/aris/shell src/__tests__/i18n.test.ts`; `npm run check:ui-copy`.
@@ -494,8 +494,8 @@ Rule marks = stroke-width-11 primitives in a 100×100 viewBox (`shapes.ts:907-96
 
 ### Steps (TDD)
 
-- [ ] Test `rendererStroke.test.ts` (jsdom): draw an XOR rule occurrence ⇒ no element under its group has `vector-effect`; X `line`s carry `stroke-width="11"`; draw a 670×240 `epc.function` card ⇒ its icon `path` `stroke-width × group scale ≈ authored width` (±1e-3 — pins the compensation).
-- [ ] Impl `drawPrimitive` (:370-460): delete the `'vector-effect':'non-scaling-stroke'` line from the rect/circle/polygon/line branches; path branch:
+- [x] Test `rendererStroke.test.ts` (jsdom): draw an XOR rule occurrence ⇒ no element under its group has `vector-effect`; X `line`s carry `stroke-width="11"`; draw a 670×240 `epc.function` card ⇒ its icon `path` `stroke-width × group scale ≈ authored width` (±1e-3 — pins the compensation).
+- [x] Impl `drawPrimitive` (:370-460): delete the `'vector-effect':'non-scaling-stroke'` line from the rect/circle/polygon/line branches; path branch:
 
   ```ts
   const pathScale = Math.max(1e-6, (Math.abs(scale.sx) + Math.abs(scale.sy)) / 2)
@@ -504,10 +504,10 @@ Rule marks = stroke-width-11 primitives in a 100×100 viewBox (`shapes.ts:907-96
   'stroke-width': round(strokeWidth / pathScale)
   ```
 
-- [ ] Mirror both edits in `legend.ts paintPrimitive` (:210-281).
-- [ ] Test then impl linecap: add optional `linecap?: 'round'` to the line/path drawing-element members in `symbols/types.ts`; `shapes.ts` `line()`/`path()` helpers pass it through; `ruleShape` marks get `{ strokeWidth: 11, linecap: 'round' }` (icon lines unaffected); both painters emit `stroke-linecap` when set. Test `rendererStroke.test.ts`: XOR marks carry `stroke-linecap="round"`, an icon line does not.
-- [ ] Test then impl legend tiles: `LEGEND_COLUMNS` col 1 → `Object.freeze(['epc.event','decision.and','decision.xor','decision.or'])`; update `legend.test.ts` `EXPECTED_CATALOG_IDS` (:20-40 → 22) + both 19-count assertions (:45-51 and the drawArisLegend SVG test); assert the three tiles resolve bilingual names from the existing dictionary keys; assert an existing tile's height is unchanged (rows stayed 4); update the `legend.ts:1-21` header comment 19→22.
-- [ ] Enumerate + eyeball affected strokes (icon strokes 1.2–2.4 across ~25 icons; surface outlines 1.5; marks 11): zoom-1 identical by construction; palette previews (`descriptorPreview.ts`) now scale strokes — verify legibility on the screenshot pass.
+- [x] Mirror both edits in `legend.ts paintPrimitive` (:210-281).
+- [x] Test then impl linecap: add optional `linecap?: 'round'` to the line/path drawing-element members in `symbols/types.ts`; `shapes.ts` `line()`/`path()` helpers pass it through; `ruleShape` marks get `{ strokeWidth: 11, linecap: 'round' }` (icon lines unaffected); both painters emit `stroke-linecap` when set. Test `rendererStroke.test.ts`: XOR marks carry `stroke-linecap="round"`, an icon line does not.
+- [x] Test then impl legend tiles: `LEGEND_COLUMNS` col 1 → `Object.freeze(['epc.event','decision.and','decision.xor','decision.or'])`; update `legend.test.ts` `EXPECTED_CATALOG_IDS` (:20-40 → 22) + both 19-count assertions (:45-51 and the drawArisLegend SVG test); assert the three tiles resolve bilingual names from the existing dictionary keys; assert an existing tile's height is unchanged (rows stayed 4); update the `legend.ts:1-21` header comment 19→22.
+- [x] Enumerate + eyeball affected strokes (icon strokes 1.2–2.4 across ~25 icons; surface outlines 1.5; marks 11): zoom-1 identical by construction; palette previews (`descriptorPreview.ts`) now scale strokes — verify legibility on the screenshot pass.
 - **Commits:** `fix(aris-renderer): descriptor strokes scale with zoom — drop non-scaling-stroke, compensate path transforms` · `fix(aris-symbols): round line caps on AND/OR/XOR operator marks` · `feat(aris-legend): add AND/XOR/OR operator tiles to legend column 1 (22 presentations)`
 
 **Verification:** `npx vitest run src/aris/canvas/rendererStroke.test.ts src/aris/canvas/legend.test.ts src/aris/canvas/exportArisPdf.test.ts`; both animalwf suites. **Zoom-ladder screenshots** (after build, on register-owner): zoom 0.4 (3 × `−`), 1.0, 2.0 (5 × `+`), 4.0 — element-screenshot a gateway (`g[data-aris-operator="XOR"]`) into `wpc-zoom-*.png`; X-arm:diameter ratio must look constant ~11 %; compare zoom-4 vs `../reference/AnimalWF/crops/cmp-gate-merge.png` (rounded tips); one legend screenshot; one manual PDF export vs canvas.
@@ -747,7 +747,7 @@ NO canvas hover tooltip exists; `element.hover/out` free; overlays pattern `quic
 
 ### Sub-lane P11-runner (Wave 13, sonnet; owns the scripts + comparator)
 
-- [ ] `src/aris/fidelity/structureCompare.ts` (+unit tests with synthetic docs): structure-only comparator (generated layout is a deterministic column — geometry EXCLUDED). Objects matched greedily by (same objectType family) × normalized-label similarity (trigram/Dice ≥ 0.55, try both languages); connections matched through the object mapping (definition-level from→to pairs). Emit:
+- [x] `src/aris/fidelity/structureCompare.ts` (+unit tests with synthetic docs): structure-only comparator (generated layout is a deterministic column — geometry EXCLUDED). Objects matched greedily by (same objectType family) × normalized-label similarity (trigram/Dice ≥ 0.55, try both languages); connections matched through the object mapping (definition-level from→to pairs). Emit:
 
   ```ts
   interface StructureScore {
@@ -763,8 +763,8 @@ NO canvas hover tooltip exists; `element.hover/out` free; overlays pattern `quic
   }
   ```
 
-- [ ] `scripts/aris-description-eval.ts` (vite-node): args `--desc <file> --process <key> [--model z-ai/glm-5.2] [--rounds-tag rN] [--out <json>]`; load `OPENROUTER_API_KEY` from `../reference/openrouter.env`; build the prompt with `buildArisAiPrompt` (name = process title, description = file text); Node fetch adapter to `https://openrouter.ai/api/v1/chat/completions` mirroring `browserAi` request shape; drive the REAL `runArisAiGeneration` (real repair turns); on success `buildAmlFromArisAiDraft` → `buildFromSource` → score vs `../reference/AnimalWF/expected/<process>.expected.json` with `structureCompare` (+ `relativeRecall` vs the manifest); write per-run JSON to `gen-tests/runs/<tag>/<process>-<level>-<lang>.json` + append a markdown row to the round report. Cost guard: estimate via the usage field, abort the round if cumulative > `$5` (env override).
-- [ ] `scripts/aris-excel-eval.ts` (same shape for P12): `--workbook <xlsx> --process <key>` → `parseArisWorkbook` → `arisExcelCreate` → same comparator + captured validation-issue list.
+- [x] `scripts/aris-description-eval.ts` (vite-node): args `--desc <file> --process <key> [--model z-ai/glm-5.2] [--rounds-tag rN] [--out <json>]`; load `OPENROUTER_API_KEY` from `../reference/openrouter.env`; build the prompt with `buildArisAiPrompt` (name = process title, description = file text); Node fetch adapter to `https://openrouter.ai/api/v1/chat/completions` mirroring `browserAi` request shape; drive the REAL `runArisAiGeneration` (real repair turns); on success `buildAmlFromArisAiDraft` → `buildFromSource` → score vs `../reference/AnimalWF/expected/<process>.expected.json` with `structureCompare` (+ `relativeRecall` vs the manifest); write per-run JSON to `gen-tests/runs/<tag>/<process>-<level>-<lang>.json` + append a markdown row to the round report. Cost guard: estimate via the usage field, abort the round if cumulative > `$5` (env override).
+- [x] `scripts/aris-excel-eval.ts` (same shape for P12): `--workbook <xlsx> --process <key>` → `parseArisWorkbook` → `arisExcelCreate` → same comparator + captured validation-issue list.
 
 ### Sub-lane P11-loop (Waves 14–15; repeated rounds)
 
@@ -802,12 +802,12 @@ Run `scripts/aris-excel-eval.ts` per workbook → score + issue-list quality rev
 
 ### Steps
 
-- [ ] New `scripts/aris-pdf-model-ab.ts` + harness-local send adapters (test/eval side ONLY — no app, no CSP, no provider-catalog changes):
+- [x] New `scripts/aris-pdf-model-ab.ts` + harness-local send adapters (test/eval side ONLY — no app, no CSP, no provider-catalog changes):
   - `anthropicSend`: reuse `makeBrowserCallLLM({ providerId:'anthropic', model:'claude-opus-4-8', apiKey: $ANTHROPIC_API_KEY })` (the anthropic `document`-block branch already exists in `browserAi.ts` and runs under Node fetch). Verify the exact current model id via a 1-token probe or `/v1/models` and record it.
   - `openaiSend`: new adapter (OpenAI is not a LiteProviderId): POST `https://api.openai.com/v1/responses` with the PDF as `input_file` base64 + the same system/user prompts the pipeline emits; model `gpt-5.6-terra` — verify the exact id via `GET /v1/models` first; if PDF input is rejected, fall back to the PNG page image and record the limitation.
-- [ ] Matrix (2 runs per cell for variance; register-owner PDF + its PNG): models {gemini-3.5-flash-lite (baseline), qwen3-vl (image baseline), gpt-5.6-terra, claude-opus-4-8} × inputs {native PDF, PNG} × pipelines {v1 single-shot (this branch); w10 v2 coarse-to-fine (image only; run inside `../desktop-w10` with `SEQ2_VISION_MODEL` + the adapter injected; `npm ci` there if needed; keep harness edits UNCOMMITTED or on ITS branch only — never merged)}.
-- [ ] Scoring: the seq2 fixture's similarity metric + `structureCompare` vs `register-owner.expected.json`. Cost ceiling `$2` per model total (`SEQ2_LIVE_MAX_COST_USD` pattern); record cost + latency per cell.
-- [ ] Deliverable `gen-tests/pdf-model-ab-report.md`: score table per cell, 3–5 concrete failure-mode examples per model (missed satellites, wrong operator, hallucinated nodes, layout-irrelevant), cost/latency, and a recommendation (which model for create-from-PDF; does tiling help strong models). Summarize into the ledger. **Out of scope: fixing the feature.**
+- [x] Matrix (2 runs per cell for variance; register-owner PDF + its PNG): models {gemini-3.5-flash-lite (baseline), qwen3-vl (image baseline), gpt-5.6-terra, claude-opus-4-8} × inputs {native PDF, PNG} × pipelines {v1 single-shot (this branch); w10 v2 coarse-to-fine (image only; run inside `../desktop-w10` with `SEQ2_VISION_MODEL` + the adapter injected; `npm ci` there if needed; keep harness edits UNCOMMITTED or on ITS branch only — never merged)}.
+- [x] Scoring: the seq2 fixture's similarity metric + `structureCompare` vs `register-owner.expected.json`. Cost ceiling `$2` per model total (`SEQ2_LIVE_MAX_COST_USD` pattern); record cost + latency per cell.
+- [x] Deliverable `gen-tests/pdf-model-ab-report.md`: score table per cell, 3–5 concrete failure-mode examples per model (missed satellites, wrong operator, hallucinated nodes, layout-irrelevant), cost/latency, and a recommendation (which model for create-from-PDF; does tiling help strong models). Summarize into the ledger. **Out of scope: fixing the feature.**
 - **Commit (this branch only):** `feat(eval): PDF model A/B harness + report (gpt-5.6-terra, claude-opus-4-8 vs baselines)`
 
 ---
