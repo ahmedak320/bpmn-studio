@@ -67,6 +67,7 @@ The user explicitly requested these; updating tests that assert the OLD behavior
 6. Interactive resize is floored at descriptor `defaultBounds` (import/programmatic paths stay verbatim).
 7. `processInterfaceShape` and the `requirement` icon geometry are redrawn (`symbols.test.ts` asserts only symbol count 36 + fingerprint uniqueness, both stay green).
 8. New commands/UX: a `setDefinitionType` command, a `changeObjectType` authoring path, a canvas right-click menu, and a hover type tooltip.
+9. **Create-from-PDF is LOCKED to `claude-opus-4.8` as its only model** (user directive 2026-08-02, productionizing the P13 A/B winner — see L-P13-prod). When the Create attachment is a PDF, the model is forced to Claude Opus 4.8 (route `anthropic/claude-opus-4.8`, P13-verified for native-PDF document-vision at similarity 0.96) regardless of the user's provider/model selection; the model picker is disabled/locked for the PDF path and the UI shows the lock. `firstLiteModelForAttachment('…','pdf')`-style fallbacks and any test asserting a different PDF model are updated. This SUPERSEDES L-P13's original "evaluation only, no production fix" scope.
 
 ---
 
@@ -809,6 +810,18 @@ Run `scripts/aris-excel-eval.ts` per workbook → score + issue-list quality rev
 - [x] Scoring: the seq2 fixture's similarity metric + `structureCompare` vs `register-owner.expected.json`. Cost ceiling `$2` per model total (`SEQ2_LIVE_MAX_COST_USD` pattern); record cost + latency per cell.
 - [x] Deliverable `gen-tests/pdf-model-ab-report.md`: score table per cell, 3–5 concrete failure-mode examples per model (missed satellites, wrong operator, hallucinated nodes, layout-irrelevant), cost/latency, and a recommendation (which model for create-from-PDF; does tiling help strong models). Summarize into the ledger. **Out of scope: fixing the feature.**
 - **Commit (this branch only):** `feat(eval): PDF model A/B harness + report (gpt-5.6-terra, claude-opus-4-8 vs baselines)`
+
+---
+
+## Lane L-P13-prod (post-Wave-14, user directive 2026-08-02) — Lock create-from-PDF to Claude Opus 4.8
+
+**Worker:** opus48-1m high. **Rationale:** P13 proved `claude-opus-4.8` is the only model that faithfully reads a native PDF (similarity 0.96 vs ≤0.47 for gpt-5.6-terra, ≤0.15 native-PDF for gemini, 0.0 for qwen). The user directs that create-from-PDF ship LOCKED to Opus 4.8 as its only model on `feat/aris-only-studio`. Authorized product change #9.
+
+- [ ] When the Create attachment is a PDF (`application/pdf`), force model = `anthropic/claude-opus-4.8` (route via the provider that gives native-PDF document-vision; OpenRouter's `anthropic/claude-opus-4.8` is P13-verified) regardless of the user's provider/model selection. The PDF path never uses gemini/qwen/glm.
+- [ ] Disable/lock the model picker on the PDF Create tab; the UI clearly shows "Create-from-PDF uses Claude Opus 4.8". Keep description/document/excel tabs' model selection unchanged.
+- [ ] Capability + fail-closed checks (`src/ai/pdf.ts`, `src/ai/providersLite.ts`) still hold for the locked model; add a `pdfCreateModel()`/lock helper rather than scattering the literal.
+- [ ] Tests: `providersLite.test.ts` (the pdf attachment resolves to `anthropic/claude-opus-4.8`), `ArisGenerationPanel`/create-panel tests (PDF tab locks the model + shows the lock), any test asserting a different PDF model updated (authorized). Runtime boundary + ui-copy + i18n parity stay green.
+- **Commit:** `feat(aris): lock create-from-PDF to Claude Opus 4.8 (the P13 A/B winner) as its only model`
 
 ---
 
