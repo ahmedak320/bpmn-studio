@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { ARIS_EXCEL_LIMITS } from '../../src/aris/excel/limits'
+import { parseArisWorkbook } from '../../src/aris/excel/workbookParser'
 import {
   ARIS_SHEET_NAMES,
   ARIS_TEMPLATE_IDENTITY,
@@ -509,15 +510,16 @@ test('mandatory spreadsheet X3/X10: the official example workbook commits every 
 // has no ARIS analog (the Lanes sheet has no parent/hierarchy column — flat
 // lanes only) and "invalid defaults" has no analog (ARIS connections carry no
 // `is_default` flag) — both are replaced with two other real, cell-addressed
-// rejections from the same module: invalid-symbol-type and
-// invalid-connection-type. Note: the Excel tab's issue list renders
+// diagnostics from the same module: invalid-symbol-type and
+// invalid-connection-type. Recoverable problems are accepted and rendered in
+// that same list; unrecoverable problems still reject the workbook. Note: the
+// Excel tab's issue list renders
 // `${sheet}!${cell} — ${message}` (see `issueLine` in ArisGenerationPanel.tsx)
-// — it does NOT render the offending raw value in the UI, unlike the retired
-// panel's "Raw value / Normalized value" rows. The raw value IS carried on
-// `ArisExcelIssue.value` (unit-tested in workbookParser.test.ts) but is not
-// currently surfaced in this UI, so only worksheet+cell evidence is asserted
-// here — asserting UI text for a value the UI never renders would be
-// fabricated evidence.
+// without a severity marker or the offending raw value, unlike the retired
+// panel's "Raw value / Normalized value" rows. Severity and raw value ARE
+// carried on `ArisExcelIssue`, so accepted cases assert warning severity from
+// the parser and assert the same worksheet+cell evidence remains surfaced in
+// the UI.
 // ---------------------------------------------------------------------------
 
 test('mandatory spreadsheet X5: row-level errors preserve worksheet and cell evidence for missing values, duplicate ids, broken references, and unknown/invalid types', async ({
@@ -529,6 +531,9 @@ test('mandatory spreadsheet X5: row-level errors preserve worksheet and cell evi
     readonly overrides: FixtureSheets
     readonly sheet: ArisSheetName
     readonly messageFragment: string
+    readonly expectedOutcome: 'rejected' | 'accepted-with-warning'
+    readonly warningCode?: 'missing-reference' | 'invalid-symbol-type'
+    readonly warningAction?: 'connection-skipped'
   }[] = [
     {
       name: 'missing required value',
@@ -546,7 +551,8 @@ test('mandatory spreadsheet X5: row-level errors preserve worksheet and cell evi
         ]
       },
       sheet: 'Objects',
-      messageFragment: 'required cell value is empty'
+      messageFragment: 'required cell value is empty',
+      expectedOutcome: 'rejected'
     },
     {
       name: 'duplicate id',
@@ -557,7 +563,8 @@ test('mandatory spreadsheet X5: row-level errors preserve worksheet and cell evi
         ]
       },
       sheet: 'Models',
-      messageFragment: 'more than one row declares the same identifier'
+      messageFragment: 'more than one row declares the same identifier',
+      expectedOutcome: 'rejected'
     },
     {
       name: 'broken reference',
@@ -574,7 +581,10 @@ test('mandatory spreadsheet X5: row-level errors preserve worksheet and cell evi
         ]
       },
       sheet: 'Connections',
-      messageFragment: 'references an identifier that does not exist'
+      messageFragment: 'references an identifier that does not exist',
+      expectedOutcome: 'accepted-with-warning',
+      warningCode: 'missing-reference',
+      warningAction: 'connection-skipped'
     },
     {
       name: 'unknown object type',
@@ -592,7 +602,8 @@ test('mandatory spreadsheet X5: row-level errors preserve worksheet and cell evi
         ]
       },
       sheet: 'Objects',
-      messageFragment: 'object type this build does not recognize'
+      messageFragment: 'object type this build does not recognize',
+      expectedOutcome: 'rejected'
     },
     {
       name: 'invalid symbol type',
@@ -610,7 +621,9 @@ test('mandatory spreadsheet X5: row-level errors preserve worksheet and cell evi
         ]
       },
       sheet: 'Objects',
-      messageFragment: 'symbol type does not match its object type'
+      messageFragment: 'symbol type does not match its object type',
+      expectedOutcome: 'accepted-with-warning',
+      warningCode: 'invalid-symbol-type'
     },
     {
       name: 'invalid connection type',
@@ -627,7 +640,8 @@ test('mandatory spreadsheet X5: row-level errors preserve worksheet and cell evi
         ]
       },
       sheet: 'Connections',
-      messageFragment: 'connection type this build does not recognize'
+      messageFragment: 'connection type this build does not recognize',
+      expectedOutcome: 'rejected'
     }
   ]
 
@@ -635,20 +649,39 @@ test('mandatory spreadsheet X5: row-level errors preserve worksheet and cell evi
   const tabsBefore = await page.getByRole('tab').count()
   for (const [index, scenario] of cases.entries()) {
     await test.step(scenario.name, async () => {
-      await uploadWorkbook(
-        page,
-        buildValidFixtureWorkbook(scenario.overrides),
-        `mandatory-${index}-${scenario.name.replace(/\s+/g, '-')}.xlsx`
-      )
-      await expect(excelStatus(panel)).toContainText('The workbook was rejected', {
-        timeout: 30_000
-      })
+      const workbook = buildValidFixtureWorkbook(scenario.overrides)
+      const fileName = `mandatory-${index}-${scenario.name.replace(/\s+/g, '-')}.xlsx`
+      await uploadWorkbook(page, workbook, fileName)
+      if (scenario.expectedOutcome === 'rejected') {
+        await expect(excelStatus(panel)).toContainText('The workbook was rejected', {
+          timeout: 30_000
+        })
+      } else {
+        const parsed = parseArisWorkbook(fileName, workbook)
+        expect(parsed.status).toBe('accepted')
+        const warning = parsed.issues.filter(({ code }) => code === scenario.warningCode)
+        expect(warning).toHaveLength(1)
+        expect(warning[0]).toMatchObject({
+          severity: 'warning',
+          sheet: scenario.sheet,
+          cell: expect.stringMatching(/^[A-Z]+\d+$/),
+          ...(scenario.warningAction
+            ? { details: expect.objectContaining({ action: scenario.warningAction }) }
+            : {})
+        })
+        await expect(excelStatus(panel)).toContainText(/^Created 1 models,/, {
+          timeout: 30_000
+        })
+      }
       const issue = excelIssueItems(panel).filter({ hasText: scenario.messageFragment })
       await expect(issue).toHaveCount(1)
       await expect(issue).toContainText(`${scenario.sheet}!`)
     })
   }
-  expect(await page.getByRole('tab').count()).toBe(tabsBefore)
+  const acceptedCaseCount = cases.filter(
+    ({ expectedOutcome }) => expectedOutcome === 'accepted-with-warning'
+  ).length
+  expect(await page.getByRole('tab').count()).toBe(tabsBefore + acceptedCaseCount)
 })
 
 // ---------------------------------------------------------------------------
