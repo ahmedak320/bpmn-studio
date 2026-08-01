@@ -134,8 +134,8 @@ Text is manual SVG `<text>/<tspan>` with greedy whitespace wrapping (`src/aris/c
 
 ### W11-ORCH — orchestrator prep
 
-- [ ] Record the true baseline: run the full gate suite at HEAD (`npm run typecheck lint check:aris-runtime-boundary check:ui-copy check:no-skips`, `npm test`, `npm run test:aris:animalwf`, `npm run test:aris:animalwf:holdout`) and write the SHA + every failure verbatim into the **Baseline record** section below. If red at HEAD, dispatch a default-worker fix lane before Wave 12 and re-record.
-- [ ] Stage reference assets (reference/ is gitignored, outside the worktree — safe):
+- [x] Record the true baseline: run the full gate suite at HEAD (`npm run typecheck lint check:aris-runtime-boundary check:ui-copy check:no-skips`, `npm test`, `npm run test:aris:animalwf`, `npm run test:aris:animalwf:holdout`) and write the SHA + every failure verbatim into the **Baseline record** section below. If red at HEAD, dispatch a default-worker fix lane before Wave 12 and re-record. — **DONE: all green at `a21c6a1`, no fix lane needed (see Baseline record).**
+- [x] Stage reference assets (reference/ is gitignored, outside the worktree — safe): — **DONE: crops (40 orig-/cmp- files) + icon-board + 3 generated 600-dpi crops (hand/process-interface/operators) + openrouter.env staged; gen-tests dir created.**
 
   ```bash
   mkdir -p /home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/crops /home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/gen-tests
@@ -154,24 +154,24 @@ Text is manual SVG `<text>/<tspan>` with greedy whitespace wrapping (`src/aris/c
   EOF
   ```
 
-- [ ] Confirm the 4 PDFs + 4 expected JSONs are present under `../reference/`; confirm `../reference/openrouter.env` contains `OPENROUTER_API_KEY` (do not print the value).
-- [ ] Install the humanizer skill: `git clone https://github.com/blader/humanizer /home/ahmed/.claude/skills/humanizer` (fallback forks: `jpeggdev/humanize-writing`, `Aboudjem/humanizer-skill`; the skill is a Markdown rewrite checklist — no runtime deps).
-- [ ] Worker smoke test: one trivial `codex exec -m gpt-5.6-sol -c model_reasoning_effort="xhigh" "print OK"` and one `opus48-1m` Agent dispatch must round-trip before Wave 12.
+- [x] Confirm the 4 PDFs + 4 expected JSONs are present under `../reference/`; confirm `../reference/openrouter.env` contains `OPENROUTER_API_KEY` (do not print the value). — **DONE: 4 PDFs + 4 expected JSONs + AML fixture present; openrouter.env staged (chmod 600), key len 73.**
+- [x] Install the humanizer skill: `git clone https://github.com/blader/humanizer /home/ahmed/.claude/skills/humanizer` (fallback forks: `jpeggdev/humanize-writing`, `Aboudjem/humanizer-skill`; the skill is a Markdown rewrite checklist — no runtime deps). — **DONE: cloned from blader/humanizer, SKILL.md present.**
+- [x] Worker smoke test: one trivial `codex exec -m gpt-5.6-sol -c model_reasoning_effort="xhigh" "print OK"` and one `opus48-1m` Agent dispatch must round-trip before Wave 12. — **DONE: codex → CODEX-SMOKE-OK (exit 0); opus48-1m → OPUS48-SMOKE-OK.**
 
 ### Lane L-I18N — register ALL campaign i18n keys (EN + AR)
 
 **Worker:** sonnet medium. **Read first:** `src/i18n/dictionaries.ts` (EN blocks ~:1058, ~:2307, ~:2619; AR ~:4126, ~:5279, ~:5560), `src/aris/shell/shellI18n.ts:49+`, `src/__tests__/i18n.test.ts`, `src/aris/shell/dmtLibraryI18n.ts`, `src/aris/canvas/printFrameI18n.ts`.
 
-- [ ] **Dialog keys** — EN after `'translationReview.noProvider'` (~~:1122), AR after (~~:4188):
+- [x] **Dialog keys** — EN after `'translationReview.noProvider'` (~~:1122), AR after (~~:4188):
   - `translationReview.runSummary`: EN `{proposals} proposal(s) returned · {failed} item(s) failed and remain listed for retry or manual entry.` / AR `عاد {proposals} من المقترحات · فشل {failed} من العناصر وتبقى مدرجة لإعادة المحاولة أو الإدخال اليدوي.`
   - `translationReview.nothingSendable`: EN `None of the {count} unresolved field(s) can be sent automatically — fix the source text or enter the value manually below.` / AR `لا يمكن إرسال أي من الحقول غير المحسومة ({count}) تلقائيًا — صحّح نص المصدر أو أدخل القيمة يدويًا أدناه.`
   - `translationReview.acceptAll`: EN `Accept all proposals` / AR `اعتماد كل المقترحات`
-- [ ] **Auto-translate keys** — EN after `aris.translate.*` (~~:2619), AR after (~~:5560); ALSO add all three to `ARIS_SHELL_MESSAGE_KEYS`:
+- [x] **Auto-translate keys** — EN after `aris.translate.*` (~~:2619), AR after (~~:5560); ALSO add all three to `ARIS_SHELL_MESSAGE_KEYS`:
   - `aris.translate.autoRunning`: EN `Translating {count} labels automatically…` / AR `جارٍ ترجمة {count} تسمية تلقائيًا…`
   - `aris.translate.autoPartial`: EN `Translated {applied} labels automatically; {remaining} could not be translated — open Translate… to review.` / AR `تمت ترجمة {applied} تسمية تلقائيًا؛ تعذّرت ترجمة {remaining} — افتح «ترجمة…» للمراجعة.`
   - `aris.translate.autoFailed`: EN `Automatic translation failed: {error}` / AR `فشلت الترجمة التلقائية: {error}`
   - (`aris.translate.autoDone` already exists — do not re-add. Confirm/register `aris.translate.gestureLabel` = EN `Translate labels` / AR `ترجمة التسميات` if missing.)
-- [ ] **Rail / type / context keys** (add to `ARIS_SHELL_MESSAGE_KEYS` AND `dictionaries.ts` EN+AR):
+- [x] **Rail / type / context keys** (add to `ARIS_SHELL_MESSAGE_KEYS` AND `dictionaries.ts` EN+AR):
 
   | Key                               | EN                                                                               | AR                                                                  |
   | --------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
@@ -188,11 +188,11 @@ Text is manual SVG `<text>/<tspan>` with greedy whitespace wrapping (`src/aris/c
   | `aris.changeType.keepData`        | Connections, attributes and names are kept. Validation re-runs after the change. | تُحتفَظ بالوصلات والسمات والأسماء، ويُعاد تشغيل التحقق بعد التغيير. |
   | `aris.changeType.failed`          | The type change was refused: {error}                                             | رُفض تغيير النوع: {error}                                           |
 
-- [ ] **Print-frame keys** — register all in `dictionaries.ts` EN (mirroring `printFrameI18n.ts:17-29` fallbacks verbatim) + AR; ALSO add `raci.title` to the `printFrameI18n.ts:31` key record:
+- [x] **Print-frame keys** — register all in `dictionaries.ts` EN (mirroring `printFrameI18n.ts:17-29` fallbacks verbatim) + AR; ALSO add `raci.title` to the `printFrameI18n.ts:31` key record:
   - EN: `processCode` `Process Code` · `processName` `Process Name` · `organizationalOwner` `Organizational Owner` · `headerAria` `Print header for {model}` · `orgBlock` `Organization title block — the imported OLE image is not decoded yet` · `legendAria` `DMT symbol legend and RACI key` · `raci.title` `RACI roles and permissions matrix / RACI` · `raci.responsible` `Responsible` · `raci.approval` `Approval` · `raci.consulted` `Consulted` · `raci.informed` `Informed`
   - AR (transcribed from the printed legend/header — authoritative over the manual): `processCode` `رمز العملية` · `processName` `اسم العملية` · `organizationalOwner` `المسؤول التنظيمي` · `headerAria` `ترويسة الطباعة للنموذج {model}` · `orgBlock` `مربع بيانات الجهة — صورة OLE المستوردة لم تُفكَّك بعد` · `legendAria` `مفتاح رموز DMT ومصفوفة RACI` · `raci.title` `مصفوفة الصلاحيات للأدوار الوظيفية/ RACI` · `raci.responsible` `مسؤول عن التنفيذ` · `raci.approval` `الموافقة والاعتماد` · `raci.consulted` `يستشار عند التنفيذ` · `raci.informed` `يُعلم بالتنفيذ أو النتيجة`
-- [ ] **Palette tooltip template:** `dmtLibraryI18n.ts:26` `'aris.library.item.tooltip'` value `'{name} · {objectType} · {symbolNum}'` → `'{name}'`. Do NOT delete `dock/undock/move` yet (still referenced until L-P2 deletes them and their uses together).
-- [ ] Gates: `npm run check:ui-copy`, `npx vitest run src/__tests__/i18n.test.ts`, typecheck, lint.
+- [x] **Palette tooltip template:** `dmtLibraryI18n.ts:26` `'aris.library.item.tooltip'` value `'{name} · {objectType} · {symbolNum}'` → `'{name}'`. Do NOT delete `dock/undock/move` yet (still referenced until L-P2 deletes them and their uses together).
+- [x] Gates: `npm run check:ui-copy`, `npx vitest run src/__tests__/i18n.test.ts`, typecheck, lint. — **orchestrator re-verified: i18n.test 34/34 exit0, check:ui-copy exit0, typecheck exit0.**
 - **Commit:** `i18n(aris): register Wave 11–16 campaign keys (translation summaries, rail tabs, friendly types, print-frame Arabic)`
 
 ---
@@ -884,9 +884,20 @@ Evidence set under `test-results/fidelity/`: `vacd-overview-*` (P3), `wpb-*` thr
 
 ## Baseline record (Wave 11 fills this in)
 
-- HEAD SHA at campaign start: `abe1d57` (verify).
-- Full gate suite result at HEAD: _(record each command's exit code + any failure verbatim)_.
-- Red-at-HEAD fixes dispatched before Wave 12: _(none / list)_.
+- HEAD SHA at campaign start: `a21c6a1` (verified; goal.md's planning-time `abe1d57` predates the plan commit `a21c6a1`, which is HEAD and adds only docs).
+- Full gate suite result at HEAD `a21c6a1` (run 2026-08-01T16:35–16:39Z), **all GREEN**:
+  - `npm run typecheck` → exit 0
+  - `npm run lint` → exit 0
+  - `npm run check:aris-runtime-boundary` → exit 0
+  - `npm run check:ui-copy` → exit 0
+  - `npm run check:no-skips` → exit 0
+  - `npm run check:csp` → exit 0
+  - `npm test` (unit) → exit 0 — **368 test files, 4611 tests passed**
+  - `npm run test:aris:animalwf` → exit 0 — **24 files, 162 tests passed**
+  - `npm run test:aris:animalwf:holdout` → exit 0 — **2 files, 2 tests passed**
+- Red-at-HEAD fixes dispatched before Wave 12: **none** (baseline clean).
+- Prep verified: `../reference/` assets staged (4 PDFs + 4 expected JSONs + AML fixture + conventions + 40 crops + icon-board + 3 generated 600-dpi crops); `../reference/openrouter.env` present with `OPENROUTER_API_KEY` (chmod 600); humanizer skill installed (`~/.claude/skills/humanizer`, SKILL.md); codex `gpt-5.6-sol` xhigh smoke → `CODEX-SMOKE-OK` (exit 0); opus48-1m Agent smoke → `OPUS48-SMOKE-OK`.
+- **External blocker recorded:** `.env` `OPENAI_API_KEY` + `ANTHROPIC_API_KEY` are EMPTY ⇒ Lane L-P13 live A/B for `gpt-5.6-terra` (direct OpenAI) + `claude-opus-4-8` (direct Anthropic) cannot run until the user supplies keys or the models are routed via OpenRouter. Codex ChatGPT-auth does NOT cover P13's direct OpenAI call. P11 (glm-5.2/OpenRouter) + P12 (deterministic) are unaffected.
 
 ## Resolution evidence (Wave 16 fills this in)
 

@@ -23,7 +23,7 @@ export const DMT_LIBRARY_MESSAGE_KEYS = Object.freeze({
   'aris.library.group.expand': 'Expand',
   'aris.library.group.collapse': 'Collapse',
   'aris.library.item.aria': 'Place {name}. {variants} variants.',
-  'aris.library.item.tooltip': '{name} · {objectType} · {symbolNum}',
+  'aris.library.item.tooltip': '{name}',
   'aris.library.quickConnect': '{relation}: add {peer} {direction} the selected object',
   'aris.library.direction.before': 'before',
   'aris.library.direction.after': 'after',

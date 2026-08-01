@@ -22,6 +22,7 @@ export const ARIS_PRINT_FRAME_MESSAGE_KEYS: Readonly<Record<string, string>> = O
   'aris.printFrame.orgBlock':
     'Organization title block — the imported OLE image is not decoded yet',
   'aris.printFrame.legendAria': 'DMT symbol legend and RACI key',
+  'aris.printFrame.raci.title': 'RACI roles and permissions matrix / RACI',
   'aris.printFrame.raci.responsible': 'Responsible',
   'aris.printFrame.raci.approval': 'Approval',
   'aris.printFrame.raci.consulted': 'Consulted',
