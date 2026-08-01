@@ -82,11 +82,22 @@ test('rail tools: docked placement, hover title, friendly details, right-click c
   await expect(details).not.toContainText('OT_INFO_CARR')
 
   await page.keyboard.press('Escape')
-  await page.mouse.click(
-    canvasBox!.x + canvasBox!.width * 0.2,
-    canvasBox!.y + canvasBox!.height * 0.2
-  )
-  await logShape.hover()
+  // The type tooltip is intentionally suppressed while a shape is selected, so
+  // the shape must be genuinely deselected before hovering. Firefox
+  // occasionally drops a single synthetic background click, so retry the
+  // empty-canvas click until diagram-js clears the selection.
+  const emptyX = canvasBox!.x + canvasBox!.width * 0.2
+  const emptyY = canvasBox!.y + canvasBox!.height * 0.2
+  await expect(async () => {
+    await page.mouse.click(emptyX, emptyY)
+    await expect(logShape).not.toHaveClass(/\bselected\b/, { timeout: 250 })
+  }).toPass({ timeout: 5000 })
+  // Hover the (now unselected) shape with a real pointer move to its centre;
+  // firefox does not reliably dispatch the SVG hover from locator.hover().
+  const logBox = await logShape.boundingBox()
+  expect(logBox).not.toBeNull()
+  await page.mouse.move(emptyX, emptyY)
+  await page.mouse.move(logBox!.x + logBox!.width / 2, logBox!.y + logBox!.height / 2)
   await expect(page.locator('[data-orbitpm-aris-type-tip]')).toContainText('Log block', {
     timeout: 2000
   })
@@ -123,13 +134,25 @@ test('rail tools: docked placement, hover title, friendly details, right-click c
   )
   await expect(eventShape).toHaveCount(1)
   await page.keyboard.press('Escape')
-  await eventShape.click()
-
+  // Select the shape with a real pointer click at its centre. Webkit does not
+  // dispatch diagram-js selection from locator.click() on the SVG <g>, and even
+  // a synthetic pointer click occasionally fails to register — so retry the
+  // centre click until the context pad opens. A mouse click at the hit-area
+  // centre is robust across all three engines.
+  const eventBox = await eventShape.boundingBox()
+  expect(eventBox).not.toBeNull()
+  const eventCenterX = eventBox!.x + eventBox!.width / 2
+  const eventCenterY = eventBox!.y + eventBox!.height / 2
   const contextPad = canvas.locator('.djs-context-pad.open')
-  await expect(contextPad).toBeVisible()
-  await contextPad
-    .locator('[data-action^="quick-connect.outgoing.ct-activ-1.epc-function."]')
-    .click()
+  await expect(async () => {
+    await page.mouse.click(eventCenterX, eventCenterY)
+    await expect(contextPad).toBeVisible({ timeout: 500 })
+  }).toPass({ timeout: 5000 })
+  const quickConnect = contextPad.locator(
+    '[data-action^="quick-connect.outgoing.ct-activ-1.epc-function."]'
+  )
+  await expect(quickConnect).toBeVisible()
+  await quickConnect.click()
   const connections = canvas.locator('.djs-connection[data-element-id]')
   await expect(connections).toHaveCount(1)
   const connectionsBeforeChange = await connections.count()
