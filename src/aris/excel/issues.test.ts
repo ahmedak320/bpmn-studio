@@ -35,6 +35,20 @@ describe('localizable issue catalog', () => {
     expect(ARIS_EXCEL_MESSAGE_KEYS.every((key) => key.startsWith('aris.excel.'))).toBe(true)
   })
 
+  it('publishes the forgiveness issue codes with actionable guidance', () => {
+    for (const code of [
+      'symbol-type-inferred',
+      'reference-normalized',
+      'connections-auto-chained'
+    ] as const) {
+      expect(ARIS_EXCEL_ISSUE_CODES).toContain(code)
+      expect(createArisExcelIssue(code, 'warning').guidanceKey).toBe(`aris.excel.guidance.${code}`)
+    }
+    for (const code of ['value-required', 'unknown-symbol-type'] as const) {
+      expect(createArisExcelIssue(code, 'warning').guidanceKey).toBe(`aris.excel.guidance.${code}`)
+    }
+  })
+
   it('carries severity, sheet, cell address, and offending value', () => {
     const issue = createArisExcelIssue('duplicate-id', 'error', {
       sheet: 'Objects',

@@ -19,6 +19,7 @@
 
 import {
   isAcceptedArisWorkbook,
+  isControlFlowObjectType,
   type ArisWorkbookConnectionRecord,
   type ArisWorkbookModel,
   type ArisWorkbookObjectRecord,
@@ -109,6 +110,57 @@ export interface ArisWorkbookAmlResult {
   readonly connectionCount: number
 }
 
+function generatedValue(
+  value: string,
+  source: ArisWorkbookObjectRecord['occurrenceId'],
+  field: string
+): ArisWorkbookObjectRecord['occurrenceId'] {
+  return Object.freeze({
+    value,
+    raw: value,
+    provenance: Object.freeze({ ...source.provenance, field })
+  })
+}
+
+function connectionsWithAutoChains(workbook: ArisWorkbookModel): ArisWorkbookConnectionRecord[] {
+  const connections = [...workbook.connections]
+  for (const model of workbook.models) {
+    const modelId = model.modelId.value
+    if ((workbook.index.connectionsByModelId.get(modelId) ?? []).length > 0) continue
+    const controlFlowObjects = (workbook.index.objectsByModelId.get(modelId) ?? [])
+      .filter((object) => isControlFlowObjectType(object.objectType.value))
+      .sort((left, right) => {
+        const leftOrder = left.order?.value ?? Number.POSITIVE_INFINITY
+        const rightOrder = right.order?.value ?? Number.POSITIVE_INFINITY
+        return leftOrder - rightOrder || left.source.row - right.source.row
+      })
+    for (let index = 0; index + 1 < controlFlowObjects.length; index += 1) {
+      const source = controlFlowObjects[index]!
+      const target = controlFlowObjects[index + 1]!
+      const sequence = index + 1
+      connections.push(
+        Object.freeze({
+          modelId: model.modelId,
+          connectionId: generatedValue(
+            `auto.${modelId}.${sequence}`,
+            source.occurrenceId,
+            'connection_id'
+          ),
+          sourceOccurrenceId: source.occurrenceId,
+          targetOccurrenceId: target.occurrenceId,
+          connectionType: generatedValue(
+            source.objectType.value === 'OT_EVT' ? 'CT_ACT_1' : 'CT_CRT_1',
+            source.occurrenceId,
+            'connection_type'
+          ),
+          source: source.source
+        })
+      )
+    }
+  }
+  return connections
+}
+
 /**
  * Generate one canonical AML document carrying every model in `workbook`.
  *
@@ -116,6 +168,7 @@ export interface ArisWorkbookAmlResult {
  * is what makes the result a real ARIS document rather than a flattened drawing.
  */
 export function buildAmlFromArisWorkbook(workbook: ArisWorkbookModel): ArisWorkbookAmlResult {
+  const effectiveConnections = connectionsWithAutoChains(workbook)
   const attributesByOwner = new Map<string, AttributeDefinitionSpec[]>()
   for (const attribute of workbook.attributes) {
     const text = attribute.value?.value ?? ''
@@ -143,7 +196,7 @@ export function buildAmlFromArisWorkbook(workbook: ArisWorkbookModel): ArisWorkb
   const connectionDefinitionId = (connection: ArisWorkbookConnectionRecord): string =>
     arisIdForWorkbookId('CxnDef', connection.connectionId.value)
 
-  for (const connection of workbook.connections) {
+  for (const connection of effectiveConnections) {
     const source = workbook.index.occurrencesById.get(connection.sourceOccurrenceId.value)
     const target = workbook.index.occurrencesById.get(connection.targetOccurrenceId.value)
     if (!source || !target) continue
@@ -193,7 +246,9 @@ export function buildAmlFromArisWorkbook(workbook: ArisWorkbookModel): ArisWorkb
   for (const model of workbook.models) {
     const modelId = model.modelId.value
     const objects = workbook.index.objectsByModelId.get(modelId) ?? []
-    const connections = workbook.index.connectionsByModelId.get(modelId) ?? []
+    const connections = effectiveConnections.filter(
+      (connection) => connection.modelId.value === modelId
+    )
 
     const geometry = new Map<
       string,

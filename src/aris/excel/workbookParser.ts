@@ -22,6 +22,7 @@ import {
   ARIS_TEMPLATE_VERSION,
   LEGACY_SHEET_NAMES,
   LEGACY_TEMPLATE_PROPERTY,
+  inferSymbolType,
   isArisSheetName,
   isControlFlowObjectType,
   parseRoutePoints,
@@ -251,6 +252,7 @@ interface RowReader {
   ): ArisSourcedValue<T> | undefined
   color(columnName: string): ArisSourcedValue<string> | undefined
   route(columnName: string): ArisSourcedValue<readonly ArisRoutePoint[]> | undefined
+  provenance(columnName: string): ArisCellProvenance | undefined
   /** True when any required value on this row was missing or malformed. */
   readonly failed: boolean
 }
@@ -405,6 +407,12 @@ function createRowReader(view: SheetView, rowIndex: number, issues: IssueSink): 
         return undefined
       }
       return sourced(parsed.points, entry.raw, entry.provenance)
+    },
+    provenance(columnName) {
+      const column = specByName.get(columnName)
+      if (!column) return undefined
+      const columnIndex = view.columnByName.get(columnName)
+      return provenanceFor(column, columnIndex === undefined ? undefined : cells.get(columnIndex))
     }
   }
 }
@@ -455,15 +463,15 @@ function detectTemplate(workbook: ArisRawWorkbook): ArisWorkbookTemplateDetectio
 // --- sheet readers ------------------------------------------------------------
 
 interface ParsedSheets {
-  readonly models: ArisWorkbookModelRecord[]
-  readonly objects: ArisWorkbookObjectRecord[]
-  readonly connections: ArisWorkbookConnectionRecord[]
-  readonly attributes: ArisWorkbookAttributeRecord[]
-  readonly assignments: ArisWorkbookAssignmentRecord[]
-  readonly lanes: ArisWorkbookLaneRecord[]
-  readonly freeText: ArisWorkbookFreeTextRecord[]
-  readonly styles: ArisWorkbookStyleRecord[]
-  readonly glossary: ArisWorkbookGlossaryRecord[]
+  models: ArisWorkbookModelRecord[]
+  objects: ArisWorkbookObjectRecord[]
+  connections: ArisWorkbookConnectionRecord[]
+  attributes: ArisWorkbookAttributeRecord[]
+  assignments: ArisWorkbookAssignmentRecord[]
+  lanes: ArisWorkbookLaneRecord[]
+  freeText: ArisWorkbookFreeTextRecord[]
+  styles: ArisWorkbookStyleRecord[]
+  glossary: ArisWorkbookGlossaryRecord[]
 }
 
 function eachRow(
@@ -507,20 +515,50 @@ function readObjects(view: SheetView | undefined, issues: IssueSink): ArisWorkbo
     const objectId = row.identifier('object_id')
     const occurrenceId = row.identifier('occurrence_id')
     const objectType = row.enumeration<ArisObjectType>('object_type', 'unknown-object-type')
-    const symbolType = row.text('symbol_type')
+    let symbolType = row.text('symbol_type')
     const nameEn = row.text('name_en')
 
     if (symbolType && !ARIS_SYMBOL_TYPE_PATTERN.test(symbolType.value)) {
-      issues.push('invalid-symbol-type', 'error', {
+      issues.push('invalid-symbol-type', 'warning', {
         sheet: symbolType.provenance.sheet,
         cell: symbolType.provenance.cell,
         row: symbolType.provenance.row,
         column: symbolType.provenance.column,
         value: symbolType.raw
       })
-      return
+      if (objectType && nameEn) {
+        symbolType = Object.freeze({
+          value: inferSymbolType(objectType.value, nameEn.value),
+          raw: symbolType.raw,
+          provenance: symbolType.provenance
+        })
+      }
+    } else if (!symbolType && objectType && nameEn) {
+      const provenance = row.provenance('symbol_type')
+      if (provenance) {
+        symbolType = Object.freeze({
+          value: inferSymbolType(objectType.value, nameEn.value),
+          raw: '',
+          provenance
+        })
+      }
     }
-    if (symbolType && !(ARIS_KNOWN_SYMBOL_TYPES as readonly string[]).includes(symbolType.value)) {
+    const inferred =
+      symbolType?.raw === '' ||
+      (symbolType !== undefined && !ARIS_SYMBOL_TYPE_PATTERN.test(symbolType.raw.trim()))
+    if (inferred && objectType && symbolType) {
+      issues.push('symbol-type-inferred', objectType.value === 'OT_RULE' ? 'warning' : 'info', {
+        sheet: symbolType.provenance.sheet,
+        cell: symbolType.provenance.cell,
+        row: symbolType.provenance.row,
+        column: symbolType.provenance.column,
+        value: symbolType.raw,
+        details: { objectType: objectType.value, inferredSymbolType: symbolType.value }
+      })
+    } else if (
+      symbolType &&
+      !(ARIS_KNOWN_SYMBOL_TYPES as readonly string[]).includes(symbolType.value)
+    ) {
       issues.push('unknown-symbol-type', 'warning', {
         sheet: symbolType.provenance.sheet,
         cell: symbolType.provenance.cell,
@@ -776,19 +814,150 @@ function reportDuplicate(issues: IssueSink, value: ArisSourcedValue<string>, kin
   })
 }
 
+function rawRecordFingerprint(record: object): string {
+  return JSON.stringify(
+    Object.entries(record)
+      .filter(([key]) => key !== 'source')
+      .map(([key, value]) => [
+        key,
+        value && typeof value === 'object' && 'raw' in value
+          ? (value as ArisSourcedValue<unknown>).raw
+          : null
+      ])
+  )
+}
+
+function dedupeExactCloneRecords<T extends { readonly source: ArisRowProvenance }>(
+  records: readonly T[],
+  pickIdentity: (record: T) => ArisSourcedValue<string>,
+  kind: string,
+  issues: IssueSink
+): T[] {
+  const priorById = new Map<string, { readonly fingerprint: string; readonly row: number }[]>()
+  const kept: T[] = []
+  for (const record of records) {
+    const identity = pickIdentity(record)
+    const fingerprint = rawRecordFingerprint(record)
+    const prior = priorById.get(identity.value) ?? []
+    const clone = prior.find((candidate) => candidate.fingerprint === fingerprint)
+    if (clone) {
+      issues.push('duplicate-id', 'warning', {
+        sheet: identity.provenance.sheet,
+        cell: identity.provenance.cell,
+        row: identity.provenance.row,
+        column: identity.provenance.column,
+        value: identity.raw,
+        details: {
+          kind,
+          action: 'duplicate-row-ignored',
+          firstSeenRow: clone.row
+        }
+      })
+      continue
+    }
+    prior.push({ fingerprint, row: record.source.row })
+    priorById.set(identity.value, prior)
+    kept.push(record)
+  }
+  return kept
+}
+
+function dedupeExactClones(sheets: ParsedSheets, issues: IssueSink): void {
+  sheets.models = dedupeExactCloneRecords(
+    sheets.models,
+    (record) => record.modelId,
+    'model_id',
+    issues
+  )
+  sheets.connections = dedupeExactCloneRecords(
+    sheets.connections,
+    (record) => record.connectionId,
+    'connection_id',
+    issues
+  )
+  sheets.lanes = dedupeExactCloneRecords(sheets.lanes, (record) => record.laneId, 'lane_id', issues)
+  sheets.freeText = dedupeExactCloneRecords(
+    sheets.freeText,
+    (record) => record.textId,
+    'text_id',
+    issues
+  )
+  sheets.styles = dedupeExactCloneRecords(
+    sheets.styles,
+    (record) => record.styleId,
+    'style_id',
+    issues
+  )
+  sheets.objects = dedupeExactCloneRecords(
+    sheets.objects,
+    (record) => record.occurrenceId,
+    'occurrence_id',
+    issues
+  )
+}
+
 function reportMissingReference(
   issues: IssueSink,
   value: ArisSourcedValue<string>,
-  target: string
+  target: string,
+  action: 'row-skipped' | 'field-cleared' | 'connection-skipped'
 ): void {
-  issues.push('missing-reference', 'error', {
+  issues.push('missing-reference', 'warning', {
     sheet: value.provenance.sheet,
     cell: value.provenance.cell,
     row: value.provenance.row,
     column: value.provenance.column,
     value: value.raw,
-    details: { target, field: value.provenance.field }
+    details: { target, field: value.provenance.field, action }
   })
+}
+
+interface ReferenceIndex {
+  readonly exact: ReadonlySet<string>
+  readonly byFold: ReadonlyMap<string, readonly string[]>
+}
+
+function caseFold(value: string): string {
+  return value.trim().toLocaleLowerCase('en-US')
+}
+
+function referenceIndex(values: Iterable<string>): ReferenceIndex {
+  const exact = new Set(values)
+  const mutableByFold = new Map<string, string[]>()
+  for (const value of exact) {
+    const folded = caseFold(value)
+    const candidates = mutableByFold.get(folded) ?? []
+    candidates.push(value)
+    mutableByFold.set(folded, candidates)
+  }
+  return {
+    exact,
+    byFold: new Map(
+      [...mutableByFold].map(([folded, candidates]) => [folded, Object.freeze(candidates)])
+    )
+  }
+}
+
+const EMPTY_REFERENCE_INDEX = referenceIndex([])
+
+function resolveReference(
+  value: ArisSourcedValue<string>,
+  targets: ReferenceIndex,
+  issues: IssueSink
+): ArisSourcedValue<string> | undefined {
+  if (targets.exact.has(value.value)) return value
+  const candidates = targets.byFold.get(caseFold(value.value)) ?? []
+  if (candidates.length !== 1) return undefined
+  const canonical = candidates[0]!
+  issues.push('reference-normalized', 'warning', {
+    sheet: value.provenance.sheet,
+    cell: value.provenance.cell,
+    row: value.provenance.row,
+    column: value.provenance.column,
+    value: value.raw,
+    details: { from: value.value, to: canonical, field: value.provenance.field }
+  })
+  return Object.freeze({ value: canonical, raw: value.raw, provenance: value.provenance })
 }
 
 function validateIdentity(sheets: ParsedSheets, issues: IssueSink): void {
@@ -840,57 +1009,84 @@ function validateIdentity(sheets: ParsedSheets, issues: IssueSink): void {
   }
 }
 
-function validateReferences(sheets: ParsedSheets, issues: IssueSink): void {
-  const modelIds = new Set(sheets.models.map((record) => record.modelId.value))
-  const styleIds = new Set(sheets.styles.map((record) => record.styleId.value))
-  const objectIds = new Set(sheets.objects.map((record) => record.objectId.value))
-  const connectionIds = new Set(sheets.connections.map((record) => record.connectionId.value))
-  const laneIds = new Set(sheets.lanes.map((record) => record.laneId.value))
-  const textIds = new Set(sheets.freeText.map((record) => record.textId.value))
-  const occurrenceIds = new Set(sheets.objects.map((record) => record.occurrenceId.value))
-  const lanesByModel = new Map<string, Set<string>>()
-  for (const lane of sheets.lanes) {
-    const set = lanesByModel.get(lane.modelId.value) ?? new Set<string>()
-    set.add(lane.laneId.value)
-    lanesByModel.set(lane.modelId.value, set)
-  }
-  const occurrencesByModel = new Map<string, Set<string>>()
+function repairReferences(sheets: ParsedSheets, issues: IssueSink): void {
+  const modelIds = referenceIndex(sheets.models.map((record) => record.modelId.value))
+  const styleIds = referenceIndex(sheets.styles.map((record) => record.styleId.value))
+
+  // Normalize model ids on Objects first, then rebuild occurrence scope before
+  // touching connection endpoints. Invalid candidates remain available so all
+  // their optional references can still be reported during the later pass.
+  const objectCandidates: {
+    readonly object: ArisWorkbookObjectRecord
+    readonly modelId?: ArisSourcedValue<string>
+  }[] = []
+  const modelRepairedObjects: ArisWorkbookObjectRecord[] = []
   for (const object of sheets.objects) {
-    const set = occurrencesByModel.get(object.modelId.value) ?? new Set<string>()
-    set.add(object.occurrenceId.value)
-    occurrencesByModel.set(object.modelId.value, set)
+    const modelId = resolveReference(object.modelId, modelIds, issues)
+    if (!modelId) reportMissingReference(issues, object.modelId, 'model', 'row-skipped')
+    objectCandidates.push({ object, ...(modelId ? { modelId } : {}) })
+    if (modelId) modelRepairedObjects.push(Object.freeze({ ...object, modelId }))
+  }
+  sheets.objects = modelRepairedObjects
+
+  const occurrencesByModel = new Map<string, ReferenceIndex>()
+  for (const model of sheets.models) {
+    occurrencesByModel.set(
+      model.modelId.value,
+      referenceIndex(
+        sheets.objects
+          .filter((object) => object.modelId.value === model.modelId.value)
+          .map((object) => object.occurrenceId.value)
+      )
+    )
   }
 
-  for (const object of sheets.objects) {
-    if (!modelIds.has(object.modelId.value)) reportMissingReference(issues, object.modelId, 'model')
-    if (
-      object.laneId &&
-      !(lanesByModel.get(object.modelId.value)?.has(object.laneId.value) ?? false)
-    ) {
-      reportMissingReference(issues, object.laneId, 'lane')
-    }
-    if (object.assignedModelId && !modelIds.has(object.assignedModelId.value)) {
-      reportMissingReference(issues, object.assignedModelId, 'model')
-    }
-    if (object.styleId && !styleIds.has(object.styleId.value)) {
-      reportMissingReference(issues, object.styleId, 'style')
-    }
-  }
-
+  const repairedConnections: ArisWorkbookConnectionRecord[] = []
   for (const connection of sheets.connections) {
-    if (!modelIds.has(connection.modelId.value)) {
-      reportMissingReference(issues, connection.modelId, 'model')
+    const modelId = resolveReference(connection.modelId, modelIds, issues)
+    if (!modelId) {
+      reportMissingReference(issues, connection.modelId, 'model', 'connection-skipped')
     }
-    const scope = occurrencesByModel.get(connection.modelId.value)
-    for (const endpoint of [connection.sourceOccurrenceId, connection.targetOccurrenceId]) {
-      if (!(scope?.has(endpoint.value) ?? false)) {
-        reportMissingReference(issues, endpoint, 'occurrence')
+    const scope = modelId
+      ? (occurrencesByModel.get(modelId.value) ?? EMPTY_REFERENCE_INDEX)
+      : EMPTY_REFERENCE_INDEX
+    const sourceOccurrenceId = resolveReference(connection.sourceOccurrenceId, scope, issues)
+    const targetOccurrenceId = resolveReference(connection.targetOccurrenceId, scope, issues)
+    if (!sourceOccurrenceId) {
+      reportMissingReference(
+        issues,
+        connection.sourceOccurrenceId,
+        'occurrence',
+        'connection-skipped'
+      )
+    }
+    if (!targetOccurrenceId) {
+      reportMissingReference(
+        issues,
+        connection.targetOccurrenceId,
+        'occurrence',
+        'connection-skipped'
+      )
+    }
+
+    let styleId: ArisSourcedValue<string> | undefined
+    if (connection.styleId) {
+      styleId = resolveReference(connection.styleId, styleIds, issues)
+      if (!styleId) {
+        reportMissingReference(issues, connection.styleId, 'style', 'field-cleared')
       }
     }
-    if (connection.styleId && !styleIds.has(connection.styleId.value)) {
-      reportMissingReference(issues, connection.styleId, 'style')
-    }
-    if (connection.sourceOccurrenceId.value === connection.targetOccurrenceId.value) {
+    if (!modelId || !sourceOccurrenceId || !targetOccurrenceId) continue
+
+    const repaired = Object.freeze({
+      ...connection,
+      modelId,
+      sourceOccurrenceId,
+      targetOccurrenceId,
+      styleId
+    })
+    repairedConnections.push(repaired)
+    if (sourceOccurrenceId.value === targetOccurrenceId.value) {
       issues.push('connection-endpoint-cycle', 'warning', {
         sheet: connection.connectionId.provenance.sheet,
         cell: connection.connectionId.provenance.cell,
@@ -900,40 +1096,117 @@ function validateReferences(sheets: ParsedSheets, issues: IssueSink): void {
       })
     }
   }
+  sheets.connections = repairedConnections
 
-  const ownerSets: Readonly<Record<ArisAttributeOwnerKind, ReadonlySet<string>>> = {
-    model: modelIds,
-    object: objectIds,
-    occurrence: occurrenceIds,
-    connection: connectionIds,
-    lane: laneIds,
-    free_text: textIds
-  }
-  for (const attribute of sheets.attributes) {
-    const owners = ownerSets[attribute.ownerKind.value]
-    if (!owners.has(attribute.ownerId.value)) {
-      reportMissingReference(issues, attribute.ownerId, attribute.ownerKind.value)
-    }
-  }
-
-  for (const assignment of sheets.assignments) {
-    if (!objectIds.has(assignment.sourceObjectId.value)) {
-      reportMissingReference(issues, assignment.sourceObjectId, 'object')
-    }
-    if (!modelIds.has(assignment.targetModelId.value)) {
-      reportMissingReference(issues, assignment.targetModelId, 'model')
-    }
-  }
-
+  const repairedLanes: ArisWorkbookLaneRecord[] = []
   for (const lane of sheets.lanes) {
-    if (!modelIds.has(lane.modelId.value)) reportMissingReference(issues, lane.modelId, 'model')
-  }
-  for (const text of sheets.freeText) {
-    if (!modelIds.has(text.modelId.value)) reportMissingReference(issues, text.modelId, 'model')
-    if (text.styleId && !styleIds.has(text.styleId.value)) {
-      reportMissingReference(issues, text.styleId, 'style')
+    const modelId = resolveReference(lane.modelId, modelIds, issues)
+    if (!modelId) {
+      reportMissingReference(issues, lane.modelId, 'model', 'row-skipped')
+      continue
     }
+    repairedLanes.push(Object.freeze({ ...lane, modelId }))
   }
+  sheets.lanes = repairedLanes
+
+  const lanesByModel = new Map<string, ReferenceIndex>()
+  for (const model of sheets.models) {
+    lanesByModel.set(
+      model.modelId.value,
+      referenceIndex(
+        sheets.lanes
+          .filter((lane) => lane.modelId.value === model.modelId.value)
+          .map((lane) => lane.laneId.value)
+      )
+    )
+  }
+
+  const repairedObjects: ArisWorkbookObjectRecord[] = []
+  for (const { object, modelId } of objectCandidates) {
+    let laneId: ArisSourcedValue<string> | undefined
+    if (object.laneId) {
+      laneId = resolveReference(
+        object.laneId,
+        modelId
+          ? (lanesByModel.get(modelId.value) ?? EMPTY_REFERENCE_INDEX)
+          : EMPTY_REFERENCE_INDEX,
+        issues
+      )
+      if (!laneId) reportMissingReference(issues, object.laneId, 'lane', 'field-cleared')
+    }
+
+    let assignedModelId: ArisSourcedValue<string> | undefined
+    if (object.assignedModelId) {
+      assignedModelId = resolveReference(object.assignedModelId, modelIds, issues)
+      if (!assignedModelId) {
+        reportMissingReference(issues, object.assignedModelId, 'model', 'field-cleared')
+      }
+    }
+
+    let styleId: ArisSourcedValue<string> | undefined
+    if (object.styleId) {
+      styleId = resolveReference(object.styleId, styleIds, issues)
+      if (!styleId) reportMissingReference(issues, object.styleId, 'style', 'field-cleared')
+    }
+
+    if (!modelId) continue
+    repairedObjects.push(Object.freeze({ ...object, modelId, laneId, assignedModelId, styleId }))
+  }
+  sheets.objects = repairedObjects
+
+  const repairedFreeText: ArisWorkbookFreeTextRecord[] = []
+  for (const text of sheets.freeText) {
+    const modelId = resolveReference(text.modelId, modelIds, issues)
+    if (!modelId) {
+      reportMissingReference(issues, text.modelId, 'model', 'row-skipped')
+      continue
+    }
+    let styleId: ArisSourcedValue<string> | undefined
+    if (text.styleId) {
+      styleId = resolveReference(text.styleId, styleIds, issues)
+      if (!styleId) reportMissingReference(issues, text.styleId, 'style', 'field-cleared')
+    }
+    repairedFreeText.push(Object.freeze({ ...text, modelId, styleId }))
+  }
+  sheets.freeText = repairedFreeText
+
+  const ownerIndexes: Readonly<Record<ArisAttributeOwnerKind, ReferenceIndex>> = {
+    model: modelIds,
+    object: referenceIndex(sheets.objects.map((record) => record.objectId.value)),
+    occurrence: referenceIndex(sheets.objects.map((record) => record.occurrenceId.value)),
+    connection: referenceIndex(sheets.connections.map((record) => record.connectionId.value)),
+    lane: referenceIndex(sheets.lanes.map((record) => record.laneId.value)),
+    free_text: referenceIndex(sheets.freeText.map((record) => record.textId.value))
+  }
+  const repairedAttributes: ArisWorkbookAttributeRecord[] = []
+  for (const attribute of sheets.attributes) {
+    const ownerId = resolveReference(
+      attribute.ownerId,
+      ownerIndexes[attribute.ownerKind.value],
+      issues
+    )
+    if (!ownerId) {
+      reportMissingReference(issues, attribute.ownerId, attribute.ownerKind.value, 'row-skipped')
+      continue
+    }
+    repairedAttributes.push(Object.freeze({ ...attribute, ownerId }))
+  }
+  sheets.attributes = repairedAttributes
+
+  const repairedAssignments: ArisWorkbookAssignmentRecord[] = []
+  for (const assignment of sheets.assignments) {
+    const sourceObjectId = resolveReference(assignment.sourceObjectId, ownerIndexes.object, issues)
+    const targetModelId = resolveReference(assignment.targetModelId, modelIds, issues)
+    if (!sourceObjectId) {
+      reportMissingReference(issues, assignment.sourceObjectId, 'object', 'row-skipped')
+    }
+    if (!targetModelId) {
+      reportMissingReference(issues, assignment.targetModelId, 'model', 'row-skipped')
+    }
+    if (!sourceObjectId || !targetModelId) continue
+    repairedAssignments.push(Object.freeze({ ...assignment, sourceObjectId, targetModelId }))
+  }
+  sheets.assignments = repairedAssignments
 }
 
 function validateModelLimits(sheets: ParsedSheets, issues: IssueSink): ReadonlyMap<string, number> {
@@ -981,6 +1254,35 @@ function validateModelLimits(sheets: ParsedSheets, issues: IssueSink): ReadonlyM
   }
 
   return controlFlowByModel
+}
+
+function signalAutoChainedConnections(
+  sheets: ParsedSheets,
+  controlFlowObjectsByModel: ReadonlyMap<string, number>,
+  issues: IssueSink
+): void {
+  const modelsWithConnections = new Set(
+    sheets.connections.map((connection) => connection.modelId.value)
+  )
+  for (const model of sheets.models) {
+    const modelId = model.modelId.value
+    const chainedObjects = controlFlowObjectsByModel.get(modelId) ?? 0
+    if (
+      chainedObjects < 2 ||
+      chainedObjects > ARIS_EXCEL_LIMITS.controlFlowObjectWarningThreshold ||
+      modelsWithConnections.has(modelId)
+    ) {
+      continue
+    }
+    issues.push('connections-auto-chained', 'warning', {
+      sheet: model.modelId.provenance.sheet,
+      cell: model.modelId.provenance.cell,
+      row: model.modelId.provenance.row,
+      column: model.modelId.provenance.column,
+      value: model.modelId.raw,
+      details: { model: modelId, chainedObjects }
+    })
+  }
 }
 
 function buildIndex(sheets: ParsedSheets): ArisWorkbookModel['index'] {
@@ -1134,9 +1436,11 @@ export function parseArisWorkbook(
     glossary: readGlossary(view('Glossary'), sink)
   }
 
+  dedupeExactClones(parsed, sink)
   validateIdentity(parsed, sink)
-  validateReferences(parsed, sink)
+  repairReferences(parsed, sink)
   const controlFlowObjectsByModel = validateModelLimits(parsed, sink)
+  signalAutoChainedConnections(parsed, controlFlowObjectsByModel, sink)
 
   if (parsed.models.length === 0) {
     sink.push('empty-workbook', 'error', { sheet: 'Models' })

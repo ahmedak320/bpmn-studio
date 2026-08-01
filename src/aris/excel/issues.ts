@@ -53,6 +53,7 @@ export const ARIS_EXCEL_ISSUE_CODES = Object.freeze([
   'value-not-allowed',
   'unknown-object-type',
   'unknown-symbol-type',
+  'symbol-type-inferred',
   'invalid-symbol-type',
   'invalid-connection-type',
   'invalid-attribute-type',
@@ -61,12 +62,14 @@ export const ARIS_EXCEL_ISSUE_CODES = Object.freeze([
   // --- Identity and references -------------------------------------------
   'duplicate-id',
   'missing-reference',
+  'reference-normalized',
   'object-definition-conflict',
   'connection-endpoint-cycle',
   // --- Model limits ------------------------------------------------------
   'control-flow-object-limit',
   'control-flow-object-warning',
   'object-transaction-limit',
+  'connections-auto-chained',
   // --- Whole-workbook ----------------------------------------------------
   'empty-workbook',
   'internal-error'
@@ -113,9 +116,14 @@ const GUIDED_CODES: ReadonlySet<ArisExcelIssueCode> = new Set([
   'template-version-unsupported',
   'formula-without-cached-value',
   'cached-formula-value',
+  'value-required',
   'missing-reference',
   'duplicate-id',
   'unknown-object-type',
+  'unknown-symbol-type',
+  'symbol-type-inferred',
+  'reference-normalized',
+  'connections-auto-chained',
   'invalid-route-points',
   'control-flow-object-limit',
   'control-flow-object-warning',

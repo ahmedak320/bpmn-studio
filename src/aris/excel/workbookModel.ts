@@ -19,8 +19,9 @@ import type {
  *   downstream ever has to guess where a value originated, so source-cell
  *   provenance reaches accounting and issue reporting unchanged (§15.6).
  * - Absent optional values are `undefined` rather than empty strings.
- * - Identifiers are validated for uniqueness and referential integrity before
- *   the model is built; a consumer may assume every reference resolves.
+ * - The parser deterministically repairs or removes unambiguous imperfect rows
+ *   before building the model. Identifiers are therefore unique and every
+ *   retained reference resolves; consumers do not need defensive lookup logic.
  * - Coordinates/sizes are optional on purpose: the layout lane fills the gaps.
  * - The model contains NO AML, NO layout, and NO transaction state. Generating
  *   AML, allocating missing IDs, laying out, and committing are downstream

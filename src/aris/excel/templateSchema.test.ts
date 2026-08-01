@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  ARIS_DEFAULT_SYMBOL_BY_OBJECT_TYPE,
+  ARIS_KNOWN_SYMBOL_TYPES,
   ARIS_MODEL_TYPES,
   ARIS_OBJECT_TYPES,
   ARIS_SHEET_NAMES,
@@ -8,10 +10,12 @@ import {
   ARIS_TEMPLATE_IDENTITY,
   arisSheetSpec,
   formatRoutePoints,
+  inferSymbolType,
   isControlFlowObjectType,
   parseRoutePoints,
   type ArisSheetName
 } from './templateSchema'
+import { ARIS_SYMBOL_DESCRIPTORS } from '../symbols/shapes'
 
 function columnNames(sheet: ArisSheetName, presence?: 'required' | 'optional'): string[] {
   const spec = arisSheetSpec(sheet)
@@ -166,6 +170,37 @@ describe('ARIS template schema (§15.2)', () => {
       'OT_EVT',
       'OT_RULE'
     ])
+  })
+
+  it('maps all twelve Excel object types to descriptor-backed default symbols', () => {
+    expect(Object.keys(ARIS_DEFAULT_SYMBOL_BY_OBJECT_TYPE).sort()).toEqual(
+      [...ARIS_OBJECT_TYPES].sort()
+    )
+    const descriptorSymbols = new Set(
+      ARIS_SYMBOL_DESCRIPTORS.map((descriptor) => descriptor.symbolNum)
+    )
+    for (const symbolType of Object.values(ARIS_DEFAULT_SYMBOL_BY_OBJECT_TYPE)) {
+      expect(descriptorSymbols, symbolType).toContain(symbolType)
+    }
+    expect(ARIS_DEFAULT_SYMBOL_BY_OBJECT_TYPE.OT_RULE).toBe('ST_OPR_XOR_1')
+  })
+
+  it('keeps every shape-catalog symbol in the known-symbol vocabulary', () => {
+    const descriptorSymbols = new Set(
+      ARIS_SYMBOL_DESCRIPTORS.map((descriptor) => descriptor.symbolNum)
+    )
+    for (const symbolType of descriptorSymbols) {
+      if (symbolType === 'DMT_UNVERIFIED_ARIS_MODEL') continue
+      expect(ARIS_KNOWN_SYMBOL_TYPES, symbolType).toContain(symbolType)
+    }
+  })
+
+  it('infers whole-token rule operators and otherwise uses object defaults', () => {
+    expect(inferSymbolType('OT_RULE', 'XOR rule')).toBe('ST_OPR_XOR_1')
+    expect(inferSymbolType('OT_RULE', 'Approve AND archive')).toBe('ST_OPR_AND_1')
+    expect(inferSymbolType('OT_RULE', 'Either OR both')).toBe('ST_OPR_OR_1')
+    expect(inferSymbolType('OT_RULE', 'Coordinator review')).toBe('ST_OPR_XOR_1')
+    expect(inferSymbolType('OT_APPL_SYS', 'XOR gateway service')).toBe('ST_APPL_SYS')
   })
 
   it('pins the template identity string', () => {

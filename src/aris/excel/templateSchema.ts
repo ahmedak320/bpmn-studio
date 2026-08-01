@@ -100,8 +100,60 @@ export const ARIS_KNOWN_SYMBOL_TYPES = Object.freeze([
   'ST_REQUIREMENT',
   'ST_POLICY',
   'ST_PERS_TYPE',
-  'ST_VAL_ADD_CHN'
+  'ST_VAL_ADD_CHN',
+  'ST_SYS_FUNC_ACT',
+  'ST_APPL_SYS',
+  'ST_PERS_EXT',
+  'ST_EMPL_TYPE',
+  'ST_BUSINESS_POLICY',
+  'ST_DOC',
+  'ST_EMAIL_1',
+  'ST_INFO_CARR_HANDY',
+  'ST_INFO_CARR_EDOC',
+  'ST_INFO_CARR_1',
+  'ST_LETTER',
+  'ST_LOG',
+  'ST_ORG_UNIT_1',
+  'ST_PERFORM',
+  'ST_POS',
+  'ST_PRCS_IF',
+  'ST_GRP_1',
+  'ST_RISK_1',
+  'ST_SERVICE',
+  'ST_VAL_ADD_CHN_SML_1'
 ] as const)
+
+/**
+ * Default descriptor-backed presentation for each object type accepted by the
+ * Excel schema. This mirrors the renderer catalog, except decisions default to
+ * XOR because that is the dominant authoring intent for an unnamed rule.
+ */
+export const ARIS_DEFAULT_SYMBOL_BY_OBJECT_TYPE: Readonly<Record<ArisObjectType, string>> =
+  Object.freeze({
+    OT_FUNC: 'ST_FUNC',
+    OT_EVT: 'ST_EV',
+    OT_RULE: 'ST_OPR_XOR_1',
+    OT_ENT_TYPE: 'ST_ENT_TYPE',
+    OT_INFO_CARR: 'ST_INFO_CARR_EDOC',
+    OT_BUSINESS_RULE: 'ST_BUSINESS_RULE',
+    OT_PERF: 'ST_PERFORM',
+    OT_APPL_SYS: 'ST_APPL_SYS',
+    OT_PERS: 'ST_PERS_EXT',
+    OT_REQUIREMENT: 'ST_REQUIREMENT',
+    OT_POLICY: 'ST_BUSINESS_POLICY',
+    OT_PERS_TYPE: 'ST_EMPL_TYPE'
+  })
+
+/** Infer a drawable symbol without guessing or changing the authored object type. */
+export function inferSymbolType(objectType: ArisObjectType, nameEn: string): string {
+  if (objectType === 'OT_RULE') {
+    const tokens = nameEn.toUpperCase().split(/[^A-Z0-9]+/)
+    if (tokens.includes('XOR')) return 'ST_OPR_XOR_1'
+    if (tokens.includes('AND')) return 'ST_OPR_AND_1'
+    if (tokens.includes('OR')) return 'ST_OPR_OR_1'
+  }
+  return ARIS_DEFAULT_SYMBOL_BY_OBJECT_TYPE[objectType]
+}
 
 export const ARIS_SYMBOL_TYPE_PATTERN = /^ST_[A-Z0-9_]+$/
 export const ARIS_CONNECTION_TYPE_PATTERN = /^CT_[A-Z0-9_]+$/
@@ -209,7 +261,7 @@ export const ARIS_SHEET_SPECS: readonly ArisSheetSpec[] = Object.freeze([
       column('object_id', 'identifier', { valueRequired: true }),
       column('occurrence_id', 'identifier', { valueRequired: true }),
       column('object_type', 'enum', { valueRequired: true, values: ARIS_OBJECT_TYPES }),
-      column('symbol_type', 'text', { valueRequired: true }),
+      column('symbol_type', 'text'),
       column('name_en', 'text', { valueRequired: true }),
       column('name_ar', 'text'),
       column('lane_id', 'identifier', {
