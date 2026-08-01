@@ -8,7 +8,7 @@ import { buildArisLegend, drawArisLegend, drawLegendSymbol, type PrintFrameRect 
 import { SVG_NS } from './svg'
 
 /**
- * The DMT bottom legend: the lane's 19 catalog presentations in the reference
+ * The DMT bottom legend: the lane's 22 catalog presentations in the reference
  * sheet's arrangement, bilingual names from the registered dictionaries, and
  * the four-row RACI key. Drawn from shared symbol descriptors, never from
  * palette widget artwork.
@@ -16,9 +16,12 @@ import { SVG_NS } from './svg'
 
 const BOUNDS: PrintFrameRect = Object.freeze({ x: 450, y: 8139, width: 3800, height: 622 })
 
-/** The 19 presentations the DMT sheet lists, per the lane contract. */
+/** The 22 presentations the DMT sheet lists, per the lane contract. */
 const EXPECTED_CATALOG_IDS = [
   'epc.event',
+  'decision.and',
+  'decision.xor',
+  'decision.or',
   'epc.process-interface',
   'epc.function',
   'epc.system-function',
@@ -40,12 +43,21 @@ const EXPECTED_CATALOG_IDS = [
 ]
 
 describe('buildArisLegend — layout and content', () => {
-  it('lays out exactly the 19 DMT presentations plus the four RACI rows', () => {
+  it('lays out exactly the 22 DMT presentations plus the four RACI rows', () => {
     const legend = buildArisLegend(BOUNDS)
     expect(legend.tiles.map((tile) => tile.catalogId).sort()).toEqual(
       [...EXPECTED_CATALOG_IDS].sort()
     )
     expect(legend.raci.rows.map((row) => row.letter)).toEqual(['R', 'A', 'C', 'I'])
+  })
+
+  it('keeps four rows so no existing tile narrows when the operator tiles are added', () => {
+    const legend = buildArisLegend(BOUNDS)
+    // inset = round(622 * 0.08) = 50; four rows ⇒ (622 − 100) / 4 = 130.5. The
+    // operator circles append under Event in column 1, which already matched the
+    // four-row columns, so the row count — and every tile's height — is unchanged.
+    const heights = new Set(legend.tiles.map((tile) => tile.bounds.height))
+    expect(heights).toEqual(new Set([130.5]))
   })
 
   it('keeps every tile and the RACI block inside the legend bounds', () => {
@@ -122,7 +134,7 @@ describe('drawArisLegend — SVG output', () => {
     drawArisLegend(parent, buildArisLegend(BOUNDS))
     const group = parent.querySelector('[data-aris-print-frame-legend]')
     expect(group).not.toBeNull()
-    expect(group!.querySelectorAll('[data-aris-legend-symbol]')).toHaveLength(19)
+    expect(group!.querySelectorAll('[data-aris-legend-symbol]')).toHaveLength(22)
     const raci = group!.querySelector('[data-aris-print-frame-raci]')
     expect(raci).not.toBeNull()
     expect(raci!.textContent).toContain('RACI')

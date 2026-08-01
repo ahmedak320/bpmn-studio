@@ -388,6 +388,9 @@ function drawPrimitive(
     dash === undefined || dash === null ? {} : { 'stroke-dasharray': dash }
   const semanticAttrs: Readonly<Record<string, string>> =
     options.part === undefined ? {} : { 'data-aris-part': options.part }
+  const linecap = 'linecap' in primitive ? primitive.linecap : undefined
+  const linecapAttrs: Readonly<Record<string, string>> =
+    linecap === undefined ? {} : { 'stroke-linecap': linecap }
   const own = 'fill' in primitive ? primitive.fill : undefined
   const fillOf = (fallback: string): string =>
     options.accent && paint.fill !== undefined ? paint.fill : (own ?? fallback)
@@ -403,7 +406,6 @@ function drawPrimitive(
         fill: fillOf(DEFAULT_FILL),
         stroke,
         'stroke-width': strokeWidth,
-        'vector-effect': 'non-scaling-stroke',
         ...semanticAttrs,
         ...dashAttrs
       })
@@ -416,7 +418,6 @@ function drawPrimitive(
         fill: fillOf(DEFAULT_FILL),
         stroke,
         'stroke-width': strokeWidth,
-        'vector-effect': 'non-scaling-stroke',
         ...semanticAttrs,
         ...dashAttrs
       })
@@ -429,7 +430,6 @@ function drawPrimitive(
         fill: fillOf(DEFAULT_FILL),
         stroke,
         'stroke-width': strokeWidth,
-        'vector-effect': 'non-scaling-stroke',
         ...semanticAttrs,
         ...dashAttrs
       })
@@ -441,21 +441,28 @@ function drawPrimitive(
         y2: round(mapY(scale, primitive.y2)),
         stroke,
         'stroke-width': strokeWidth,
-        'vector-effect': 'non-scaling-stroke',
+        ...linecapAttrs,
         ...semanticAttrs,
         ...dashAttrs
       })
-    case 'path':
+    case 'path': {
+      // The `d` geometry is up/down-scaled by the group `transform: scale(sx,sy)`,
+      // so a non-compensated width would paint by that factor. Divide the emitted
+      // width by the transform scale: at zoom 1 the painted width equals the
+      // authored user units (identical to the old non-scaling-stroke behaviour),
+      // and it scales with zoom like the connection pens.
+      const pathScale = Math.max(1e-6, (Math.abs(scale.sx) + Math.abs(scale.sy)) / 2)
       return svgElement('path', {
         d: primitive.d,
         transform: `translate(${round(scale.tx * scale.sx)},${round(scale.ty * scale.sy)}) scale(${round(scale.sx)},${round(scale.sy)})`,
         fill: fillOf('none'),
         stroke,
-        'stroke-width': strokeWidth,
-        'vector-effect': 'non-scaling-stroke',
+        'stroke-width': round(strokeWidth / pathScale),
+        ...linecapAttrs,
         ...semanticAttrs,
         ...dashAttrs
       })
+    }
     default:
       return null
   }

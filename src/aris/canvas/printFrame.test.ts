@@ -299,7 +299,7 @@ describe('buildPrintFrame — header, anchored values, attachments, legend slot'
     // The legend slot sits below the content in the source's 3800×622 aspect.
     expect(frame.legend).not.toBeNull()
     expect(frame.legend!.bounds.y).toBeGreaterThanOrEqual(1000 + 240)
-    expect(frame.legend!.tiles).toHaveLength(19)
+    expect(frame.legend!.tiles).toHaveLength(22)
   })
 
   it('resolves bound free-text notes at their exact source anchors', () => {

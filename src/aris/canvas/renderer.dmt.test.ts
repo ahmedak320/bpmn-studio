@@ -114,7 +114,7 @@ describe('DMT descriptor-driven canvas rendering', () => {
     expect(group.querySelectorAll('polygon[data-aris-part="icon"]')).toHaveLength(2)
     for (const icon of group.querySelectorAll('[data-aris-part="icon"]')) {
       expect(icon.getAttribute('fill')).toBe('#ffffff')
-      expect(icon.getAttribute('vector-effect')).toBe('non-scaling-stroke')
+      expect(icon.getAttribute('vector-effect')).toBeNull()
     }
 
     const caption = group.querySelector<SVGTextElement>('[data-aris-part="content"]')

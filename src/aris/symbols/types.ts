@@ -41,6 +41,7 @@ export type ArisDrawingElement =
       readonly fill?: string
       readonly stroke?: string
       readonly strokeWidth?: number
+      readonly linecap?: 'round'
     }
   | {
       readonly kind: 'rect'
@@ -78,6 +79,7 @@ export type ArisDrawingElement =
       readonly y2: number
       readonly stroke?: string
       readonly strokeWidth?: number
+      readonly linecap?: 'round'
     }
 
 export interface ArisSymbolDrawing {

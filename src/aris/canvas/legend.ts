@@ -5,8 +5,10 @@
  * The paired AnimalWF PDFs stamp this block from an embedded OLE image. That
  * image is out of this lane's scope (safe OLE decode is a named TODO in
  * `printFrame.ts`), so the legend is composed here from the convention
- * catalog instead: the same 19 presentations the DMT sheet lists, in the
- * sheet's own column arrangement, each drawn from its shared symbol
+ * catalog instead: the same 22 presentations the DMT sheet lists (the 19
+ * imported cells plus the AND/XOR/OR operator circles appended under Event in
+ * column 1), in the sheet's own column arrangement, each drawn from its shared
+ * symbol
  * descriptor — never from palette widget artwork (plan: "Do not reconstruct
  * this particular imported legend from current palette widgets"; descriptors
  * are the shared contract, widgets are not).
@@ -61,12 +63,13 @@ export interface ArisLegendModel {
 
 /**
  * The DMT legend set, in the reference sheet's column arrangement (left to
- * right, top to bottom inside a column): Event; the process interfaces and
- * functions; the information carriers; systems and data; organization; and
- * governance with Service. 19 presentations, per the lane contract.
+ * right, top to bottom inside a column): Event with the AND/XOR/OR operator
+ * circles; the process interfaces and functions; the information carriers;
+ * systems and data; organization; and governance with Service. 22
+ * presentations, per the lane contract.
  */
 const LEGEND_COLUMNS: readonly (readonly string[])[] = Object.freeze([
-  Object.freeze(['epc.event']),
+  Object.freeze(['epc.event', 'decision.and', 'decision.xor', 'decision.or']),
   Object.freeze(['epc.process-interface', 'epc.function', 'epc.system-function']),
   Object.freeze([
     'information.document',
@@ -216,6 +219,9 @@ function paintPrimitive(
   const strokeWidth = primitive.strokeWidth ?? 1.5
   const partAttr: Readonly<Record<string, string>> =
     part === undefined ? {} : { 'data-aris-part': part }
+  const linecap = 'linecap' in primitive ? primitive.linecap : undefined
+  const linecapAttrs: Readonly<Record<string, string>> =
+    linecap === undefined ? {} : { 'stroke-linecap': linecap }
   const fill = 'fill' in primitive ? (primitive.fill ?? 'none') : 'none'
   switch (primitive.kind) {
     case 'rect':
@@ -229,7 +235,6 @@ function paintPrimitive(
         fill,
         stroke,
         'stroke-width': strokeWidth,
-        'vector-effect': 'non-scaling-stroke',
         ...partAttr
       })
     case 'circle':
@@ -240,7 +245,6 @@ function paintPrimitive(
         fill,
         stroke,
         'stroke-width': strokeWidth,
-        'vector-effect': 'non-scaling-stroke',
         ...partAttr
       })
     case 'polygon':
@@ -251,7 +255,6 @@ function paintPrimitive(
         fill,
         stroke,
         'stroke-width': strokeWidth,
-        'vector-effect': 'non-scaling-stroke',
         ...partAttr
       })
     case 'line':
@@ -262,19 +265,24 @@ function paintPrimitive(
         y2: round(mapY(scale, primitive.y2)),
         stroke,
         'stroke-width': strokeWidth,
-        'vector-effect': 'non-scaling-stroke',
+        ...linecapAttrs,
         ...partAttr
       })
-    case 'path':
+    case 'path': {
+      // Mirror the canvas renderer: the `d` geometry is scaled by the group
+      // `transform: scale(sx,sy)`, so divide the emitted width by that scale to
+      // keep the painted width at the authored user units.
+      const pathScale = Math.max(1e-6, (Math.abs(scale.sx) + Math.abs(scale.sy)) / 2)
       return svgElement('path', {
         d: primitive.d,
         transform: `translate(${round(scale.tx * scale.sx)},${round(scale.ty * scale.sy)}) scale(${round(scale.sx)},${round(scale.sy)})`,
         fill,
         stroke,
-        'stroke-width': strokeWidth,
-        'vector-effect': 'non-scaling-stroke',
+        'stroke-width': round(strokeWidth / pathScale),
+        ...linecapAttrs,
         ...partAttr
       })
+    }
     default:
       return null
   }

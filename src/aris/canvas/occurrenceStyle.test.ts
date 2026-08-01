@@ -193,11 +193,11 @@ describe('the canvas draws the occurrence style it was given', () => {
     // strokeWidth 4 × ARIS_PEN_UNIT (2.646) — Wave 9 P2 pen-width scale.
     expect(surface.getAttribute('stroke-width')).toBe('10.584')
     expect(surface.getAttribute('stroke-dasharray')).toBe('6 4')
-    // DMT icon strokes are always white and non-scaling.
+    // DMT icon strokes are always white and scale with zoom (no vector-effect).
     const icon = partOf('ObjOcc.1', 'icon')
     expect(icon.getAttribute('stroke')).toBe('#ffffff')
     expect(icon.getAttribute('stroke-dasharray')).toBeNull()
-    expect(icon.getAttribute('vector-effect')).toBe('non-scaling-stroke')
+    expect(icon.getAttribute('vector-effect')).toBeNull()
   })
 
   it('colours only the DMT accent, leaving the white card and icon intact', () => {

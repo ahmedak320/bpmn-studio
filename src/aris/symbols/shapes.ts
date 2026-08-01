@@ -211,6 +211,7 @@ function path(
     readonly fill?: string
     readonly stroke?: string
     readonly strokeWidth?: number
+    readonly linecap?: 'round'
   } = {}
 ): ArisDrawingElement {
   return {
@@ -218,7 +219,8 @@ function path(
     d,
     fill: options.fill ?? 'none',
     stroke: options.stroke ?? WHITE,
-    strokeWidth: options.strokeWidth ?? 2
+    strokeWidth: options.strokeWidth ?? 2,
+    ...(options.linecap === undefined ? {} : { linecap: options.linecap })
   }
 }
 
@@ -244,7 +246,11 @@ function line(
   y1: number,
   x2: number,
   y2: number,
-  options: { readonly stroke?: string; readonly strokeWidth?: number } = {}
+  options: {
+    readonly stroke?: string
+    readonly strokeWidth?: number
+    readonly linecap?: 'round'
+  } = {}
 ): ArisDrawingElement {
   return {
     kind: 'line',
@@ -253,7 +259,8 @@ function line(
     x2,
     y2,
     stroke: options.stroke ?? WHITE,
-    strokeWidth: options.strokeWidth ?? 2
+    strokeWidth: options.strokeWidth ?? 2,
+    ...(options.linecap === undefined ? {} : { linecap: options.linecap })
   }
 }
 
@@ -924,10 +931,13 @@ function ruleShape(operator: DmtOperator): DmtSymbolDescriptor {
   // but pick up the same stroke weight for cross-operator family consistency.
   const mark =
     operator === 'AND'
-      ? [path('M 33 57 L 50 39 L 67 57', { strokeWidth: 11 })]
+      ? [path('M 33 57 L 50 39 L 67 57', { strokeWidth: 11, linecap: 'round' })]
       : operator === 'OR'
-        ? [path('M 33 41 L 50 59 L 67 41', { strokeWidth: 11 })]
-        : [line(30, 30, 70, 70, { strokeWidth: 11 }), line(70, 30, 30, 70, { strokeWidth: 11 })]
+        ? [path('M 33 41 L 50 59 L 67 41', { strokeWidth: 11, linecap: 'round' })]
+        : [
+            line(30, 30, 70, 70, { strokeWidth: 11, linecap: 'round' }),
+            line(70, 30, 30, 70, { strokeWidth: 11, linecap: 'round' })
+          ]
   return describe({
     catalogId: `decision.${operator.toLowerCase()}`,
     objectType: 'OT_RULE',

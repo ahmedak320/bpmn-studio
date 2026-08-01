@@ -219,14 +219,14 @@ describe('AnimalWF V5+: print-frame header band', () => {
 
 describe('AnimalWF V5+: bottom DMT legend and RACI key', () => {
   for (const modelId of [REGISTER_OWNER, RENEW_PROFILE]) {
-    it(`renders the 19-presentation legend at the source anchor for ${modelId}`, () => {
+    it(`renders the 22-presentation legend at the source anchor for ${modelId}`, () => {
       harness = bootCanvas({ document: workingDocument, modelId })
       const legend = printFrameLayer().querySelector('[data-aris-print-frame-legend]')
       expect(legend, 'legend').not.toBeNull()
       const frame = rectOf(legend!.querySelector('rect'))
       expect(frame).toEqual(EXPECTED_FURNITURE[modelId]!.legend)
-      // The DMT set: 19 descriptor-drawn presentations, bilingual names.
-      expect(legend!.querySelectorAll('[data-aris-legend-symbol]')).toHaveLength(19)
+      // The DMT set: 22 descriptor-drawn presentations, bilingual names.
+      expect(legend!.querySelectorAll('[data-aris-legend-symbol]')).toHaveLength(22)
       expect(legend!.textContent).toContain('Function')
       expect(legend!.textContent).toContain('Application system')
       expect(legend!.textContent).toContain('Event')
