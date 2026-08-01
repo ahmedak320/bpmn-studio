@@ -15,18 +15,14 @@
  * "objectType family" — control-flow objects use the 3-way function/event/rule
  * kind; satellites use the exact `objectType`, since a system is never
  * interchangeable with a person or a document — and scored by
- * normalized-label similarity (a character-trigram Sørensen–Dice coefficient,
- * `diceCoefficient` below), which must be >= `SIMILARITY_THRESHOLD` (0.55) to
- * be a candidate at all. Both the generated object's English AND Arabic
- * readings are tried against the expectation's (English-only) name and the
- * larger of the two wins ("try both languages" — guards against a draft that
- * only produced an Arabic name for an object). Candidates are sorted by
+ * normalized-label similarity (the larger of character-trigram Dice and token
+ * containment), which must be >= `SIMILARITY_THRESHOLD` (0.55) to be a
+ * candidate at all. Generated and expected English/Arabic readings are
+ * compared in every non-empty pairing and the larger score wins. Candidates are sorted by
  * similarity descending and assigned greedily, highest similarity first, each
- * side consumed at most once — the standard greedy approximation to a
- * maximum-weight bipartite matching. Rule nodes routinely share an identical
- * generic label ("XOR rule") in the real fixtures; greedy matching still
- * produces a valid 1:1 assignment in that case — aggregate recall/precision
- * counts are unaffected by WHICH particular same-label pair wins a tie.
+ * side consumed at most once. Rule labels do not participate: after the label
+ * pass, rules are matched 1:1 by operator and their position on the two-hop
+ * path between already-matched neighbouring flow objects.
  *
  * ## Reconstructing "expected connections" from a DFS-flattened oracle
  * `FidelityExpectationDoc` has no explicit edge list — `spine` is a geometric
@@ -34,7 +30,8 @@
  * `buildSpine`), and `gates` separately names each decision rule's predecessor
  * and the first node of every branch. Two facts follow:
  *
- *  - Consecutive `spine` entries are a TRUE edge almost everywhere EXCEPT at a
+ *  - Consecutive non-rule `spine` entries are a TRUE direct or rule-mediated
+ *    connection almost everywhere EXCEPT at a
  *    decision's second-and-later branch: DFS finishes branch 1's entire
  *    subtree before resuming branch 2, so branch 2's head sits next to branch
  *    1's LAST node in the flat array — an accidental adjacency, not a real
@@ -152,12 +149,41 @@ export function diceCoefficient(rawA: string, rawB: string): number {
   return (2 * overlap) / (gramsA.size + gramsB.size)
 }
 
-/** Best similarity trying the candidate's EN reading, then its AR reading, against one expected (EN) label. */
-function bestSimilarity(candidateEn: string, candidateAr: string, expectedEn: string): number {
-  return Math.max(
-    diceCoefficient(candidateEn, expectedEn),
-    diceCoefficient(candidateAr, expectedEn)
-  )
+function tokenSetScore(rawA: string, rawB: string): number {
+  const tokens = (raw: string): Set<string> =>
+    new Set(
+      normalizeLabel(raw)
+        .split(/[^\p{L}\p{N}]+/u)
+        .filter(Boolean)
+    )
+  const a = tokens(rawA)
+  const b = tokens(rawB)
+  if (a.size === 0 || b.size === 0) return a.size === b.size ? 1 : 0
+  let overlapWeight = 0
+  for (const token of a) if (b.has(token)) overlapWeight += token.length
+  const aWeight = [...a].reduce((sum, token) => sum + token.length, 0)
+  const bWeight = [...b].reduce((sum, token) => sum + token.length, 0)
+  return overlapWeight / Math.min(aWeight, bWeight)
+}
+
+function labelSimilarity(a: string, b: string): number {
+  return Math.max(diceCoefficient(a, b), tokenSetScore(a, b))
+}
+
+/** Best similarity across every non-empty EN/AR candidate-oracle pairing. */
+function bestSimilarity(
+  candidateEn: string,
+  candidateAr: string,
+  expectedEn: string,
+  expectedAr?: string
+): number {
+  const candidates = [candidateEn, candidateAr].filter((value) => value.trim().length > 0)
+  const expected = [expectedEn, expectedAr ?? ''].filter((value) => value.trim().length > 0)
+  let best = 0
+  for (const candidate of candidates) {
+    for (const oracle of expected) best = Math.max(best, labelSimilarity(candidate, oracle))
+  }
+  return best
 }
 
 // --- generated-side extraction ------------------------------------------------
@@ -311,10 +337,18 @@ interface ExpectedFlowItem {
   readonly index: number
   readonly kind: FlowKind
   readonly nameEn: string
+  readonly nameAr?: string
+  readonly symbolNum: string | null
 }
 
 function extractExpectedFlow(expected: FidelityExpectationDoc): ExpectedFlowItem[] {
-  return expected.spine.map((step, index) => ({ index, kind: step.kind, nameEn: step.nameEn }))
+  return expected.spine.map((step, index) => ({
+    index,
+    kind: step.kind,
+    nameEn: step.nameEn,
+    ...(step.nameAr ? { nameAr: step.nameAr } : {}),
+    symbolNum: step.symbolNum
+  }))
 }
 
 function findExpectedIndexByName(flow: readonly ExpectedFlowItem[], nameEn: string): number {
@@ -352,9 +386,10 @@ function deriveExpectedConnections(
     }
   }
 
-  for (let i = 0; i < flow.length - 1; i += 1) {
-    if (nonFirstBranchHeads.has(flow[i + 1].nameEn)) continue
-    addPair(i, i + 1)
+  const nonRuleFlow = flow.filter((item) => item.kind !== 'rule')
+  for (let i = 0; i < nonRuleFlow.length - 1; i += 1) {
+    if (nonFirstBranchHeads.has(nonRuleFlow[i + 1].nameEn)) continue
+    addPair(nonRuleFlow[i].index, nonRuleFlow[i + 1].index)
   }
 
   for (const gate of gates) {
@@ -379,8 +414,9 @@ interface FlowMatchResult {
 }
 
 function matchFlowObjects(
-  generated: readonly GeneratedFlowItem[],
-  expected: readonly ExpectedFlowItem[]
+  generated: GeneratedExtract,
+  expected: readonly ExpectedFlowItem[],
+  gates: readonly GateExpectation[]
 ): FlowMatchResult {
   interface Candidate {
     readonly genIndex: number
@@ -388,13 +424,16 @@ function matchFlowObjects(
     readonly similarity: number
   }
   const candidates: Candidate[] = []
-  generated.forEach((generatedItem, genIndex) => {
+  generated.flow.forEach((generatedItem, genIndex) => {
+    if (generatedItem.kind === 'rule') return
     expected.forEach((expectedItem) => {
+      if (expectedItem.kind === 'rule') return
       if (generatedItem.kind !== expectedItem.kind) return
       const similarity = bestSimilarity(
         generatedItem.nameEn,
         generatedItem.nameAr,
-        expectedItem.nameEn
+        expectedItem.nameEn,
+        expectedItem.nameAr
       )
       if (similarity >= SIMILARITY_THRESHOLD) {
         candidates.push({ genIndex, expIndex: expectedItem.index, similarity })
@@ -413,10 +452,76 @@ function matchFlowObjects(
     if (usedGen.has(candidate.genIndex) || usedExp.has(candidate.expIndex)) continue
     usedGen.add(candidate.genIndex)
     usedExp.add(candidate.expIndex)
-    const occurrenceId = generated[candidate.genIndex].occurrenceId
+    const occurrenceId = generated.flow[candidate.genIndex].occurrenceId
     matchedGenToExp.set(occurrenceId, candidate.expIndex)
     matchedExpToGen.set(candidate.expIndex, occurrenceId)
     similarities.push(candidate.similarity)
+  }
+
+  const neighbourIndex = (ruleIndex: number, direction: -1 | 1): number | undefined => {
+    for (
+      let index = ruleIndex + direction;
+      index >= 0 && index < expected.length;
+      index += direction
+    ) {
+      if (expected[index].kind !== 'rule') return expected[index].index
+    }
+    return undefined
+  }
+  const expectedRuleOperator = (rule: ExpectedFlowItem): 'AND' | 'OR' | 'XOR' | 'unknown' => {
+    const fromSymbol = classifyRuleSymbol(rule.symbolNum)
+    if (fromSymbol !== 'unknown') return fromSymbol
+    const beforeIndex = neighbourIndex(rule.index, -1)
+    const before = beforeIndex === undefined ? undefined : expected[beforeIndex]
+    return gates.find((gate) => gate.afterNameEn === before?.nameEn)?.operator ?? 'unknown'
+  }
+
+  interface RuleCandidate {
+    readonly genIndex: number
+    readonly expIndex: number
+  }
+  const ruleCandidates: RuleCandidate[] = []
+  expected.forEach((expectedRule) => {
+    if (expectedRule.kind !== 'rule') return
+    const beforeIndex = neighbourIndex(expectedRule.index, -1)
+    const afterIndex = neighbourIndex(expectedRule.index, 1)
+    if (beforeIndex === undefined || afterIndex === undefined) return
+    const beforeOccurrence = matchedExpToGen.get(beforeIndex)
+    const afterOccurrence = matchedExpToGen.get(afterIndex)
+    const beforeDefinition = beforeOccurrence
+      ? generated.occurrenceIdToDefinitionId.get(beforeOccurrence)
+      : undefined
+    const afterDefinition = afterOccurrence
+      ? generated.occurrenceIdToDefinitionId.get(afterOccurrence)
+      : undefined
+    if (!beforeDefinition || !afterDefinition) return
+    const expectedOperator = expectedRuleOperator(expectedRule)
+    if (expectedOperator === 'unknown') return
+
+    generated.flow.forEach((generatedRule, genIndex) => {
+      if (generatedRule.kind !== 'rule') return
+      if (
+        classifyRuleSymbol(generated.symbolByDefId.get(generatedRule.definitionId) ?? null) !==
+        expectedOperator
+      ) {
+        return
+      }
+      const entersRule = generated.adjacency.get(beforeDefinition)?.has(generatedRule.definitionId)
+      const leavesRule = generated.adjacency.get(generatedRule.definitionId)?.has(afterDefinition)
+      if (entersRule && leavesRule) {
+        ruleCandidates.push({ genIndex, expIndex: expectedRule.index })
+      }
+    })
+  })
+  ruleCandidates.sort((a, b) => a.expIndex - b.expIndex || a.genIndex - b.genIndex)
+
+  for (const candidate of ruleCandidates) {
+    if (usedGen.has(candidate.genIndex) || usedExp.has(candidate.expIndex)) continue
+    usedGen.add(candidate.genIndex)
+    usedExp.add(candidate.expIndex)
+    const occurrenceId = generated.flow[candidate.genIndex].occurrenceId
+    matchedGenToExp.set(occurrenceId, candidate.expIndex)
+    matchedExpToGen.set(candidate.expIndex, occurrenceId)
   }
 
   return { matchedGenToExp, matchedExpToGen, similarities }
@@ -447,7 +552,8 @@ function matchSatellitesForFunction(
       const similarity = bestSimilarity(
         generatedSatellite.nameEn,
         generatedSatellite.nameAr,
-        expectedSatellite.nameEn
+        expectedSatellite.nameEn,
+        expectedSatellite.nameAr
       )
       if (similarity >= SIMILARITY_THRESHOLD) candidates.push({ expIndex, genIndex, similarity })
     })
@@ -529,6 +635,54 @@ function computeGatewayAccuracy(
 
 // --- entry point -----------------------------------------------------------------
 
+function manifestObjectMentioned(
+  manifest: StructureFactsManifest,
+  nameEn: string,
+  nameAr?: string
+): boolean {
+  return manifest.objects.some(
+    (mentioned) => bestSimilarity(mentioned, '', nameEn, nameAr) >= SIMILARITY_THRESHOLD
+  )
+}
+
+function manifestConnectionMentioned(
+  manifest: StructureFactsManifest,
+  from: ExpectedFlowItem,
+  to: ExpectedFlowItem
+): boolean {
+  const matches = (mentioned: string, expected: ExpectedFlowItem): boolean =>
+    bestSimilarity(mentioned, '', expected.nameEn, expected.nameAr) >= SIMILARITY_THRESHOLD
+  return manifest.connections.some(
+    ([a, b]) => (matches(a, from) && matches(b, to)) || (matches(a, to) && matches(b, from))
+  )
+}
+
+function manifestSubsetTotal(
+  manifest: StructureFactsManifest,
+  expectedFlow: readonly ExpectedFlowItem[],
+  expectedConnections: readonly ExpectedConnectionPair[],
+  expected: FidelityExpectationDoc
+): number {
+  let total = expectedFlow.filter((item) =>
+    manifestObjectMentioned(manifest, item.nameEn, item.nameAr)
+  ).length
+
+  for (const [functionName, list] of Object.entries(expected.satellites)) {
+    const owner = expectedFlow.find(
+      (item) => item.kind === 'function' && item.nameEn === functionName
+    )
+    if (!owner || !manifestObjectMentioned(manifest, owner.nameEn, owner.nameAr)) continue
+    total += list.filter((satellite) =>
+      manifestObjectMentioned(manifest, satellite.nameEn, satellite.nameAr)
+    ).length
+  }
+
+  total += expectedConnections.filter((pair) =>
+    manifestConnectionMentioned(manifest, expectedFlow[pair.fromIndex], expectedFlow[pair.toIndex])
+  ).length
+  return total
+}
+
 function allZeroScore(
   expectedFlow: readonly ExpectedFlowItem[],
   expectedConnections: readonly ExpectedConnectionPair[],
@@ -545,6 +699,9 @@ function allZeroScore(
     expectedFlow[pair.fromIndex].nameEn,
     expectedFlow[pair.toIndex].nameEn
   ])
+  const relativeSubsetTotal = manifest
+    ? manifestSubsetTotal(manifest, expectedFlow, expectedConnections, expected)
+    : 0
 
   return {
     controlFlowRecall: expectedFlow.length === 0 ? 1 : 0,
@@ -554,7 +711,7 @@ function allZeroScore(
     satelliteRecall: expectedSatelliteTotal === 0 ? 1 : 0,
     gatewayAccuracy: expectedGateCount === 0 ? 1 : 0,
     labelSimilarityMean: 0,
-    ...(manifest ? { relativeRecall: 0 } : {}),
+    ...(relativeSubsetTotal > 0 ? { relativeRecall: 0 } : {}),
     misses: { objects: objectMisses, connections: connectionMisses }
   }
 }
@@ -595,7 +752,7 @@ export function compareStructure(
   const allSimilarities: number[] = []
 
   // --- 1. control-flow object matching -----------------------------------
-  const flowMatch = matchFlowObjects(generated.flow, expectedFlow)
+  const flowMatch = matchFlowObjects(generated, expectedFlow, expected.gates)
   allSimilarities.push(...flowMatch.similarities)
 
   const controlFlowRecall =
@@ -694,45 +851,43 @@ export function compareStructure(
   let relativeRecall: number | undefined
   if (options.manifest) {
     const manifest = options.manifest
-    const objectMentioned = (nameEn: string): boolean =>
-      manifest.objects.some(
-        (mentioned) => diceCoefficient(mentioned, nameEn) >= SIMILARITY_THRESHOLD
-      )
-    const connectionMentioned = (fromName: string, toName: string): boolean =>
-      manifest.connections.some(
-        ([a, b]) =>
-          (diceCoefficient(a, fromName) >= SIMILARITY_THRESHOLD &&
-            diceCoefficient(b, toName) >= SIMILARITY_THRESHOLD) ||
-          (diceCoefficient(a, toName) >= SIMILARITY_THRESHOLD &&
-            diceCoefficient(b, fromName) >= SIMILARITY_THRESHOLD)
-      )
 
     let subsetTotal = 0
     let subsetMatched = 0
 
     for (const item of expectedFlow) {
-      if (!objectMentioned(item.nameEn)) continue
+      if (!manifestObjectMentioned(manifest, item.nameEn, item.nameAr)) continue
       subsetTotal += 1
       if (flowMatch.matchedExpToGen.has(item.index)) subsetMatched += 1
     }
 
     for (const [functionName, list] of Object.entries(expected.satellites)) {
+      const owner = expectedFlow.find(
+        (item) => item.kind === 'function' && item.nameEn === functionName
+      )
+      if (!owner || !manifestObjectMentioned(manifest, owner.nameEn, owner.nameAr)) continue
       for (const satellite of list) {
-        if (!objectMentioned(satellite.nameEn)) continue
+        if (!manifestObjectMentioned(manifest, satellite.nameEn, satellite.nameAr)) continue
         subsetTotal += 1
         if (matchedSatelliteKeys.has(`${functionName}::${satellite.nameEn}`)) subsetMatched += 1
       }
     }
 
     for (const pair of expectedConnections) {
-      const fromName = expectedFlow[pair.fromIndex].nameEn
-      const toName = expectedFlow[pair.toIndex].nameEn
-      if (!connectionMentioned(fromName, toName)) continue
+      if (
+        !manifestConnectionMentioned(
+          manifest,
+          expectedFlow[pair.fromIndex],
+          expectedFlow[pair.toIndex]
+        )
+      ) {
+        continue
+      }
       subsetTotal += 1
       if (matchedConnectionPairKeys.has(pair.key)) subsetMatched += 1
     }
 
-    relativeRecall = subsetTotal === 0 ? 0 : subsetMatched / subsetTotal
+    relativeRecall = subsetTotal === 0 ? undefined : subsetMatched / subsetTotal
   }
 
   return {

@@ -32,6 +32,9 @@ describe('buildArisAiPrompt', () => {
     expect(system).toMatch(/strict JSON only/i)
     expect(system).toMatch(/uncertainty/i)
     expect(system).toMatch(/bilingual|translation/i)
+    expect(system).toContain(
+      'Name rule objects by operator ("XOR rule", "AND rule", or "OR rule"); keep step names in the source\'s own wording.'
+    )
   })
 
   it('teaches the ArisAiDraftV1 shape, the closed vocabularies, and the endpoint cheat-sheet', () => {

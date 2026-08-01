@@ -87,7 +87,10 @@ export interface ArisAiRepairMessageInput {
 }
 
 function formatFinding(finding: ArisAiValidationFinding): string {
-  return `- [${finding.code}] ${finding.path}: ${finding.message}`
+  const formatted = `- [${finding.code}] ${finding.path}: ${finding.message}`
+  return finding.code === 'epc.event.decisionViolation'
+    ? `${formatted}\n  Repair the named event/rule pair; do not replace it with a generic unlabeled branch.`
+    : formatted
 }
 
 /**

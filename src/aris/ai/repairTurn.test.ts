@@ -113,6 +113,25 @@ describe('buildArisAiRepairMessage', () => {
     expect(message).toContain('$.objects[1].logicalId')
   })
 
+  it('keeps decision-violation object labels explicit in the repair instruction', () => {
+    const message = buildArisAiRepairMessage({
+      previousResponseText: '{}',
+      findings: [
+        {
+          code: 'epc.event.decisionViolation',
+          path: '$.models[0]',
+          message:
+            'An event feeds directly into an XOR/OR split. Objects: "Applicant status known" (event-status), "Eligibility split" (rule-eligibility).'
+        }
+      ],
+      attemptNumber: 1
+    })
+
+    expect(message).toContain('Applicant status known')
+    expect(message).toContain('Eligibility split')
+    expect(message).toContain('Repair the named event/rule pair')
+  })
+
   it('quotes the previous response as fenced, untrusted data', () => {
     const message = buildArisAiRepairMessage({
       previousResponseText: '{"version":1,"models":[]}',

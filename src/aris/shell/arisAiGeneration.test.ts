@@ -39,6 +39,19 @@ function alternationBreakingDraft(): ArisAiDraftV1 {
   }
 }
 
+function emptyControlFlowDraft(): ArisAiDraftV1 {
+  const base = buildMinimalValidDraft()
+  return {
+    version: 1,
+    models: [base.models[0]],
+    objects: [],
+    relations: [],
+    attributes: [],
+    assignments: [],
+    uncertainties: []
+  }
+}
+
 interface Recorded {
   readonly requests: ArisAiGenerationRequest[]
 }
@@ -224,6 +237,23 @@ describe('§16.6 steps 6-9 — bounded parse, draft, types, EPC semantics', () =
     expect(result.ok).toBe(true)
     expect(recorded.requests).toHaveLength(2)
     expect(recorded.requests[1]!.user).toContain('epc.alternation')
+  })
+
+  it('rejects an empty draft and consumes one semantic repair attempt', async () => {
+    const { recorded, send } = recorder([JSON.stringify(emptyControlFlowDraft()), validDraftJson()])
+
+    const result = await runArisAiGeneration({
+      system: 'system',
+      user: 'user',
+      send,
+      signal: new AbortController().signal
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    expect(recorded.requests).toHaveLength(2)
+    expect(recorded.requests[1]!.user).toContain('epc.model.empty')
+    expect(result.semanticAttemptsUsed).toBe(1)
   })
 
   it('surfaces the §16.4 forbidden-content rejection verbatim', async () => {

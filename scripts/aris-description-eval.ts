@@ -32,10 +32,14 @@
  *    all still run for real against it. This is how this lane proves the
  *    pipeline without any live API call (see createFromPdf.seq2.test.ts's
  *    "Mode 1" for the same mocked-transport/real-everything-else precedent).
+ *  - Every accepted run persists `<result>.draft.json` next to its result.
+ *    `--rescore <resultFile>` resolves that draft and replays it through the
+ *    same `--mock` path, preserving the original description manifest at $0.
  *
  * Usage:
  *   npx vite-node scripts/aris-description-eval.ts --desc <file> --process <key> \
- *     [--model z-ai/glm-5.2] [--rounds-tag rN] [--out <json>] [--mock <draftFile>]
+ *     [--model z-ai/glm-5.2] [--rounds-tag rN] [--out <json>] [--mock <draftFile>] \
+ *     [--rescore <resultFile>]
  */
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -57,8 +61,9 @@ import {
   type StructureFactsManifest,
   type StructureScore
 } from '../src/aris/fidelity/structureCompare'
-import { buildOpenRouterRequest, extractText } from '../src/ai/browserAi'
+import { buildOpenRouterRequest, extractText, ProviderHttpError } from '../src/ai/browserAi'
 import { estimateCostUsd, extractUsage } from '../src/ai/credits'
+import { isTransientHttpStatus, parseRetryAfter, withBoundedRetry } from '../src/ai/retry'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = resolve(HERE, '..')
@@ -80,6 +85,68 @@ interface CliArgs {
   readonly roundsTag: string
   readonly out?: string
   readonly mock?: string
+  readonly rescore?: string
+  readonly replayLevelLang?: string
+}
+
+interface RescoreInput {
+  readonly process?: string
+  readonly desc?: string
+  readonly mock: string
+  readonly levelLang?: string
+  readonly out: string
+}
+
+function acceptedDraftPath(resultPath: string): string {
+  return resultPath.endsWith('.json')
+    ? `${resultPath.slice(0, -'.json'.length)}.draft.json`
+    : `${resultPath}.draft.json`
+}
+
+function rescoreOutputPath(resultPath: string): string {
+  return resultPath.endsWith('.json')
+    ? `${resultPath.slice(0, -'.json'.length)}.rescore.json`
+    : `${resultPath}.rescore.json`
+}
+
+function loadRescoreInput(rawPath: string): RescoreInput {
+  const resultPath = resolve(rawPath)
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(readFileSync(resultPath, 'utf-8')) as unknown
+  } catch (error) {
+    return fail(
+      `could not read --rescore input ${resultPath}: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+  if (typeof parsed !== 'object' || parsed === null) {
+    return fail(`--rescore input ${resultPath} is not a JSON object`)
+  }
+  const record = parsed as Record<string, unknown>
+  if (record.version === 1 && Array.isArray(record.models)) {
+    return { mock: resultPath, out: rescoreOutputPath(resultPath) }
+  }
+
+  const recordedDraft =
+    typeof record.draftFile === 'string'
+      ? resolve(dirname(resultPath), record.draftFile)
+      : acceptedDraftPath(resultPath)
+  if (!existsSync(recordedDraft)) {
+    return fail(
+      `--rescore could not find the persisted draft ${recordedDraft}; rescore requires a result produced with draft persistence`
+    )
+  }
+  const recordedDescription =
+    typeof record.descriptionFile === 'string'
+      ? resolve(dirname(resultPath), record.descriptionFile)
+      : undefined
+  return {
+    process: typeof record.process === 'string' ? record.process : undefined,
+    ...(recordedDescription ? { desc: recordedDescription } : {}),
+    mock: recordedDraft,
+    levelLang: typeof record.levelLang === 'string' ? record.levelLang : undefined,
+    out: rescoreOutputPath(resultPath)
+  }
 }
 
 function parseArgs(argv: readonly string[]): CliArgs {
@@ -96,15 +163,20 @@ function parseArgs(argv: readonly string[]): CliArgs {
       i += 1
     }
   }
-  const processKey = map.get('process')
+  const rescorePath = map.get('rescore')
+  const rescore = rescorePath && rescorePath !== 'true' ? loadRescoreInput(rescorePath) : undefined
+  if (rescorePath === 'true') fail('--rescore <resultFile> requires a file path')
+  const processKey = map.get('process') ?? rescore?.process
   if (!processKey) fail('--process <key> is required')
   return {
-    desc: map.get('desc'),
+    desc: map.get('desc') ?? rescore?.desc,
     process: processKey,
     model: map.get('model') ?? DEFAULT_MODEL,
     roundsTag: map.get('rounds-tag') ?? DEFAULT_ROUNDS_TAG,
-    out: map.get('out'),
-    mock: map.get('mock')
+    out: map.get('out') ?? rescore?.out,
+    mock: map.get('mock') ?? rescore?.mock,
+    ...(rescorePath ? { rescore: resolve(rescorePath) } : {}),
+    ...(rescore?.levelLang ? { replayLevelLang: rescore.levelLang } : {})
   }
 }
 
@@ -178,7 +250,8 @@ interface SimpleMessage {
 async function callOpenRouter(
   apiKey: string,
   modelId: string,
-  messages: readonly SimpleMessage[]
+  messages: readonly SimpleMessage[],
+  signal: AbortSignal
 ): Promise<{ text: string; usage: ReturnType<typeof extractUsage> }> {
   const built = buildOpenRouterRequest(
     {
@@ -190,16 +263,34 @@ async function callOpenRouter(
     [...messages],
     { maxTokens: MAX_TOKENS, jsonMode: true }
   )
-  const response = await fetch(built.url, {
-    method: 'POST',
-    headers: built.headers,
-    body: JSON.stringify(built.body)
-  })
-  if (!response.ok) {
-    throw new Error(`OpenRouter request failed: HTTP ${response.status}`)
-  }
-  const json: unknown = await response.json()
-  return { text: extractText('openrouter', json), usage: extractUsage('openrouter', json) }
+  return withBoundedRetry(
+    async () => {
+      const response = await fetch(built.url, {
+        method: 'POST',
+        headers: built.headers,
+        body: JSON.stringify(built.body),
+        signal
+      })
+      if (!response.ok) {
+        throw new ProviderHttpError(
+          response.status,
+          `OpenRouter request failed: HTTP ${response.status}`,
+          parseRetryAfter(response.headers.get('retry-after')),
+          { providerId: 'openrouter' }
+        )
+      }
+      const json: unknown = await response.json()
+      return { text: extractText('openrouter', json), usage: extractUsage('openrouter', json) }
+    },
+    {
+      maxAttempts: 3,
+      signal,
+      shouldRetry: (error) =>
+        error instanceof TypeError ||
+        (error instanceof ProviderHttpError && isTransientHttpStatus(error.status)),
+      retryAfterMs: (error) => (error instanceof ProviderHttpError ? error.retryAfterMs : undefined)
+    }
+  )
 }
 
 // --- description-file naming convention (gen-tests/descriptions/<process>/<level>-<lang>[.humanized].md) ---
@@ -309,7 +400,7 @@ async function main(): Promise<void> {
   })
 
   const roundDir = join(GEN_TESTS_DIR, 'runs', args.roundsTag)
-  const levelLang = args.desc ? levelLangFromDescPath(args.desc) : 'mock'
+  const levelLang = args.desc ? levelLangFromDescPath(args.desc) : (args.replayLevelLang ?? 'mock')
 
   let send: ArisAiSend
   let costNote: string
@@ -334,11 +425,12 @@ async function main(): Promise<void> {
     }
     let cumulativeUsd = ledger.cumulativeUsd
     const modelId = args.model
-    send = async (request: ArisAiGenerationRequest) => {
+    send = async (request: ArisAiGenerationRequest, signal: AbortSignal) => {
       const { text, usage } = await callOpenRouter(
         apiKey,
         modelId,
-        request.messages.map((message) => ({ role: message.role, content: message.content }))
+        request.messages.map((message) => ({ role: message.role, content: message.content })),
+        signal
       )
       if (usage) {
         const cost =
@@ -361,6 +453,9 @@ async function main(): Promise<void> {
   console.log(`=== aris-description-eval: ${args.process} (${levelLang}) ===`)
   console.log(`model: ${args.mock ? '(mock)' : args.model} — ${costNote}`)
 
+  const outPath = args.out ?? join(roundDir, `${args.process}-${levelLang}.json`)
+  mkdirSync(dirname(outPath), { recursive: true })
+
   const result = await runArisAiGeneration({
     system: prompt.system,
     user: prompt.user,
@@ -368,10 +463,13 @@ async function main(): Promise<void> {
     signal: new AbortController().signal
   })
 
-  const outPath = args.out ?? join(roundDir, `${args.process}-${levelLang}.json`)
-  mkdirSync(dirname(outPath), { recursive: true })
-
   if (!result.ok) {
+    const failureError = result.error === undefined ? null : String(result.error)
+    const httpStatus = (() => {
+      if (typeof result.error !== 'object' || result.error === null) return null
+      const status = (result.error as { status?: unknown }).status
+      return typeof status === 'number' ? status : null
+    })()
     writeFileSync(
       outPath,
       JSON.stringify(
@@ -383,7 +481,9 @@ async function main(): Promise<void> {
           reason: result.reason,
           findings: result.findings,
           semanticAttemptsUsed: result.semanticAttemptsUsed,
-          requestsSent: result.requestsSent
+          requestsSent: result.requestsSent,
+          error: failureError,
+          httpStatus
         },
         null,
         2
@@ -396,6 +496,9 @@ async function main(): Promise<void> {
     process.exitCode = 1
     return
   }
+
+  const draftPath = acceptedDraftPath(outPath)
+  writeFileSync(draftPath, `${JSON.stringify(result.draft, null, 2)}\n`)
 
   const amlResult = buildAmlFromArisAiDraft(result.draft, { modelNameFallback: expected.nameEn })
   const sourcePackage = await createArisXmlSourcePackage({
@@ -420,6 +523,8 @@ async function main(): Promise<void> {
         process: args.process,
         levelLang,
         model: args.mock ? 'mock' : args.model,
+        ...(args.desc ? { descriptionFile: resolve(args.desc) } : {}),
+        draftFile: basename(draftPath),
         generatedAt: new Date().toISOString(),
         semanticAttemptsUsed: result.semanticAttemptsUsed,
         requestsSent: result.requestsSent,
@@ -437,11 +542,12 @@ async function main(): Promise<void> {
       2
     )
   )
-  appendMarkdownRow(roundDir, { process: args.process, levelLang, score })
+  if (!args.rescore) appendMarkdownRow(roundDir, { process: args.process, levelLang, score })
 
   console.log('--- StructureScore ---')
   console.log(JSON.stringify(score, null, 2))
   console.log(`Wrote: ${outPath}`)
+  console.log(`Draft: ${draftPath}`)
 }
 
 main().catch((error: unknown) => {

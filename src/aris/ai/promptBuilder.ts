@@ -112,6 +112,7 @@ const SYSTEM_PROMPT = [
   'Follow these rules exactly:',
   '- Use EPC event/function/rule conventions: functions perform activity, events describe a state, rules (AND/OR/XOR) control branching.',
   '- Use native AND/OR/XOR rule symbols for every split and merge; never leave a branch rule implicit.',
+  '- Name rule objects by operator ("XOR rule", "AND rule", or "OR rule"); keep step names in the source\'s own wording.',
   '- Never make an event decide. An event never has more than one outgoing control-flow connection chosen by condition — put branching on a rule object instead.',
   '- Use native satellite object types for owners (OT_PERS/OT_PERS_TYPE), systems (OT_APPL_SYS), data (OT_ENT_TYPE/OT_INFO_CARR), policies (OT_POLICY), requirements (OT_REQUIREMENT), and business rules (OT_BUSINESS_RULE). Do not fold this information into a function or event name.',
   '- Use logical ids only. Never emit a real ARIS source id, raw AML, raw XML, coordinates, or any executable content (script tags, event-handler attributes, javascript:/data: URIs).',

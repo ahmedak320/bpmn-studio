@@ -21,12 +21,10 @@
  *    cluster, an unrecognized rule symbol — are returned separately so the
  *    Create surface can show them next to the draft's own uncertainties
  *    without refusing an otherwise valid model.
- *  - A drafted model that contains no control-flow object at all (no
- *    `OT_FUNC`/`OT_EVT`/`OT_RULE`) is skipped. `checkStartEndCompleteness`
- *    would otherwise report "no start event" for a model whose whole content
- *    is satellite objects, or for an empty placeholder model the draft
- *    declared only to hang an assignment off — neither is an EPC violation
- *    the model can repair.
+ *  - Empty assigned-model placeholders are skipped. A draft with no
+ *    control-flow objects anywhere, or an empty primary model that is not an
+ *    assignment target, receives `epc.model.empty`; accepting either would
+ *    turn a deletion response into a successful generation.
  */
 
 import { FLOW_NODE_TYPES, toEpcGraph, validateEpcGraph } from '../epc'
@@ -50,6 +48,8 @@ import { finding, type ArisAiValidationFinding } from './findings'
  * as the finding's `code`, which is what a UI localizes from.
  */
 const EPC_RULE_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
+  'epc.model.empty':
+    'The primary model contains no EPC control-flow objects. Add the source process events, functions, and any required rule objects.',
   'epc.alternation':
     'EPC alternation broken: two functions or two events are connected directly by control flow. Put an event between two functions (and a function between two events), or route the branch through a rule.',
   'epc.startEnd.missingStart':
@@ -76,9 +76,18 @@ function localizedValues(names: ArisAiLocalizedText | undefined): Record<string,
   return values
 }
 
-function describeFinding(epcFinding: EpcFinding): string {
+function describeFinding(epcFinding: EpcFinding, draft: ArisAiDraftV1): string {
   const base = EPC_RULE_MESSAGES[epcFinding.ruleId] ?? epcFinding.messageKey
-  const nodes = epcFinding.nodeIds.length > 0 ? ` Objects: ${epcFinding.nodeIds.join(', ')}.` : ''
+  const nodes =
+    epcFinding.nodeIds.length > 0
+      ? ` Objects: ${epcFinding.nodeIds
+          .map((nodeId) => {
+            const object = draft.objects.find((candidate) => candidate.logicalId === nodeId)
+            const label = object?.names.en ?? object?.names.ar
+            return label ? `"${label}" (${nodeId})` : nodeId
+          })
+          .join(', ')}.`
+      : ''
   const edges = epcFinding.edgeIds.length > 0 ? ` Relations: ${epcFinding.edgeIds.join(', ')}.` : ''
   return `${base}${nodes}${edges}`
 }
@@ -153,17 +162,34 @@ export function validateArisAiDraftEpcSemantics(draft: ArisAiDraftV1): ArisAiEpc
   const knownModelIds = new Set(draft.models.map((model) => model.logicalId))
   const errors: ArisAiValidationFinding[] = []
   const warnings: ArisAiValidationFinding[] = []
+  const assignmentTargets = new Set(
+    draft.assignments.map((assignment) => assignment.assignedModelLogicalId)
+  )
+  const draftHasFlowNode = draft.objects.some((object) => FLOW_NODE_TYPES.has(object.objectType))
 
   draft.models.forEach((model, index) => {
     const hasFlowNode = draft.objects.some(
       (object) =>
         object.modelLogicalId === model.logicalId && FLOW_NODE_TYPES.has(object.objectType)
     )
-    if (!hasFlowNode) return
+    if (!hasFlowNode) {
+      const emptyWholeDraft = !draftHasFlowNode && index === 0
+      const emptyUnassignedPrimary = index === 0 && !assignmentTargets.has(model.logicalId)
+      if (emptyWholeDraft || emptyUnassignedPrimary) {
+        errors.push(
+          finding('epc.model.empty', `$.models[${index}]`, EPC_RULE_MESSAGES['epc.model.empty'])
+        )
+      }
+      return
+    }
 
     const graph = toEpcGraph(adapterModelFor(draft, model.logicalId))
     for (const epcFinding of validateEpcGraph(graph, { knownModelIds })) {
-      const mapped = finding(epcFinding.ruleId, `$.models[${index}]`, describeFinding(epcFinding))
+      const mapped = finding(
+        epcFinding.ruleId,
+        `$.models[${index}]`,
+        describeFinding(epcFinding, draft)
+      )
       if (epcFinding.severity === 'error') errors.push(mapped)
       else warnings.push(mapped)
     }

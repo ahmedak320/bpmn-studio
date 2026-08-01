@@ -184,7 +184,14 @@ const EXPECTED_DOC: FidelityExpectationDoc = {
     { kind: 'event', nameEn: 'Start requested', numbering: null, symbolNum: 'ST_EV', fill: null },
     { kind: 'function', nameEn: 'Do the work', numbering: null, symbolNum: 'ST_FUNC', fill: null },
     { kind: 'rule', nameEn: 'XOR rule', numbering: null, symbolNum: 'ST_OPR_XOR_1', fill: null },
-    { kind: 'event', nameEn: 'Approved', numbering: null, symbolNum: 'ST_EV', fill: null },
+    {
+      kind: 'event',
+      nameEn: 'Approved',
+      nameAr: 'تمت الموافقة',
+      numbering: null,
+      symbolNum: 'ST_EV',
+      fill: null
+    },
     { kind: 'event', nameEn: 'Rejected', numbering: null, symbolNum: 'ST_EV', fill: null }
   ],
   satellites: {
@@ -232,15 +239,130 @@ describe('compareStructure', () => {
     expect(score.misses.objects).toEqual([])
     expect(score.misses.connections).toEqual([])
     expect(score.relativeRecall).toBeUndefined()
+
+    const scoreWithManifest = compareStructure(document, 'm1', EXPECTED_DOC, {
+      manifest: {
+        objects: ['Start requested', 'Do the work', 'XOR rule', 'Approved', 'Rejected', 'Reviewer'],
+        connections: [
+          ['Start requested', 'Do the work'],
+          ['Do the work', 'Approved'],
+          ['Do the work', 'Rejected']
+        ]
+      }
+    })
+    expect(scoreWithManifest.relativeRecall).toBe(1)
+  })
+
+  it('matches a rule by operator and topology without using its label', async () => {
+    const renamedRule = COMPLETE_AML.replace(
+      '<AttrValue LocaleId="en-US">XOR rule</AttrValue>',
+      '<AttrValue LocaleId="en-US">Opaque generated connector</AttrValue>'
+    )
+    const document = await buildDocument(renamedRule)
+    const score = compareStructure(document, 'm1', EXPECTED_DOC)
+
+    expect(score.controlFlowRecall).toBe(1)
+    expect(score.controlFlowPrecision).toBe(1)
+    expect(score.gatewayAccuracy).toBe(1)
+    expect(score.misses.objects).not.toContain('rule:XOR rule')
+  })
+
+  it('does not match a same-label rule with the wrong operator', async () => {
+    const wrongOperator = COMPLETE_AML.replaceAll('ST_OPR_XOR_1', 'ST_OPR_AND_1')
+    const document = await buildDocument(wrongOperator)
+    const score = compareStructure(document, 'm1', EXPECTED_DOC)
+
+    expect(score.controlFlowRecall).toBeCloseTo(4 / 5, 10)
+    expect(score.gatewayAccuracy).toBe(0)
+    expect(score.misses.objects).toContain('rule:XOR rule')
+  })
+
+  it('does not match a same-operator rule that is not between its expected neighbours', async () => {
+    const misplacedRule = COMPLETE_AML.replace(
+      'ToObjOcc.IdRef="occ-rule" SrcArrow="0" TgtArrow="1"',
+      'ToObjOcc.IdRef="occ-approved" SrcArrow="0" TgtArrow="1"'
+    ).replace('ToObjDef.IdRef="od-rule"/>', 'ToObjDef.IdRef="od-approved"/>')
+    const document = await buildDocument(misplacedRule)
+    const score = compareStructure(document, 'm1', EXPECTED_DOC)
+
+    expect(score.controlFlowRecall).toBeCloseTo(4 / 5, 10)
+    expect(score.gatewayAccuracy).toBe(0)
+    expect(score.misses.objects).toContain('rule:XOR rule')
+  })
+
+  it('derives connection assertions over the rule-skipped spine', async () => {
+    const document = await buildDocument(COMPLETE_AML)
+    const absent = compareStructure(document, 'does-not-exist', EXPECTED_DOC)
+
+    expect(absent.misses.connections).toEqual([
+      ['Start requested', 'Do the work'],
+      ['Do the work', 'Approved'],
+      ['Do the work', 'Rejected']
+    ])
+    expect(absent.misses.connections.flat()).not.toContain('XOR rule')
+  })
+
+  it('matches an Arabic generated label against the restored Arabic oracle label', async () => {
+    const arabicLabel = COMPLETE_AML.replace(
+      '<AttrValue LocaleId="en-US">Approved</AttrValue>',
+      '<AttrValue LocaleId="14337">تمت الموافقة</AttrValue>'
+    )
+    const document = await buildDocument(arabicLabel)
+    const score = compareStructure(document, 'm1', EXPECTED_DOC)
+
+    expect(score.controlFlowRecall).toBe(1)
+    expect(score.misses.objects).not.toContain('event:Approved')
+  })
+
+  it('uses token containment as a similarity floor for short labels', async () => {
+    const containedLabel = COMPLETE_AML.replace(
+      '<AttrValue LocaleId="en-US">Do the work</AttrValue>',
+      '<AttrValue LocaleId="en-US">work</AttrValue>'
+    )
+    const document = await buildDocument(containedLabel)
+    const score = compareStructure(document, 'm1', EXPECTED_DOC)
+
+    expect(diceCoefficient('work', 'Do the work')).toBeLessThan(0.55)
+    expect(score.controlFlowRecall).toBe(1)
+    expect(score.satelliteRecall).toBe(1)
+  })
+
+  it('weights shared meaningful tokens across length-asymmetric labels', async () => {
+    const generatedLabel = COMPLETE_AML.replace(
+      '<AttrValue LocaleId="en-US">Approved</AttrValue>',
+      '<AttrValue LocaleId="en-US">Applicant is an individual</AttrValue>'
+    )
+    const expected: FidelityExpectationDoc = {
+      ...EXPECTED_DOC,
+      spine: EXPECTED_DOC.spine.map((step) =>
+        step.nameEn === 'Approved'
+          ? { ...step, nameEn: 'Pet Owner is individual', nameAr: undefined }
+          : step
+      ),
+      gates: [
+        {
+          ...EXPECTED_DOC.gates[0],
+          branchFirstNamesEn: ['Pet Owner is individual', 'Rejected']
+        }
+      ]
+    }
+    const document = await buildDocument(generatedLabel)
+    const score = compareStructure(document, 'm1', expected)
+
+    expect(diceCoefficient('Applicant is an individual', 'Pet Owner is individual')).toBeLessThan(
+      0.55
+    )
+    expect(score.controlFlowRecall).toBe(1)
   })
 
   it('drops recall metrics and lists the gap when a function is missing', async () => {
     const document = await buildDocument(MISSING_FUNCTION_AML)
     const score = compareStructure(document, 'm1', EXPECTED_DOC)
 
-    // 4 of 5 spine objects survive (Start, Rule, Approved, Rejected); "Do the
-    // work" is gone.
-    expect(score.controlFlowRecall).toBeCloseTo(4 / 5, 10)
+    // Three of five spine objects survive (Start, Approved, Rejected). "Do the
+    // work" is gone, so the rule can no longer prove that it lies between both
+    // expected neighbours and correctly remains unmatched too.
+    expect(score.controlFlowRecall).toBeCloseTo(3 / 5, 10)
     expect(score.controlFlowRecall).toBeLessThan(1)
     // The Reviewer satellite was anchored on "Do the work" alone; with no
     // matched anchor it cannot be recovered.
@@ -258,13 +380,13 @@ describe('compareStructure', () => {
   it('computes relativeRecall against only the facts a description manifest mentions', async () => {
     const document = await buildDocument(MISSING_FUNCTION_AML)
 
-    // The manifest claims the description only talked about the start event,
-    // the decision, and the approved outcome — none of which depend on the
+    // The manifest claims the description only talked about the start event
+    // and the approved outcome — neither depends on the
     // missing "Do the work" function, so relativeRecall should be a full 1.0
     // even though the plain controlFlowRecall for the same document is 0.8.
     const manifest: StructureFactsManifest = {
-      objects: ['Start requested', 'XOR rule', 'Approved'],
-      connections: [['Start requested', 'XOR rule']]
+      objects: ['Start requested', 'Approved'],
+      connections: []
     }
     const score = compareStructure(document, 'm1', EXPECTED_DOC, { manifest })
 
@@ -274,13 +396,39 @@ describe('compareStructure', () => {
     // A manifest that also claims the missing function pulls relativeRecall
     // below 1, and strictly below the all-mentioned case above.
     const manifestWithMissingFact: StructureFactsManifest = {
-      objects: ['Start requested', 'XOR rule', 'Approved', 'Do the work'],
-      connections: [['Start requested', 'XOR rule']]
+      objects: ['Start requested', 'Approved', 'Do the work'],
+      connections: []
     }
     const secondScore = compareStructure(document, 'm1', EXPECTED_DOC, {
       manifest: manifestWithMissingFact
     })
     expect(secondScore.relativeRecall).toBeLessThan(1)
+  })
+
+  it('reports relativeRecall as N/A for an empty manifest', async () => {
+    const document = await buildDocument(COMPLETE_AML)
+    const score = compareStructure(document, 'm1', EXPECTED_DOC, {
+      manifest: { objects: [], connections: [] }
+    })
+    const absent = compareStructure(document, 'does-not-exist', EXPECTED_DOC, {
+      manifest: { objects: [], connections: [] }
+    })
+
+    expect(score.relativeRecall).toBeUndefined()
+    expect(absent.relativeRecall).toBeUndefined()
+  })
+
+  it('only includes a mentioned satellite when its owner function is also mentioned', async () => {
+    const document = await buildDocument(COMPLETE_AML)
+    const satelliteOnly = compareStructure(document, 'm1', EXPECTED_DOC, {
+      manifest: { objects: ['Reviewer'], connections: [] }
+    })
+    const ownerAndSatellite = compareStructure(document, 'm1', EXPECTED_DOC, {
+      manifest: { objects: ['Do the work', 'Reviewer'], connections: [] }
+    })
+
+    expect(satelliteOnly.relativeRecall).toBeUndefined()
+    expect(ownerAndSatellite.relativeRecall).toBe(1)
   })
 
   it('returns an all-zero (vacuous-1 precision) score when the model id is absent', async () => {

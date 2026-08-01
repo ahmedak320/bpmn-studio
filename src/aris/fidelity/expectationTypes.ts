@@ -26,6 +26,7 @@ export interface FidelityExpectationDoc {
 export interface SpineStep {
   readonly kind: 'function' | 'event' | 'rule'
   readonly nameEn: string
+  readonly nameAr?: string
   readonly numbering: string | null
   readonly symbolNum: string | null
   readonly fill: string | null
@@ -33,6 +34,7 @@ export interface SpineStep {
 
 export interface SatelliteExpectation {
   readonly nameEn: string
+  readonly nameAr?: string
   readonly objectType: string
   readonly side: 'left' | 'right'
   readonly connectionType: string
@@ -44,7 +46,9 @@ export interface SatelliteExpectation {
 export interface GateExpectation {
   readonly operator: 'AND' | 'OR' | 'XOR'
   readonly afterNameEn: string
+  readonly afterNameAr?: string
   readonly branchFirstNamesEn: readonly string[]
+  readonly branchFirstNamesAr?: readonly string[]
 }
 
 export interface NoteExpectation {
