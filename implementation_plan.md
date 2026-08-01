@@ -817,10 +817,10 @@ Run `scripts/aris-excel-eval.ts` per workbook → score + issue-list quality rev
 
 **Worker:** opus48-1m high. **Rationale:** P13 proved `claude-opus-4.8` is the only model that faithfully reads a native PDF (similarity 0.96 vs ≤0.47 for gpt-5.6-terra, ≤0.15 native-PDF for gemini, 0.0 for qwen). The user directs that create-from-PDF ship LOCKED to Opus 4.8 as its only model on `feat/aris-only-studio`. Authorized product change #9.
 
-- [ ] When the Create attachment is a PDF (`application/pdf`), force model = `anthropic/claude-opus-4.8` (route via the provider that gives native-PDF document-vision; OpenRouter's `anthropic/claude-opus-4.8` is P13-verified) regardless of the user's provider/model selection. The PDF path never uses gemini/qwen/glm.
-- [ ] Disable/lock the model picker on the PDF Create tab; the UI clearly shows "Create-from-PDF uses Claude Opus 4.8". Keep description/document/excel tabs' model selection unchanged.
-- [ ] Capability + fail-closed checks (`src/ai/pdf.ts`, `src/ai/providersLite.ts`) still hold for the locked model; add a `pdfCreateModel()`/lock helper rather than scattering the literal.
-- [ ] Tests: `providersLite.test.ts` (the pdf attachment resolves to `anthropic/claude-opus-4.8`), `ArisGenerationPanel`/create-panel tests (PDF tab locks the model + shows the lock), any test asserting a different PDF model updated (authorized). Runtime boundary + ui-copy + i18n parity stay green.
+- [x] When the Create attachment is a PDF (`application/pdf`), force model = `anthropic/claude-opus-4.8` (route via the provider that gives native-PDF document-vision; OpenRouter's `anthropic/claude-opus-4.8` is P13-verified) regardless of the user's provider/model selection. The PDF path never uses gemini/qwen/glm.
+- [x] Disable/lock the model picker on the PDF Create tab; the UI clearly shows "Create-from-PDF uses Claude Opus 4.8". Keep description/document/excel tabs' model selection unchanged.
+- [x] Capability + fail-closed checks (`src/ai/pdf.ts`, `src/ai/providersLite.ts`) still hold for the locked model; add a `pdfCreateModel()`/lock helper rather than scattering the literal.
+- [x] Tests: `providersLite.test.ts` (the pdf attachment resolves to `anthropic/claude-opus-4.8`), `ArisGenerationPanel`/create-panel tests (PDF tab locks the model + shows the lock), any test asserting a different PDF model updated (authorized). Runtime boundary + ui-copy + i18n parity stay green.
 - **Commit:** `feat(aris): lock create-from-PDF to Claude Opus 4.8 (the P13 A/B winner) as its only model`
 
 ---
