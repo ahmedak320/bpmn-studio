@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { disableAutoTranslate } from './helpers/prefs'
+
 /**
  * Issue 5 (validation rail) + issue 6 (per-element canvas warning markers), in a
  * real browser against the built artifact.
@@ -227,6 +229,7 @@ async function forceFallbackMode(page: Page): Promise<void> {
     Object.defineProperty(window, 'showOpenFilePicker', { configurable: true, value: undefined })
     Object.defineProperty(navigator, 'storage', { configurable: true, value: {} })
   })
+  await disableAutoTranslate(page)
 }
 
 /** Boots the built shell in English/LTR fallback mode and imports the fixture as a buffer. */

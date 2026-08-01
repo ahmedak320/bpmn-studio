@@ -18,12 +18,12 @@ import { getPref, resetSessionKeysForTests, setKey, setPref } from '../../ai/key
 import { resetProviderSelectionForTests, setProviderSelection } from '../../ai/providerSelection'
 import { getLiteProvider } from '../../ai/providersLite'
 import { FreeTranslateError } from '../../ai/freeTranslate'
-import { countArisMissingTranslations } from '../localization'
 import { bootCanvas, type Harness } from '../canvas/testing/harness'
 import { makeDocument, objectDefinition, occurrence } from '../localization/__tests__/support'
 import type { ArisWorkingDocument } from '../model/types'
 import {
   ArisTranslateController,
+  type ArisAutoTranslateState,
   type ArisTranslateControllerHandle,
   type ArisTranslateControllerProps
 } from './ArisTranslateController'
@@ -88,8 +88,28 @@ function mixedDocument(): ArisWorkingDocument {
   })
 }
 
+/** Bilingual model with one definition missing each opposite-language value. */
+function bidirectionalDocument(): ArisWorkingDocument {
+  return makeDocument({
+    modelId: 'Model.1',
+    modelName: { 'en-US': 'Process', '1025': 'عملية' },
+    objectDefinitions: [
+      objectDefinition('ObjDef.en', 'OT_FUNC', { 'en-US': 'Approve' }),
+      objectDefinition('ObjDef.ar', 'OT_FUNC', { '1025': 'يرفض' })
+    ],
+    occurrences: [
+      occurrence('ObjOcc.en', 'ObjDef.en', 'Model.1'),
+      occurrence('ObjOcc.ar', 'ObjDef.ar', 'Model.1')
+    ]
+  })
+}
+
 function arNameOf(document: ArisWorkingDocument, definitionId: string): string | undefined {
   return document.objectDefinitions.get(definitionId)?.names.values[AR_WRITE_LOCALE]
+}
+
+function enNameOf(document: ArisWorkingDocument, definitionId: string): string | undefined {
+  return document.objectDefinitions.get(definitionId)?.names.values['en-US']
 }
 
 let harness: Harness | null = null
@@ -98,6 +118,7 @@ function renderController(overrides: Partial<ArisTranslateControllerProps> = {})
   ref: React.RefObject<ArisTranslateControllerHandle>
   onToast: ReturnType<typeof vi.fn>
   onAcceptedPair: ReturnType<typeof vi.fn>
+  onAutoTranslateState: ReturnType<typeof vi.fn>
 } {
   const document = overrides.liveDocument ?? englishOnlyDefinitionDocument()
   harness = bootCanvas({ document, modelId: 'Model.1' })
@@ -105,6 +126,9 @@ function renderController(overrides: Partial<ArisTranslateControllerProps> = {})
   const ref = createRef<ArisTranslateControllerHandle>()
   const onToast = vi.fn()
   const onAcceptedPair = vi.fn()
+  const onAutoTranslateState = vi.fn((state: ArisAutoTranslateState) =>
+    overrides.onAutoTranslateState?.(state)
+  )
   render(
     <ArisTranslateController
       ref={ref}
@@ -117,9 +141,15 @@ function renderController(overrides: Partial<ArisTranslateControllerProps> = {})
       onToast={onToast}
       onAcceptedPair={onAcceptedPair}
       {...overrides}
+      onAutoTranslateState={onAutoTranslateState}
     />
   )
-  return { ref, onToast, onAcceptedPair }
+  return {
+    ref,
+    onToast,
+    onAcceptedPair,
+    onAutoTranslateState
+  }
 }
 
 beforeEach(() => {
@@ -289,51 +319,99 @@ describe('ArisTranslateController — manual run reliability', () => {
   })
 })
 
-describe('ArisTranslateController — silent auto-translate', () => {
-  it('fires exactly once for a generated model and applies as one gesture', async () => {
-    hoisted.freeImpl = vi.fn(async (texts: string[]) => texts.map(() => AR_APPROVE))
-    const { onToast } = renderController({ autoTranslateEligible: true })
+describe('ArisTranslateController — automatic translation', () => {
+  it('fills English-only and Arabic-only definitions bidirectionally in one gesture', async () => {
+    hoisted.freeImpl = vi.fn(async (texts: string[], _from, to) =>
+      texts.map(() => (to === 'ar' ? AR_APPROVE : 'Reject'))
+    )
+    const { onToast, onAutoTranslateState } = renderController({
+      autoTranslateEligible: true,
+      liveDocument: bidirectionalDocument()
+    })
     const canvas = harness!.canvas
+    const commandsBefore = canvas.commandLog.length
 
     await waitFor(() => expect(onToast).toHaveBeenCalledWith(expect.any(String), 'success'))
-    expect(hoisted.freeImpl).toHaveBeenCalledTimes(1)
-    expect(arNameOf(canvas.document, 'ObjDef.approve')).toBe(AR_APPROVE)
+    expect(hoisted.freeImpl).toHaveBeenCalledTimes(2)
+    expect(arNameOf(canvas.document, 'ObjDef.en')).toBe(AR_APPROVE)
+    expect(enNameOf(canvas.document, 'ObjDef.ar')).toBe('Reject')
+    expect(canvas.commandLog.length).toBe(commandsBefore + 2)
+    expect(onAutoTranslateState).toHaveBeenLastCalledWith('done')
+    act(() => canvas.undo())
+    expect(arNameOf(canvas.document, 'ObjDef.en')).toBe('')
+    expect(enNameOf(canvas.document, 'ObjDef.ar')).toBe('')
     // No dialog is mounted for the auto path.
     expect(screen.queryByRole('button', { name: t('translationReview.translateNow') })).toBeNull()
   })
 
-  it('never fires for a non-generated (aml) model', async () => {
-    hoisted.freeImpl = vi.fn(async (texts: string[]) => texts.map(() => AR_APPROVE))
-    renderController({ autoTranslateEligible: false })
-    await act(async () => {
-      await Promise.resolve()
-    })
-    expect(hoisted.freeImpl).not.toHaveBeenCalled()
-  })
-
-  it('never fires when the auto-translate preference is off', async () => {
+  it('does not fire when the preference is off and reports the off state', async () => {
     setPref('arisAutoTranslate', 'off')
     expect(getPref('arisAutoTranslate')).toBe('off')
     hoisted.freeImpl = vi.fn(async (texts: string[]) => texts.map(() => AR_APPROVE))
-    renderController({ autoTranslateEligible: true })
-    await act(async () => {
-      await Promise.resolve()
-    })
+    const { onAutoTranslateState } = renderController({ autoTranslateEligible: true })
+    await waitFor(() => expect(onAutoTranslateState).toHaveBeenCalledWith('off'))
     expect(hoisted.freeImpl).not.toHaveBeenCalled()
   })
 
-  it('degrades silently on a whole-chain FreeTranslateError (badge logic still shows)', async () => {
+  it('reports a whole-chain failure with an error toast and failed state', async () => {
     hoisted.freeImpl = vi.fn(async () => {
       throw new FreeTranslateError('service', 'chain')
     })
-    const { onToast } = renderController({ autoTranslateEligible: true })
+    const { onToast, onAutoTranslateState } = renderController({ autoTranslateEligible: true })
     const canvas = harness!.canvas
 
-    await waitFor(() => expect(hoisted.freeImpl).toHaveBeenCalled())
-    // Nothing applied, no toast — and the missing-translation count still stands
-    // so the toolbar badge remains the entry point.
-    expect(onToast).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(onToast).toHaveBeenCalledWith(
+        t('aris.translate.autoFailed', { error: t('translate.free.down') }),
+        'error'
+      )
+    )
+    expect(onAutoTranslateState).toHaveBeenLastCalledWith('failed')
     expect(arNameOf(canvas.document, 'ObjDef.approve')).toBeUndefined()
-    expect(countArisMissingTranslations(canvas.document).ar).toBeGreaterThan(0)
+  })
+
+  it('caps the sendable queue, applies the first item, and reports a partial outcome', async () => {
+    hoisted.freeImpl = vi.fn(async (texts: string[]) => texts.map(() => AR_APPROVE))
+    const { onToast, onAutoTranslateState } = renderController({
+      autoTranslateEligible: true,
+      autoTranslateMaxItems: 1,
+      liveDocument: mixedDocument()
+    })
+    const canvas = harness!.canvas
+
+    await waitFor(() =>
+      expect(onToast).toHaveBeenCalledWith(
+        t('aris.translate.autoPartial', { applied: 1, remaining: 1 }),
+        'info'
+      )
+    )
+    expect(hoisted.freeImpl).toHaveBeenCalledTimes(1)
+    expect(hoisted.freeImpl).toHaveBeenCalledWith(['Approve'], 'en', 'ar', expect.any(AbortSignal))
+    expect(arNameOf(canvas.document, 'ObjDef.approve')).toBe(AR_APPROVE)
+    expect(arNameOf(canvas.document, 'ObjDef.review')).toBeUndefined()
+    expect(onAutoTranslateState).toHaveBeenLastCalledWith('partial')
+  })
+
+  it('does not apply or report success when the document changes during transport', async () => {
+    let resolveTransport!: (values: Array<string | undefined>) => void
+    hoisted.freeImpl = vi.fn(
+      () =>
+        new Promise<Array<string | undefined>>((resolve) => {
+          resolveTransport = resolve
+        })
+    )
+    const { onToast, onAutoTranslateState } = renderController({ autoTranslateEligible: true })
+    const canvas = harness!.canvas
+
+    await waitFor(() => expect(hoisted.freeImpl).toHaveBeenCalledTimes(1))
+    act(() => canvas.authoring.renameDefinition('ObjDef.approve', 'Approve changed', 'en-US'))
+    await act(async () => {
+      resolveTransport([AR_APPROVE])
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(onAutoTranslateState).toHaveBeenLastCalledWith('partial'))
+    expect(arNameOf(canvas.document, 'ObjDef.approve')).toBeUndefined()
+    expect(onToast).not.toHaveBeenCalledWith(expect.any(String), 'success')
   })
 })

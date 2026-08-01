@@ -1745,6 +1745,7 @@ class BrowserEnduranceProbe {
     }
   }
 
+  // This browser exercise still targets the retired shell; its ARIS retarget is tracked separately.
   async #exerciseTranslationCancellation(
     probe: BrowserLocaleProbe
   ): Promise<BrowserUiWorkloadResult> {

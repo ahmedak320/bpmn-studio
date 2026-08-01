@@ -12,6 +12,7 @@ import {
   readPng,
   type InkStructureReport
 } from './helpers/arisPdfRaster'
+import { disableAutoTranslate } from './helpers/prefs'
 
 // Wave 7 — Test Sequence 1: import the AnimalWF AML, export each iterate model
 // to PDF through the new toolbar action, rasterize and compare against ARIS's
@@ -126,6 +127,7 @@ test.afterAll(
 )
 
 async function gotoLanding(page: Page): Promise<void> {
+  await disableAutoTranslate(page)
   await page.goto(HTTP_URL, { waitUntil: 'load' })
   await expect(page.getByRole('heading', { name: 'OrbitPM ARIS Studio Lite' })).toBeVisible({
     timeout: 20_000

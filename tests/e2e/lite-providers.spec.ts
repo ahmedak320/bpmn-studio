@@ -3,6 +3,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { readFileSync, statSync } from 'node:fs'
 import { buildMinimalValidDraft } from '../../src/aris/ai/testFixtures'
+import { disableAutoTranslate } from './helpers/prefs'
 
 // Retargeted from the pre-ARIS BPMN Lite shell (plan §5.3 removed the "New
 // blank diagram" dialog and the bpmn-js canvas this spec used to boot
@@ -105,6 +106,7 @@ async function forceFallbackMode(page: Page): Promise<void> {
 async function openReferenceExport(page: Page): Promise<void> {
   await page.setViewportSize({ width: 1400, height: 900 })
   await forceFallbackMode(page)
+  await disableAutoTranslate(page)
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await page
     .getByRole('heading', { name: 'OrbitPM ARIS Studio Lite' })

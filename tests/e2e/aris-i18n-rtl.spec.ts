@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { selectOccurrenceOnCanvas } from './helpers/canvasOverlay'
+import { disableAutoTranslate } from './helpers/prefs'
 
 // English/Arabic dialog characterization against the ARIS shell.
 //
@@ -73,6 +74,7 @@ async function forceFallbackMode(page: Page): Promise<void> {
     Object.defineProperty(window, 'showOpenFilePicker', { configurable: true, value: undefined })
     Object.defineProperty(navigator, 'storage', { configurable: true, value: {} })
   })
+  await disableAutoTranslate(page)
 }
 
 /** Opens the built shell in English/LTR fallback mode and imports the real reference export. */

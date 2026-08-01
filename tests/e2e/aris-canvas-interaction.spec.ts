@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { clearCanvasPoint, revealOccurrencePoint } from './helpers/canvasOverlay'
+import { disableAutoTranslate } from './helpers/prefs'
 
 // Canvas navigation + interaction regression guard.
 //
@@ -50,6 +51,7 @@ async function gotoLanding(page: Page): Promise<void> {
     })
     Object.defineProperty(navigator, 'storage', { configurable: true, value: {} })
   })
+  await disableAutoTranslate(page)
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await page
     .getByRole('heading', { name: 'OrbitPM ARIS Studio Lite' })

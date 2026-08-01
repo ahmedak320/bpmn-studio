@@ -6,6 +6,7 @@ import { strToU8, zipSync } from 'fflate'
 
 import { buildMinimalValidDraft } from '../../src/aris/ai/testFixtures'
 import { revealOccurrencePoint, selectOccurrenceOnCanvas } from './helpers/canvasOverlay'
+import { disableAutoTranslate } from './helpers/prefs'
 
 // Retargeted from the pre-ARIS BPMN Lite shell (plan §5.3 removed the
 // folder-workspace "Process catalog" UI, the "Details…"/"Source" dialogs, and
@@ -72,18 +73,11 @@ import { revealOccurrencePoint, selectOccurrenceOnCanvas } from './helpers/canva
 //     Translate first and falls back to MyMemory per text; the AI provider is
 //     offered only when a key is stored. Reviewed proposals apply as one
 //     undoable step.
-//   - Silent auto-translate on create: `ArisTranslateController` auto-fills
-//     missing labels for `sourceKind === 'generated'` tabs via the free chain,
+//   - Universal auto-translate: `ArisTranslateController` auto-fills missing
+//     labels for every opened/imported/generated tab via the free chain,
 //     honours the `arisAutoTranslate` opt-out preference, and reports the
-//     result through the `[data-orbitpm-aris-translate-missing]` badge and a
-//     `Translated … automatically` toast.
-//     PRODUCT GAP (Wave-8): the auto-translate effect depends on the `onToast`
-//     prop, but `ArisApp.tsx` passes an inline arrow whose identity changes on
-//     every render. When the "Created …" toast renders, the component re-renders,
-//     `onToast` changes, the effect cleanup aborts the in-flight translation
-//     after the fetch but before apply/toast, and `autoRanRef.current` prevents
-//     any rerun. This is reported as BLOCKED; the spec below keeps the intended
-//     assertion verbatim.
+//     result through a toolbar state attribute, the exact review-row badge,
+//     and visible outcome toasts.
 //   - Diagram content-language toggle: `ArisStudioTab`'s
 //     `[data-orbitpm-aris-content-lang]` switches canvas labels between
 //     English and Arabic without editing the document; `[data-orbitpm-aris-undo]`
@@ -261,10 +255,12 @@ async function openArisSource(
   page: Page,
   xml: string,
   fileName: string,
-  expectedModelCount: number
+  expectedModelCount: number,
+  autoTranslate = true
 ): Promise<void> {
   await page.setViewportSize({ width: 1500, height: 950 })
   await forceFallbackMode(page)
+  if (!autoTranslate) await disableAutoTranslate(page)
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await page
     .getByRole('heading', { name: 'OrbitPM ARIS Studio Lite' })
@@ -294,14 +290,15 @@ async function openArisSource(
     .waitFor({ state: 'attached', timeout: 30_000 })
 }
 
-async function openBilingualMatrix(page: Page): Promise<void> {
-  await openArisSource(page, BILINGUAL_MATRIX_AML, 'bilingual-matrix.aml', 1)
+async function openBilingualMatrix(page: Page, autoTranslate = true): Promise<void> {
+  await openArisSource(page, BILINGUAL_MATRIX_AML, 'bilingual-matrix.aml', 1, autoTranslate)
 }
 
 /** Boots into the real 279-record customer export, same as every other ARIS-era spec. */
-async function openReferenceExport(page: Page): Promise<void> {
+async function openReferenceExport(page: Page, autoTranslate = true): Promise<void> {
   await page.setViewportSize({ width: 1500, height: 950 })
   await forceFallbackMode(page)
+  if (!autoTranslate) await disableAutoTranslate(page)
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await page
     .getByRole('heading', { name: 'OrbitPM ARIS Studio Lite' })
@@ -331,9 +328,8 @@ async function selectOccurrence(page: Page, occurrenceId: string): Promise<void>
 /**
  * Asserts a shape's caption contains `phrase`, tolerant of word-wrap: a label
  * wider than its shape wraps into one `<tspan>` per line (authorized
- * typography), and a `<text>` node's `textContent` concatenates the lines with
- * no separator, so join the tspans with a space to reconstruct the logical
- * caption before matching.
+ * typography), including glyph-level breaks inside a word. Compare the exact
+ * character sequence without render-only whitespace between tspans.
  */
 async function expectOccurrenceCaption(
   page: Page,
@@ -350,11 +346,11 @@ async function expectOccurrenceCaption(
             tspans.length > 0
               ? Array.from(tspans, (tspan) => tspan.textContent ?? '').join(' ')
               : (node.textContent ?? '')
-          return value.replace(/\s+/gu, ' ').trim()
+          return value.replace(/\s+/gu, '')
         }),
       { timeout: 10_000 }
     )
-    .toContain(phrase)
+    .toContain(phrase.replace(/\s+/gu, ''))
 }
 
 /**
@@ -374,7 +370,7 @@ async function expectCanvasCaption(page: Page, phrase: string): Promise<void> {
               (node) => node.getBoundingClientRect().width > 0
             ) ?? document.querySelector('[data-orbitpm-aris-canvas]')
           if (!canvas) return false
-          const normalize = (value: string): string => value.replace(/\s+/gu, ' ').trim()
+          const normalize = (value: string): string => value.replace(/\s+/gu, '')
           return [...canvas.querySelectorAll('text[data-aris-caption]')].some((node) => {
             const tspans = node.querySelectorAll('tspan')
             const value =
@@ -530,8 +526,17 @@ async function stubOpenRouter(
   })
 }
 
-/** Routes Google Translate and MyMemory so every source text returns `value`. */
-async function stubFreeTranslate(page: Page, value: string): Promise<void> {
+type FreeTranslateStubValue = string | { readonly en: string; readonly ar: string }
+
+/** Routes Google Translate and MyMemory so every source text gets a valid target script. */
+async function stubFreeTranslate(page: Page, value: FreeTranslateStubValue): Promise<void> {
+  const translatedValue = (url: string): string => {
+    if (typeof value === 'string') return value
+    const parsed = new URL(url)
+    const target =
+      parsed.searchParams.get('tl') ?? parsed.searchParams.get('langpair')?.split('|')[1]
+    return target === 'en' ? value.en : value.ar
+  }
   await page.route('https://translate.googleapis.com/**', async (route) => {
     const request = route.request()
     const cors = corsHeaders(request)
@@ -542,7 +547,7 @@ async function stubFreeTranslate(page: Page, value: string): Promise<void> {
     await route.fulfill({
       status: 200,
       headers: { ...cors, 'content-type': 'application/json' },
-      body: JSON.stringify([[[value, 'source', null, null, null]]])
+      body: JSON.stringify([[[translatedValue(request.url()), 'source', null, null, null]]])
     })
   })
   await page.route('https://api.mymemory.translated.net/**', async (route) => {
@@ -555,7 +560,10 @@ async function stubFreeTranslate(page: Page, value: string): Promise<void> {
     await route.fulfill({
       status: 200,
       headers: { ...cors, 'content-type': 'application/json' },
-      body: JSON.stringify({ responseStatus: 200, responseData: { translatedText: value } })
+      body: JSON.stringify({
+        responseStatus: 200,
+        responseData: { translatedText: translatedValue(request.url()) }
+      })
     })
   })
 }
@@ -604,7 +612,7 @@ test('TR1/TR2/TR3: AML import surfaces wrong-language and missing bilingual fiel
   page
 }) => {
   test.setTimeout(120_000)
-  await openBilingualMatrix(page)
+  await openBilingualMatrix(page, false)
 
   // TR-01: a value genuinely filed under the Arabic locale but written in
   // Latin script (`ObjDef.WrongAr`'s LocaleId=14337 AttrValue is literally
@@ -668,7 +676,7 @@ test('TR4/TR8/TR10: mixed values, neutral terms, branch labels and attribute det
   page
 }) => {
   test.setTimeout(120_000)
-  await openBilingualMatrix(page)
+  await openBilingualMatrix(page, false)
 
   // TR-04 mixed values: `ObjDef.Mixed`'s Arabic slot ("Review طلب") mixes
   // Latin and Arabic script. `detectScriptLang` classifies ANY Arabic-bearing
@@ -731,7 +739,13 @@ test('TR4/TR8/TR10: mixed values, neutral terms, branch labels and attribute det
 
   const derivedBytes = await exportDerivedAml(page)
   const reopened = await test.step('reopen the exported AML in a fresh load', async () => {
-    await openArisSource(page, derivedBytes.toString('utf8'), 'bilingual-matrix.derived.aml', 1)
+    await openArisSource(
+      page,
+      derivedBytes.toString('utf8'),
+      'bilingual-matrix.derived.aml',
+      1,
+      false
+    )
     return true
   })
   expect(reopened).toBe(true)
@@ -754,14 +768,20 @@ test('TR5: native ARIS import preserves an explicit Arabic repair through derive
   page
 }) => {
   test.setTimeout(120_000)
-  await openBilingualMatrix(page)
+  await openBilingualMatrix(page, false)
 
   // An untouched import round-trips through the derived export: the same
   // bilingual content reopens unchanged. This is the ARIS shell's closest
   // equivalent of "restoring a backup" — there is no workspace backup zip
   // feature reachable in this shell (see file header GAP note).
   const untouchedBytes = await exportDerivedAml(page)
-  await openArisSource(page, untouchedBytes.toString('utf8'), 'bilingual-matrix.roundtrip.aml', 1)
+  await openArisSource(
+    page,
+    untouchedBytes.toString('utf8'),
+    'bilingual-matrix.roundtrip.aml',
+    1,
+    false
+  )
   await expectOccurrenceCaption(page, 'ObjOcc.Start', 'Request received')
   await selectOccurrence(page, 'ObjOcc.ArOnly')
   await openDetailsTab(page, 'Names')
@@ -778,7 +798,7 @@ test('TR5: native ARIS import preserves an explicit Arabic repair through derive
   const repairedXml = repairedBytes.toString('utf8')
   expect(repairedXml).toContain('مراجعة الطلب')
 
-  await openArisSource(page, repairedXml, 'bilingual-matrix.repaired.aml', 1)
+  await openArisSource(page, repairedXml, 'bilingual-matrix.repaired.aml', 1, false)
   await selectOccurrence(page, 'ObjOcc.WrongAr')
   await openDetailsTab(page, 'Names')
   await expect(nameField(page, 'definition', 'ar')).toHaveValue('مراجعة الطلب')
@@ -826,7 +846,7 @@ test('TR5/TR7: AI text, DOCX, PDF, PNG and Excel use their real generation/impor
   })
 
   const offending = recordOffendingRequests(page)
-  await openReferenceExport(page)
+  await openReferenceExport(page, false)
   await configureOpenRouterKey(page, apiKey)
   const createPanel = page.locator('[data-orbitpm-aris-create]')
   await createPanel.locator('[data-orbitpm-aris-create-provider]').selectOption('openrouter')
@@ -1035,7 +1055,7 @@ test('TR6/TR9: AI provider 429 retry, transport exhaustion, cancellation and man
     await route.abort()
   })
 
-  await openReferenceExport(page)
+  await openReferenceExport(page, false)
   await configureOpenRouterKey(page, apiKey)
 
   // --- 429 retried automatically, then succeeds (text-only: 3 attempts) -----
@@ -1099,7 +1119,7 @@ test('TR6/TR9/TR10: the chat drawer completion batch fills missing English/Arabi
   page
 }) => {
   test.setTimeout(120_000)
-  await openReferenceExport(page)
+  await openReferenceExport(page, false)
 
   // The interview now lives in the chat drawer: open the assistant and switch
   // to the 'Complete this process' tab so the interview surface is mounted.
@@ -1186,7 +1206,7 @@ test('TR-content-toggle: toolbar content-language switch flips canvas labels and
   page
 }) => {
   test.setTimeout(120_000)
-  await openBilingualMatrix(page)
+  await openBilingualMatrix(page, false)
 
   const canvas = page.locator('[data-orbitpm-aris-canvas]')
   await expect(canvas).toBeVisible()
@@ -1223,7 +1243,7 @@ test('TR-translate-review: free Google → MyMemory chain applies as one undoabl
 }) => {
   test.setTimeout(120_000)
   const STUB = 'مترجم'
-  await openBilingualMatrix(page)
+  await openBilingualMatrix(page, false)
   await stubFreeTranslate(page, STUB)
 
   const translateFetches: string[] = []
@@ -1243,21 +1263,14 @@ test('TR-translate-review: free Google → MyMemory chain applies as one undoabl
   await expect(dialog.getByRole('combobox')).toContainText('Google Translate → MyMemory')
 
   await dialog.getByRole('button', { name: 'Translate now', exact: true }).click()
+  await expect(dialog.getByText(/proposal\(s\) returned/u)).toBeVisible({ timeout: 30_000 })
   await expect(dialog.getByText('Provider proposal').first()).toBeVisible({ timeout: 30_000 })
-  await expect(
-    dialog.getByRole('button', { name: 'Accept this proposal', exact: true }).first()
-  ).toBeVisible()
-
-  // Accept every proposal so the language view is complete and can be applied.
-  // The accept buttons stay in the DOM after acceptance (they update accepted
-  // state), so collect the current list once and click each distinct button.
-  const acceptButtons = await dialog
+  const acceptOne = dialog
     .getByRole('button', { name: 'Accept this proposal', exact: true })
-    .all()
-  expect(acceptButtons.length).toBeGreaterThan(0)
-  for (const button of acceptButtons) {
-    await button.evaluate((el) => (el as HTMLElement).click())
-  }
+    .first()
+  await expect(acceptOne).toBeVisible()
+  await acceptOne.click()
+  await dialog.getByRole('button', { name: 'Accept all proposals', exact: true }).click()
   await dialog.getByRole('button', { name: 'Apply completed language view', exact: true }).click()
   await expect(dialog).toBeHidden()
   expect(translateFetches.length).toBeGreaterThan(0)
@@ -1274,7 +1287,34 @@ test('TR-translate-review: free Google → MyMemory chain applies as one undoabl
   await expect(canvas.getByText(STUB, { exact: true })).toHaveCount(0)
 })
 
-test('TR-auto-translate: generated models fill missing labels silently unless opted out', async ({
+test('TR-auto-import: imported AML fills both languages automatically as one undoable step', async ({
+  page
+}) => {
+  test.setTimeout(120_000)
+  const AUTO_EN = 'Automatically translated'
+  const AUTO_AR = 'مترجم تلقائيا'
+  await stubFreeTranslate(page, { en: AUTO_EN, ar: AUTO_AR })
+  await openBilingualMatrix(page)
+
+  await expect(page.locator('[data-orbitpm-aris-auto-translate="done"]')).toBeVisible({
+    timeout: 60_000
+  })
+  await expect(
+    page.getByRole('status').filter({ hasText: /Translated .* labels automatically/u })
+  ).toBeVisible({ timeout: 60_000 })
+  await expect(page.locator('[data-orbitpm-aris-translate-missing]')).toHaveCount(0)
+
+  await page.locator('[data-orbitpm-aris-content-lang]').click()
+  const canvas = page.locator('[data-orbitpm-aris-canvas]')
+  await expect(canvas.getByText(AUTO_AR, { exact: true }).first()).toBeVisible()
+
+  const undo = page.locator('[data-orbitpm-aris-undo]')
+  await expect(undo).toBeEnabled()
+  await undo.click()
+  await expect(canvas.getByText(AUTO_AR, { exact: true })).toHaveCount(0)
+})
+
+test('TR-auto-generated: generated models fill missing labels automatically unless opted out', async ({
   page,
   context
 }) => {
@@ -1310,16 +1350,13 @@ test('TR-auto-translate: generated models fill missing labels silently unless op
   // Confirm the free chain was actually invoked.
   await expect.poll(() => translateFetches.length, { timeout: 30_000 }).toBeGreaterThan(0)
 
-  // The "Translated … automatically" toast is the intended contract, but a
-  // Wave-8 product race prevents it: `ArisTranslateController`'s auto-translate
-  // effect depends on `onToast`, and `ArisApp.tsx` passes an inline arrow whose
-  // identity changes when the "Created …" toast renders. The effect cleanup then
-  // aborts the in-flight translation after the fetch but before apply/toast, and
-  // `autoRanRef.current` blocks any rerun. This assertion is kept verbatim and
-  // reported as BLOCKED (product is frozen; no product-code changes in this lane).
-  await expect(
-    page.getByRole('status').filter({ hasText: /Translated .* labels automatically/u })
-  ).toBeVisible({ timeout: 30_000 })
+  // The imported matrix and the generated draft are both eligible, so one or
+  // two completed auto-translation toasts may coexist depending on dismissal.
+  const autoToasts = page
+    .getByRole('status')
+    .filter({ hasText: /Translated .* labels automatically/u })
+  await expect(autoToasts.first()).toBeVisible({ timeout: 30_000 })
+  expect(await autoToasts.count()).toBeLessThanOrEqual(2)
 
   // No review dialog was opened; the fill happened silently.
   await expect(page.getByRole('dialog', { name: 'Review translation', exact: true })).toHaveCount(0)
@@ -1331,9 +1368,7 @@ test('TR-auto-translate: generated models fill missing labels silently unless op
   // --- Preference OFF: fresh page with opt-out set before load. ---
   const offPage = await context.newPage()
   await forceFallbackMode(offPage)
-  await offPage.addInitScript(() => {
-    localStorage.setItem('orbitpm.lite.cfg.arisAutoTranslate', 'off')
-  })
+  await disableAutoTranslate(offPage)
   await stubOpenRouter(offPage)
   await stubFreeTranslate(offPage, 'ترجمة آلية')
 
@@ -1387,6 +1422,24 @@ test('TR-auto-translate: generated models fill missing labels silently unless op
   ).toBeVisible()
 })
 
+test('TR-auto-animalwf: the real AnimalWF import auto-translates Arabic canvas text', async ({
+  page
+}) => {
+  test.setTimeout(300_000)
+  await stubFreeTranslate(page, {
+    en: 'Automatically translated AnimalWF label',
+    ar: 'تسمية سير عمل الحيوان مترجمة تلقائيا'
+  })
+  await openReferenceExport(page)
+
+  await expect(page.locator('[data-orbitpm-aris-auto-translate="done"]')).toBeVisible({
+    timeout: 240_000
+  })
+  await page.locator('[data-orbitpm-aris-content-lang]').click()
+  const texts = await page.locator('[data-orbitpm-aris-canvas] svg text').allTextContents()
+  expect(texts.filter((text) => /\p{Script=Arabic}/u.test(text)).length).toBeGreaterThan(20)
+})
+
 /**
  * A well-formed EPC (legal `CT_ACTIV_1`/`CT_CRT_1` control flow) plus one object
  * definition — `ObjDef.Orphan` — that is defined but never drawn, so the fix
@@ -1424,7 +1477,7 @@ test('TR-fix-flow: a confirmed delete proposal drops the issue count and undo re
   page
 }) => {
   test.setTimeout(120_000)
-  await openArisSource(page, FIX_FLOW_AML, 'fix-flow.aml', 1)
+  await openArisSource(page, FIX_FLOW_AML, 'fix-flow.aml', 1, false)
 
   const badge = page.locator('[data-orbitpm-aris-fix-issues]')
   await expect(badge).toBeVisible({ timeout: 60_000 })

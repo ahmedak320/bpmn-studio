@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "bundle": "translation",
   "sourceRequirement": "fix_plan.md §5 Mandatory end-to-end scenarios / Translation",
-  "note": "Phase 18 (BPMN e2e retirement, plan §5.3/§21.3) retargeted tests/e2e/lite-mandatory-translation.spec.ts from the deleted bpmn-js Lite shell to the ARIS shell; all 6 tests were rewritten (none of the old mechanisms survived — they were 100% BPMN-shell-specific) but all 10 requirement ids retain at least partial genuine coverage on real, currently-reachable ARIS surfaces (AML import via the details rail's bilingual editor, the derived-AML export/reimport round trip, the AI generation panel, and the chat gap-completion batch). Two mechanisms found dead by reading source (grep confirmed neither is imported anywhere reachable from ArisApp.tsx or src/aris/**) and reflected as narrowed coverage below rather than silently dropped: (1) the old per-field machine-translation review dialog (src/localization/TranslationReviewDialog.tsx and the rest of src/localization/**, plus the workspace translation-memory JSON persistence) — TR-06's 'manual edit' clause and TR-05's 'source Apply'/'backup' clauses have no ARIS equivalent; (2) free-text annotation bilingual editing — ArisDetailsElement's kind union (src/aris/details/seam.ts) has no 'freeText' case, so TR-04's 'annotations' clause is satisfied instead via a rule object's bilingual name/attribute, a real but narrower analogue.",
+  "note": "Wave 13 refresh: the exact 12-test ARIS inventory now covers the reachable review dialog, visible run summaries, per-field and accept-all decisions, universal import/generated translation, the real AnimalWF auto-translation path, exact toolbar state/badge outcomes, and one-step undo. The suite opts out only where a test is intentionally validating an unrelated/manual flow. The surviving scope gaps remain the retired BPMN source-Apply/workspace-backup mechanisms and free-text annotation editing; those are documented below rather than represented as working.",
   "requiredRequirementIds": [
     "TR-01",
     "TR-02",
@@ -32,14 +32,18 @@
       "requirement": "Missing English or Arabic counterparts.",
       "browserTests": [
         "TR1/TR2/TR3: AML import surfaces wrong-language and missing bilingual fields, explicitly repaired through the details rail",
-        "TR6/TR9/TR10: the chat gap-completion batch fills missing English/Arabic names atomically and reverts as one undo"
+        "TR6/TR9/TR10: the chat drawer completion batch fills missing English/Arabic names atomically and reverts as one undo",
+        "TR-auto-import: imported AML fills both languages automatically as one undoable step",
+        "TR-auto-generated: generated models fill missing labels automatically unless opted out",
+        "TR-auto-animalwf: the real AnimalWF import auto-translates Arabic canvas text"
       ]
     },
     {
       "id": "TR-03",
       "requirement": "Arabic-first and English-first diagrams.",
       "browserTests": [
-        "TR1/TR2/TR3: AML import surfaces wrong-language and missing bilingual fields, explicitly repaired through the details rail"
+        "TR1/TR2/TR3: AML import surfaces wrong-language and missing bilingual fields, explicitly repaired through the details rail",
+        "TR-auto-import: imported AML fills both languages automatically as one undoable step"
       ]
     },
     {
@@ -64,9 +68,10 @@
     {
       "id": "TR-06",
       "requirement": "Provider cancellation, 429, partial failure, retry, and manual edit.",
-      "note": "Narrowed: the old per-field 'manual edit' recovery UI (TranslationReviewDialog and src/localization/**) is dead code, unreachable from ArisApp.tsx. Cancellation/429/retry/partial-failure are satisfied instead through the AI generation provider's real transport-resilience surface, which is truthful about failure but is a different (whole-generation, not per-field) recovery model.",
+      "note": "The ARIS TranslationReviewDialog is reachable from the toolbar and now exposes run summaries, provider failures, per-field acceptance/manual recovery, and accept-all. Cancellation/429 exhaustion remains covered through the AI generation transport surface.",
       "browserTests": [
-        "TR6/TR9: AI provider 429 retry, transport exhaustion, cancellation and manual recovery remain truthful"
+        "TR6/TR9: AI provider 429 retry, transport exhaustion, cancellation and manual recovery remain truthful",
+        "TR-translate-review: free Google → MyMemory chain applies as one undoable step"
       ]
     },
     {
@@ -80,7 +85,10 @@
       "id": "TR-08",
       "requirement": "Actual Arabic SVG text after switching.",
       "browserTests": [
-        "TR1/TR2/TR3: AML import surfaces wrong-language and missing bilingual fields, explicitly repaired through the details rail"
+        "TR1/TR2/TR3: AML import surfaces wrong-language and missing bilingual fields, explicitly repaired through the details rail",
+        "TR-content-toggle: toolbar content-language switch flips canvas labels and follows app language",
+        "TR-auto-import: imported AML fills both languages automatically as one undoable step",
+        "TR-auto-animalwf: the real AnimalWF import auto-translates Arabic canvas text"
       ]
     },
     {
@@ -88,7 +96,8 @@
       "requirement": "No false completion or stale progress message.",
       "browserTests": [
         "TR6/TR9: AI provider 429 retry, transport exhaustion, cancellation and manual recovery remain truthful",
-        "TR6/TR9/TR10: the chat gap-completion batch fills missing English/Arabic names atomically and reverts as one undo"
+        "TR6/TR9/TR10: the chat drawer completion batch fills missing English/Arabic names atomically and reverts as one undo",
+        "TR-auto-generated: generated models fill missing labels automatically unless opted out"
       ]
     },
     {
@@ -97,7 +106,10 @@
       "browserTests": [
         "TR4/TR8/TR10: mixed values, neutral terms, branch labels and attribute details survive undo and a save/reopen round trip",
         "TR5: native ARIS import preserves an explicit Arabic repair through derived export and reimport",
-        "TR6/TR9/TR10: the chat gap-completion batch fills missing English/Arabic names atomically and reverts as one undo"
+        "TR6/TR9/TR10: the chat drawer completion batch fills missing English/Arabic names atomically and reverts as one undo",
+        "TR-translate-review: free Google → MyMemory chain applies as one undoable step",
+        "TR-auto-import: imported AML fills both languages automatically as one undoable step",
+        "TR-fix-flow: a confirmed delete proposal drops the issue count and undo restores it"
       ]
     }
   ]

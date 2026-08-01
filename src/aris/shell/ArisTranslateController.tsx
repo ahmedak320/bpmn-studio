@@ -3,17 +3,15 @@
  *
  * It owns the imperative `openReview` seam the toolbar's "Translate…" button
  * calls, the surviving {@link TranslationReviewDialog} it drives, and the
- * SILENT auto-translate that fills a created model's missing language with no
- * dialog at all.
+ * automatic translation that fills every opened model's missing languages
+ * with no dialog at all.
  *
  * UX (locked):
- *  - Created tabs (`sourceKind === 'generated'`, surfaced as
- *    `autoTranslateEligible`) auto-fill the missing language through the FREE
- *    chain, apply everything as ONE undoable gesture, and never open a dialog.
- *    They degrade silently on any `FreeTranslateError`, obey a ≤200-item cap,
- *    and honour the `arisAutoTranslate` opt-out preference.
- *  - Opened/imported files never auto-send; the toolbar badge opens the review
- *    dialog and THAT dialog is the consent surface for every outbound request.
+ *  - Every visible tab auto-fills both missing language directions through the
+ *    FREE chain, applies the capped batch as ONE undoable gesture, and never
+ *    opens a dialog. Running, partial and failed outcomes stay visible.
+ *  - The `arisAutoTranslate` preference remains the explicit opt-out; the
+ *    toolbar badge opens the reviewed/manual recovery surface.
  *  - The AI provider is never auto-selected: the free chain is the default and
  *    the configured AI provider is offered only when a key is stored.
  *
@@ -69,21 +67,25 @@ export interface ArisTranslateControllerHandle {
   openReview(target?: 'en' | 'ar'): void
 }
 
+export type ArisAutoTranslateState = 'idle' | 'running' | 'done' | 'partial' | 'failed' | 'off'
+
 export interface ArisTranslateControllerProps {
   readonly getCanvas: () => ArisCanvas | null
   readonly liveDocument: ArisWorkingDocument
   readonly contentLang: 'en' | 'ar'
   readonly documentName: string
-  /** `sourceKind === 'generated'`: created models auto-fill the missing language. */
+  /** Mount-level rollback seam; every studio tab currently supplies `true`. */
   readonly autoTranslateEligible: boolean
+  readonly onAutoTranslateState?: (state: ArisAutoTranslateState) => void
+  readonly autoTranslateMaxItems?: number
   /** `null` ⇒ the review uses SEEDED_GLOSSARY + an empty translation memory. */
   readonly resources: LocalizationResources | null
   readonly onAcceptedPair?: (pair: { en: string; ar: string }) => void
   readonly onToast: (message: string, tone?: 'info' | 'error' | 'success') => void
 }
 
-/** The silent auto-translate never sends more than this many labels at once. */
-const AUTO_TRANSLATE_MAX_ITEMS = 200
+/** Automatic translation sends at most this many labels, then reports the remainder. */
+const AUTO_TRANSLATE_MAX_ITEMS = 500
 const DEFAULT_CHUNK_SIZE = 60
 
 /** Fields whose text may carry a person's name or similar data. */
@@ -223,9 +225,16 @@ function ArisTranslateControllerInner(
   props: ArisTranslateControllerProps,
   ref: React.ForwardedRef<ArisTranslateControllerHandle>
 ): JSX.Element | null {
-  const { getCanvas, liveDocument, contentLang, documentName, autoTranslateEligible, resources } =
-    props
-  const { onAcceptedPair, onToast } = props
+  const {
+    getCanvas,
+    liveDocument,
+    contentLang,
+    documentName,
+    autoTranslateEligible,
+    autoTranslateMaxItems = AUTO_TRANSLATE_MAX_ITEMS,
+    resources
+  } = props
+  const { onAcceptedPair, onAutoTranslateState, onToast } = props
 
   const [session, setSession] = useState<ReviewSession | null>(null)
   const [open, setOpen] = useState(false)
@@ -314,7 +323,7 @@ function ArisTranslateControllerInner(
   // Abort any in-flight run when the controller unmounts.
   useEffect(() => () => abortRef.current?.abort(), [])
 
-  // Abort the silent auto-translate run only when the controller unmounts — the
+  // Abort the automatic translation run only when the controller unmounts — the
   // auto-run effect deliberately owns no cleanup so a churning dep (getCanvas)
   // can't abort its own in-flight run one commit later.
   useEffect(() => () => autoControllerRef.current?.abort(), [])
@@ -518,11 +527,14 @@ function ArisTranslateControllerInner(
     resetSession()
   }
 
-  // --- silent auto-translate for created models --------------------------------
+  // --- automatic translation for every opened model ----------------------------
   useEffect(() => {
     if (!autoTranslateEligible) return
     if (autoRanRef.current) return
-    if (getPref('arisAutoTranslate') === 'off') return
+    if (getPref('arisAutoTranslate') === 'off') {
+      onAutoTranslateState?.('off')
+      return
+    }
     const canvas = getCanvas()
     if (!canvas) return
     autoRanRef.current = true
@@ -535,28 +547,60 @@ function ArisTranslateControllerInner(
         document: canvas.document,
         target,
         active: contentLang,
+        queueDirections: 'both',
         ...(resources ? { resources } : {})
       })
-      const queue = result.review.queue.filter((item) => item.requiresSegmentationReview !== true)
-      if (queue.length === 0) return
-      // Too much to send silently: the toolbar badge stays the entry point.
-      if (queue.length > AUTO_TRANSLATE_MAX_ITEMS) return
-
-      let autoProposals: readonly TranslationOutputProposal[]
-      try {
-        const run = await runArisReviewedTranslation(
-          result.review,
-          makeFreeTranslateTexts({ signal: controller.signal }),
-          controller.signal
+      const sendable = result.review.queue.filter(
+        (item) => item.requiresSegmentationReview !== true
+      )
+      const maxItems = Math.max(0, Math.floor(autoTranslateMaxItems))
+      const capped = sendable.slice(0, maxItems)
+      if (capped.length > 0) {
+        onAutoTranslateState?.('running')
+        onToast(
+          tk('aris.translate.autoRunning', 'Translating {count} labels automatically…', {
+            count: capped.length
+          }),
+          'info'
         )
-        autoProposals = run.proposals
-      } catch {
-        // A whole-chain FreeTranslateError — and any other transport failure —
-        // degrades silently: nothing is written and the toolbar badge remains
-        // the way in.
-        return
+      }
+
+      let autoProposals: readonly TranslationOutputProposal[] = []
+      let failedCount = 0
+      if (capped.length > 0) {
+        try {
+          const run = await runArisReviewedTranslation(
+            { ...result.review, queue: capped },
+            makeFreeTranslateTexts({ signal: controller.signal }),
+            controller.signal
+          )
+          autoProposals = run.proposals
+          failedCount = run.failures.length
+        } catch (error) {
+          if (controller.signal.aborted) return
+          onAutoTranslateState?.('failed')
+          onToast(
+            tk('aris.translate.autoFailed', 'Automatic translation failed: {error}', {
+              error: freeErrorMessage(error)
+            }),
+            'error'
+          )
+          return
+        }
       }
       if (controller.signal.aborted) return
+
+      const fresh = buildArisLocalizationReview({
+        document: canvas.document,
+        target,
+        active: contentLang,
+        queueDirections: 'both',
+        ...(resources ? { resources } : {})
+      })
+      if ((fresh.sourceSignature ?? '') !== (result.sourceSignature ?? '')) {
+        onAutoTranslateState?.('partial')
+        return
+      }
 
       const patches = autoProposals
         .map((proposal) => proposalToPatch(proposal, result.review))
@@ -565,30 +609,59 @@ function ArisTranslateControllerInner(
         [...patches, ...result.review.localUpdates],
         result.owners
       )
-      if (updates.length === 0) return
-
       let count = 0
-      try {
-        count = applyArisTranslations(
-          canvas,
-          updates,
-          tk('aris.translate.gestureLabel', 'Translate labels')
-        )
-      } catch {
-        return
+      if (updates.length > 0) {
+        try {
+          count = applyArisTranslations(
+            canvas,
+            updates,
+            tk('aris.translate.gestureLabel', 'Translate labels')
+          )
+        } catch (error) {
+          onAutoTranslateState?.('failed')
+          onToast(
+            tk('aris.translate.autoFailed', 'Automatic translation failed: {error}', {
+              error: freeErrorMessage(error)
+            }),
+            'error'
+          )
+          return
+        }
       }
-      if (count <= 0) return
-      onToast(
-        tk(
-          'aris.translate.autoDone',
-          'Translated {count} labels automatically — Undo reverts, review from the toolbar.',
-          { count }
-        ),
-        'success'
-      )
+
+      const remaining = sendable.length - capped.length + failedCount
+      onAutoTranslateState?.(remaining > 0 ? 'partial' : 'done')
+      if (remaining > 0) {
+        onToast(
+          tk(
+            'aris.translate.autoPartial',
+            'Translated {applied} labels automatically; {remaining} could not be translated — open Translate… to review.',
+            { applied: count, remaining }
+          ),
+          'info'
+        )
+      } else if (count > 0) {
+        onToast(
+          tk(
+            'aris.translate.autoDone',
+            'Translated {count} labels automatically — Undo reverts, review from the toolbar.',
+            { count }
+          ),
+          'success'
+        )
+      }
       for (const proposal of autoProposals) onAcceptedPair?.(proposalPair(proposal))
     })()
-  }, [autoTranslateEligible, getCanvas, contentLang, resources, onToast, onAcceptedPair])
+  }, [
+    autoTranslateEligible,
+    autoTranslateMaxItems,
+    getCanvas,
+    contentLang,
+    resources,
+    onToast,
+    onAcceptedPair,
+    onAutoTranslateState
+  ])
 
   if (!open || !session) return null
 

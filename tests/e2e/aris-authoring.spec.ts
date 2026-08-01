@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { disableAutoTranslate } from './helpers/prefs'
+
 // Plan §21.3 — the browser half of the release matrix, run on Chromium,
 // Firefox and WebKit.
 //
@@ -87,6 +89,7 @@ async function openReferenceExport(page: Page): Promise<void> {
     Object.defineProperty(window, 'showOpenFilePicker', { configurable: true, value: undefined })
     Object.defineProperty(navigator, 'storage', { configurable: true, value: {} })
   })
+  await disableAutoTranslate(page)
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await page
     .getByRole('heading', { name: 'OrbitPM ARIS Studio Lite' })

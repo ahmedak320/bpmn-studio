@@ -12,6 +12,8 @@ import type { AddressInfo } from 'node:net'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { disableAutoTranslate } from './helpers/prefs'
+
 // Lane E2 — e2e: import split.
 //
 // Verifies the multi-file workspace split-import flow end-to-end against the
@@ -130,6 +132,7 @@ test.afterAll(
 
 async function gotoLanding(page: Page): Promise<void> {
   await page.setViewportSize({ width: 1600, height: 1000 })
+  await disableAutoTranslate(page)
   await page.goto(HTTP_URL, { waitUntil: 'load' })
   await expect(page.getByRole('heading', { name: 'OrbitPM ARIS Studio Lite' })).toBeVisible({
     timeout: 20_000

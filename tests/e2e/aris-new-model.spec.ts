@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { selectOccurrenceOnCanvas } from './helpers/canvasOverlay'
+import { disableAutoTranslate } from './helpers/prefs'
 
 // Lane X3 — New e2e specs: blank-model authoring through the picker fallback.
 //
@@ -33,6 +34,7 @@ async function gotoLanding(page: Page): Promise<void> {
     Object.defineProperty(window, 'showOpenFilePicker', { configurable: true, value: undefined })
     Object.defineProperty(navigator, 'storage', { configurable: true, value: {} })
   })
+  await disableAutoTranslate(page)
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await page
     .getByRole('heading', { name: 'OrbitPM ARIS Studio Lite' })

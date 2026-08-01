@@ -22,6 +22,7 @@ import {
   type FixtureSheets
 } from '../../src/aris/excel/testFixtures'
 import { xmlEscape } from '../../src/aris/excel/xlsxWriter'
+import { disableAutoTranslate } from './helpers/prefs'
 
 // This file used to drive the retired BPMN-output spreadsheet-import pipeline
 // (src/spreadsheet/**, `SpreadsheetImportPanel`): a free-form "ordinary
@@ -132,6 +133,7 @@ async function forceFallbackMode(page: Page): Promise<void> {
 async function openReferenceExport(page: Page): Promise<void> {
   await page.setViewportSize({ width: 1400, height: 900 })
   await forceFallbackMode(page)
+  await disableAutoTranslate(page)
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await page
     .getByRole('heading', { name: 'OrbitPM ARIS Studio Lite' })

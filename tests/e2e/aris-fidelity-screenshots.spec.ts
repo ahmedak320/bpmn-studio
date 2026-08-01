@@ -12,6 +12,8 @@ import type { AddressInfo } from 'node:net'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { disableAutoTranslate } from './helpers/prefs'
+
 // Lane E3 — Real-browser fidelity gates and non-gated screenshot evidence for
 // the two iterate AnimalWF models. The built single file is served over a
 // loopback HTTP origin so the same real OPFS path is exercised in every engine.
@@ -72,6 +74,7 @@ test.afterAll(
 
 /** Opens the built ARIS shell's landing screen over the loopback HTTP origin. */
 async function gotoLanding(page: Page): Promise<void> {
+  await disableAutoTranslate(page)
   await page.goto(HTTP_URL, { waitUntil: 'load' })
   await expect(page.getByRole('heading', { name: 'OrbitPM ARIS Studio Lite' })).toBeVisible({
     timeout: 20_000

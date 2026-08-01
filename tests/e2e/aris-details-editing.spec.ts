@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { selectOccurrenceOnCanvas } from './helpers/canvasOverlay'
+import { disableAutoTranslate } from './helpers/prefs'
 
 /**
  * Plan §21.3 — the details rail's *editing* surface, in a real browser.
@@ -81,6 +82,7 @@ async function openReferenceExport(page: Page): Promise<void> {
     Object.defineProperty(window, 'showOpenFilePicker', { configurable: true, value: undefined })
     Object.defineProperty(navigator, 'storage', { configurable: true, value: {} })
   })
+  await disableAutoTranslate(page)
   await page.goto(FILE_URL, { waitUntil: 'load' })
   await page
     .getByRole('heading', { name: 'OrbitPM ARIS Studio Lite' })

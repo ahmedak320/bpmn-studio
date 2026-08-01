@@ -5,6 +5,8 @@ import type { AddressInfo } from 'node:net'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { disableAutoTranslate } from './helpers/prefs'
+
 // Lane X3 — New e2e specs: explorer folder-tree CRUD + keyboard navigation.
 //
 // The ARIS shell replaces the old flat file list with a real folder tree in
@@ -52,6 +54,7 @@ test.afterAll(
 
 /** Opens the built ARIS shell's landing screen over the loopback HTTP origin. */
 async function gotoLanding(page: Page): Promise<void> {
+  await disableAutoTranslate(page)
   await page.goto(HTTP_URL, { waitUntil: 'load' })
   await expect(page.getByRole('heading', { name: 'OrbitPM ARIS Studio Lite' })).toBeVisible({
     timeout: 20_000

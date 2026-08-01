@@ -4,6 +4,8 @@ import { readFileSync, statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { disableAutoTranslate } from './helpers/prefs'
+
 // Plan §21.5 — artifact verification, run on Chromium, Firefox and WebKit.
 //
 // `npm run test:aris:file-smoke` (scripts/aris-file-smoke.mjs) already drives
@@ -97,6 +99,7 @@ async function openRelease(
     Object.defineProperty(window, 'showOpenFilePicker', { configurable: true, value: undefined })
     Object.defineProperty(navigator, 'storage', { configurable: true, value: {} })
   }, language)
+  await disableAutoTranslate(page)
   await page.goto(RELEASE_URL, { waitUntil: 'load' })
   await page
     .getByRole('heading', { name: 'OrbitPM ARIS Studio Lite' })

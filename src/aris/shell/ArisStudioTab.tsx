@@ -70,9 +70,11 @@ import type { ArisDetailsEditingApi } from './arisDetailsEditing'
 import { arisText, buildArisDetailsDocument, type ArisStudioDocument } from './arisStudioDocument'
 import {
   ArisTranslateController,
+  type ArisAutoTranslateState,
   type ArisTranslateControllerHandle
 } from './ArisTranslateController'
-import { countArisMissingTranslations } from '../localization'
+import { buildArisLocalizationReview } from '../localization'
+import { listTranslationRecoveryFields } from '../../localization/translationRecovery'
 import type { LocalizationResources } from '../../localization/types'
 import { tk } from './shellI18n'
 
@@ -121,9 +123,8 @@ export interface ArisStudioTabProps {
   /** Register/unregister the tab's chat host with the shell. */
   readonly onChatHostChange?: (key: string, host: ArisTabChatHost | null) => void
   /**
-   * The opened source's kind; `'generated'` enables the silent auto-translate.
-   * Optional so pre-existing render tests can mount the tab without it (absent ⇒
-   * never auto-translates); `src/ArisApp.tsx` always supplies it.
+   * The opened source's kind, retained as shell metadata. Automatic translation
+   * is universal; `src/ArisApp.tsx` still supplies this for source provenance.
    */
   readonly sourceKind?: string
   /** Workspace glossary/TM for the translation review; `null` ⇒ built-in defaults. */
@@ -195,7 +196,6 @@ export function ArisStudioTab({
   onSelectionResolved,
   chatHostKey,
   onChatHostChange,
-  sourceKind,
   localizationResources = null,
   onAcceptedTranslationPair,
   onOpenInterview,
@@ -219,6 +219,7 @@ export function ArisStudioTab({
   // translate controller re-run against the live canvas.
   const [canvasTick, setCanvasTick] = useState(0)
   const translateRef = useRef<ArisTranslateControllerHandle | null>(null)
+  const [autoTranslateState, setAutoTranslateState] = useState<ArisAutoTranslateState>('idle')
   const [fixDialogOpen, setFixDialogOpen] = useState(false)
   const [linkPickerOpen, setLinkPickerOpen] = useState(false)
   const dir: 'ltr' | 'rtl' = lang === 'ar' ? 'rtl' : 'ltr'
@@ -259,13 +260,17 @@ export function ArisStudioTab({
     return canvasRef.current
   }, [canvasTick])
 
-  // Labels missing the OTHER language — the target a Translate run would fill.
-  const missingTranslations = useMemo(
-    () => countArisMissingTranslations(liveDocument),
-    [liveDocument]
-  )
-  const missingTranslationCount =
-    contentLang === 'en' ? missingTranslations.ar : missingTranslations.en
+  // Keep the toolbar badge byte-for-byte consistent with the review dialog rows.
+  const missingTranslationCount = useMemo(() => {
+    const target = contentLang === 'en' ? 'ar' : 'en'
+    const { review } = buildArisLocalizationReview({
+      document: liveDocument,
+      target,
+      active: contentLang,
+      ...(localizationResources ? { resources: localizationResources } : {})
+    })
+    return listTranslationRecoveryFields(review).length
+  }, [liveDocument, contentLang, localizationResources])
 
   // Project the canvas captions into the chosen content language (view only,
   // off the undo stack). Re-runs on a language change and on canvas (re)ready.
@@ -890,6 +895,7 @@ export function ArisStudioTab({
         <header
           className="orbitpm-aris-toolbar"
           aria-label={tk('aris.toolbar.aria', 'ARIS canvas controls')}
+          data-orbitpm-aris-auto-translate={autoTranslateState}
         >
           <strong style={{ fontSize: 16 }}>{title}</strong>
           <button
@@ -1232,7 +1238,8 @@ export function ArisStudioTab({
         liveDocument={liveDocument}
         contentLang={contentLang}
         documentName={title}
-        autoTranslateEligible={sourceKind === 'generated'}
+        autoTranslateEligible={true}
+        onAutoTranslateState={setAutoTranslateState}
         resources={localizationResources}
         onAcceptedPair={onAcceptedTranslationPair}
         onToast={onToast}

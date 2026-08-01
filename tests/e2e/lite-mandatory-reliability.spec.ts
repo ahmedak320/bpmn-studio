@@ -6,6 +6,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { installReliabilityWorkspace } from './fixtures/reliability-fsa'
+import { disableAutoTranslate } from './helpers/prefs'
 
 // ---------------------------------------------------------------------------
 // RETARGET RECORD — read this before touching the file again.
@@ -167,6 +168,7 @@ test.afterAll(
 
 /** Opens the built ARIS shell's landing screen over the loopback HTTP origin. */
 async function gotoLanding(page: Page): Promise<void> {
+  await disableAutoTranslate(page)
   await page.goto(HTTP_URL, { waitUntil: 'load' })
   await expect(page.getByRole('heading', { name: 'OrbitPM ARIS Studio Lite' })).toBeVisible({
     timeout: 20_000

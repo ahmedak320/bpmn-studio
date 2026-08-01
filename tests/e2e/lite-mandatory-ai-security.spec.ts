@@ -7,6 +7,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { buildMinimalValidDraft } from '../../src/aris/ai/testFixtures'
+import { disableAutoTranslate } from './helpers/prefs'
 
 // Retargeted from the pre-ARIS BPMN Lite shell (see tests/e2e/lite-providers.spec.ts's
 // header comment for the general retargeting story — the "New blank diagram" /
@@ -204,6 +205,7 @@ async function forceFallbackMode(page: Page): Promise<void> {
     delete window.showDirectoryPicker
     delete window.showOpenFilePicker
   })
+  await disableAutoTranslate(page)
 }
 
 /**

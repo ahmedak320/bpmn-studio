@@ -3,6 +3,8 @@ import { readFileSync, statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { disableAutoTranslate } from './helpers/prefs'
+
 // Mandatory UI/accessibility evidence (tests/e2e/mandatory-ui-accessibility-evidence.json)
 // for the ARIS shell:
 //
@@ -43,6 +45,7 @@ async function forceFallbackMode(page: Page): Promise<void> {
     Object.defineProperty(window, 'showOpenFilePicker', { configurable: true, value: undefined })
     Object.defineProperty(navigator, 'storage', { configurable: true, value: {} })
   })
+  await disableAutoTranslate(page)
 }
 
 async function openReferenceExport(page: Page): Promise<void> {
