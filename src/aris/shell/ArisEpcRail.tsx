@@ -17,10 +17,27 @@
 import { useMemo, useState } from 'react'
 
 import { t, type Key } from '../../i18n'
+import { arisObjectTypeName } from '../conventions/displayNames'
 import type { ArisValidationFinding } from './arisValidationFindings'
 import { tk } from './shellI18n'
 
 const PAGE_SIZE = 50
+
+/**
+ * EPC findings are structured data, never prose (`messageKey` + `messageParams`),
+ * so `src/aris/epc` stays UI-pure and emits a raw ARIS type code where a finding
+ * names an object type (e.g. `epc.alternation`'s `{objectType}`, `validate.ts:72`).
+ * This is the one place that resolves it to a friendly name before interpolation
+ * — the same policy every other tooltip/details-pane consumer of
+ * `displayNames.ts` follows (user issue 10).
+ */
+function resolvedMessageParams(
+  finding: ArisValidationFinding
+): Readonly<Record<string, string>> | undefined {
+  const params = finding.messageParams
+  if (!params || typeof params.objectType !== 'string') return params
+  return { ...params, objectType: arisObjectTypeName({ objectType: params.objectType }) }
+}
 
 export interface ArisEpcRailProps {
   readonly findings: readonly ArisValidationFinding[]
@@ -102,7 +119,7 @@ export function ArisEpcRail({ findings, onSelectFinding }: ArisEpcRailProps): JS
                   }}
                 >
                   <span style={{ fontSize: 12.5, lineHeight: 1.45, overflowWrap: 'anywhere' }}>
-                    {t(finding.messageKey as Key, finding.messageParams)}
+                    {t(finding.messageKey as Key, resolvedMessageParams(finding))}
                   </span>
                   <span style={{ fontSize: 11, color: 'var(--orbitpm-muted)' }}>
                     {finding.severity === 'error'

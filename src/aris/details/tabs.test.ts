@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { schemaForModelType, schemaForObjectType } from '../conventions/attributes'
 import type { ArisDatabase, ArisModel, ArisObjectDefinition } from '../model/types'
 import { buildTestDocument } from '../model/testFixture'
-import type { ArisDetailsDocument } from './seam'
+import type { ArisDetailsDocument, ArisMetadataSatellite } from './seam'
 import { adaptWorkingDocument, type ArisDetailsElement } from './seam'
 import { ARIS_DETAILS_TAB_BUILDERS, ARIS_DETAILS_TAB_ORDER, buildAllTabs } from './tabs'
 
@@ -365,11 +365,14 @@ describe('side panel tab model', () => {
       })
     })
 
-    it('leaves object-occurrence attribute-occurrence rows untouched by the schema merge', () => {
+    it('leaves object-occurrence attribute-occurrence rows untouched by the schema merge, but resolves a friendly value (Lane L-P10b)', () => {
       // The R3 schema merge (this lane) is defined for object definitions and
       // models only; occurrence-level `attributeOccurrences` keep exactly
       // their pre-existing, un-merged projection — one row per occurrence
-      // attribute, generic label, no schema rows added or removed.
+      // attribute, generic labelKey, no schema rows added or removed. Its
+      // `value` is no longer the raw `AT_*` code though (Lane L-P10b, user
+      // issue 10): `arisAttributeTypeName` resolves it against the owning
+      // definition's object-type schema before it ever reaches the UI.
       const def = objectDefinitionWithoutAttributes('OT_FUNC', 'od-occ-owner')
       const occurrence = {
         id: 'occ-schema-test',
@@ -416,12 +419,148 @@ describe('side panel tab model', () => {
         { kind: 'objectOccurrence', id: occurrence.id },
         doc
       )
-      // Exactly the one occurrence-attribute row, generic label, untouched by
-      // the OT_FUNC schema (which would otherwise add AT_ID/AT_DESC/etc. rows
-      // for the DEFINITION side of this same object).
+      // Exactly the one occurrence-attribute row, generic labelKey, untouched
+      // by the OT_FUNC schema's row-expansion (which would otherwise add
+      // AT_ID/AT_DESC/etc. rows for the DEFINITION side of this same object)
+      // — but AT_PROC_CODE IS in that same OT_FUNC schema, so its friendly
+      // label ('Process code') is what the resolver returns, not the raw code.
       expect(rows).toEqual([
-        { labelKey: 'aris.details.attributes.occurrence', value: 'AT_PROC_CODE' }
+        { labelKey: 'aris.details.attributes.occurrence', value: 'Process code' }
       ])
+    })
+  })
+
+  describe('friendly object/model/connection values (Lane L-P10b: raw OT_/ST_/CT_ codes never reach the general/relations tabs)', () => {
+    const RAW_OBJECT_CODE_PATTERN = /^(OT_|ST_)/
+
+    function objectDefinitionOfType(type: string, defaultSymbol: string): ArisObjectDefinition {
+      return {
+        id: 'od-friendly-1',
+        type,
+        defaultSymbol,
+        names: { values: {}, fallback: null },
+        attributes: [],
+        linkedModelIds: [],
+        rawAttributes: {}
+      }
+    }
+
+    it('collapses a Log object definition into exactly one friendly object-type row', () => {
+      const def = objectDefinitionOfType('OT_INFO_CARR', 'ST_LOG')
+      const doc = documentWithObjectDefinition(def)
+      const rows = ARIS_DETAILS_TAB_BUILDERS.general({ kind: 'objectDefinition', id: def.id }, doc)
+
+      const typeRows = rows.filter((r) => r.labelKey === 'aris.details.general.objectType')
+      expect(typeRows).toHaveLength(1)
+      expect(typeRows[0].value).toBe('Log block')
+      expect(
+        rows.some((r) => typeof r.value === 'string' && RAW_OBJECT_CODE_PATTERN.test(r.value))
+      ).toBe(false)
+    })
+
+    it('collapses a Log object occurrence into exactly one friendly object-type row', () => {
+      const def = objectDefinitionOfType('OT_INFO_CARR', 'ST_LOG')
+      const occurrence = {
+        id: 'occ-friendly-1',
+        definitionId: def.id,
+        modelId: 'm1',
+        symbol: 'ST_LOG',
+        bounds: { x: 0, y: 0, width: 10, height: 10 },
+        style: {
+          symbol: null,
+          fillColor: null,
+          strokeColor: null,
+          strokeWidth: null,
+          lineStyle: null,
+          fontStyleSheetId: null,
+          zOrder: null
+        },
+        attributeOccurrences: [],
+        rawAttributes: {}
+      }
+      const doc: ArisDetailsDocument = {
+        database: EMPTY_DATABASE,
+        models: new Map(),
+        objectDefinitions: new Map([[def.id, def]]),
+        occurrences: new Map([[occurrence.id, occurrence]]),
+        connectionOccurrences: new Map(),
+        revision: 1,
+        attachments: new Map()
+      }
+      const rows = ARIS_DETAILS_TAB_BUILDERS.general(
+        { kind: 'objectOccurrence', id: occurrence.id },
+        doc
+      )
+
+      const typeRows = rows.filter((r) => r.labelKey === 'aris.details.general.objectType')
+      expect(typeRows).toHaveLength(1)
+      expect(typeRows[0].value).toBe('Log block')
+      expect(
+        rows.some((r) => typeof r.value === 'string' && RAW_OBJECT_CODE_PATTERN.test(r.value))
+      ).toBe(false)
+    })
+
+    it("shows the friendly model-type label ('Process (EPC)') for an MT_EEPC model", () => {
+      const model = epcModelWithoutAttributes('m-friendly-epc')
+      const doc = documentWithModel(model)
+      const rows = ARIS_DETAILS_TAB_BUILDERS.general({ kind: 'model', id: model.id }, doc)
+
+      const modelTypeRow = rows.find((r) => r.labelKey === 'aris.details.general.modelType')
+      expect(modelTypeRow?.value).toBe('Process (EPC)')
+    })
+
+    it('resolves a relation connectionType row to its friendly label, never the raw CT_ code', () => {
+      const model = epcModelWithoutAttributes('m-friendly-relations')
+      const satellite: ArisMetadataSatellite = {
+        category: 'responsible',
+        relation: {
+          category: 'responsible',
+          connectionType: 'CT_EXEC_1',
+          connectionDefinitionId: 'cxn-def-1',
+          connectionOccurrenceId: 'cxn-occ-1',
+          sourceOccurrenceId: 'occ-func-1',
+          targetOccurrenceId: 'occ-pers-1',
+          satelliteDefinitionId: 'def-pers-1',
+          satelliteOccurrenceId: 'occ-pers-1'
+        },
+        definitionId: 'def-pers-1',
+        occurrenceId: 'occ-pers-1',
+        modelId: model.id,
+        type: 'OT_PERS',
+        symbol: 'ST_PERS',
+        names: {},
+        bounds: { x: 0, y: 0, width: 10, height: 10 },
+        attributes: {}
+      }
+      const doc: ArisDetailsDocument = {
+        database: EMPTY_DATABASE,
+        models: new Map([
+          [
+            model.id,
+            {
+              model,
+              controlFlowNodes: [],
+              satellites: new Map([[satellite.occurrenceId, satellite]]),
+              attachments: new Map()
+            }
+          ]
+        ]),
+        objectDefinitions: new Map(),
+        occurrences: new Map(),
+        connectionOccurrences: new Map(),
+        revision: 1,
+        attachments: new Map()
+      }
+      const rows = ARIS_DETAILS_TAB_BUILDERS.relations(
+        { kind: 'objectOccurrence', id: satellite.occurrenceId },
+        doc
+      )
+
+      const connectionTypeRow = rows.find(
+        (r) => r.labelKey === 'aris.details.relations.connectionType'
+      )
+      expect(connectionTypeRow?.value).toBe('executes')
+      expect(rows.some((r) => typeof r.value === 'string' && /^CT_/.test(r.value))).toBe(false)
     })
   })
 

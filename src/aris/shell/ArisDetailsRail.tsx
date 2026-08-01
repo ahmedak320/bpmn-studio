@@ -45,6 +45,7 @@ import {
 
 import { getDir, t } from '../../i18n'
 import type { Key } from '../../i18n'
+import { arisAttributeTypeName } from '../conventions/displayNames'
 import {
   ARIS_DETAILS_TAB_LABEL_KEYS,
   ARIS_DETAILS_TAB_ORDER,
@@ -498,12 +499,14 @@ export function ArisDetailsRail({
             style={{ display: 'grid', gap: 8, marginTop: 10 }}
             data-orbitpm-aris-pending-attribute={pendingAttributeType}
           >
-            <h4 style={{ margin: 0, fontSize: 13 }}>{pendingAttributeType}</h4>
+            <h4 style={{ margin: 0, fontSize: 13 }}>
+              {arisAttributeTypeName(pendingAttributeType, definition.type)}
+            </h4>
             <p style={{ margin: 0, fontSize: 12, color: 'var(--orbitpm-muted)' }}>
               {tk(
                 'aris.details.highlight.missingAttribute',
                 'The {type} attribute is not recorded yet — add its value below.',
-                { type: pendingAttributeType }
+                { type: arisAttributeTypeName(pendingAttributeType, definition.type) }
               )}
             </p>
             <ArisTextEditor

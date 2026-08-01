@@ -29,6 +29,7 @@ import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } f
 import { t, type Key } from '../../i18n'
 import type { ArisAttachment } from '../canvas/attachments'
 import { bytesToBase64 } from '../canvas/attachments'
+import { arisAttributeTypeName } from '../conventions/displayNames'
 import type { ArisDetailsDocument } from '../details/seam'
 import type { ArisModel, ArisObjectDefinition, ArisObjectOccurrence } from '../model/types'
 import {
@@ -434,7 +435,7 @@ function ArisAttributeRowFields({
           gap: 6
         }}
       >
-        {row.isSchemaKnown ? t(row.labelKey as Key) : row.attributeType}
+        {row.isSchemaKnown ? t(row.labelKey as Key) : arisAttributeTypeName(row.attributeType)}
         {row.mandatory ? <MandatoryBadge /> : null}
       </p>
       <ArisTextEditor

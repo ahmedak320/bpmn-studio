@@ -16,6 +16,12 @@ import {
   schemaForObjectType,
   type ArisAttributeSchemaEntry
 } from '../conventions/attributes'
+import {
+  arisAttributeTypeName,
+  arisConnectionTypeName,
+  arisModelTypeName,
+  arisObjectBlockName
+} from '../conventions/displayNames'
 import type {
   ArisAttribute,
   ArisConnectionOccurrence,
@@ -199,12 +205,8 @@ export const buildGeneralTab: ArisTabBuilder = (element, doc) => {
     const def = objectDefinitionById(doc, element.id)
     if (def) {
       rows.push({
-        labelKey: 'aris.details.general.type',
-        value: def.type
-      })
-      rows.push({
-        labelKey: 'aris.details.general.defaultSymbol',
-        value: def.defaultSymbol
+        labelKey: 'aris.details.general.objectType',
+        value: arisObjectBlockName({ objectType: def.type, symbolNum: def.defaultSymbol })
       })
       rows.push({
         labelKey: 'aris.details.general.linkedModels',
@@ -215,8 +217,10 @@ export const buildGeneralTab: ArisTabBuilder = (element, doc) => {
     const occ = objectOccurrenceById(doc, element.id)
     const def = occ ? objectDefinitionById(doc, occ.definitionId) : undefined
     if (occ && def) {
-      rows.push({ labelKey: 'aris.details.general.type', value: def.type })
-      rows.push({ labelKey: 'aris.details.general.symbol', value: occ.symbol })
+      rows.push({
+        labelKey: 'aris.details.general.objectType',
+        value: arisObjectBlockName({ objectType: def.type, symbolNum: occ.symbol })
+      })
       rows.push({
         labelKey: 'aris.details.general.position',
         value: `${occ.bounds.x},${occ.bounds.y}`
@@ -229,7 +233,10 @@ export const buildGeneralTab: ArisTabBuilder = (element, doc) => {
   } else if (element.kind === 'model') {
     const details = modelDetailsById(doc, element.id)
     if (details) {
-      rows.push({ labelKey: 'aris.details.general.modelType', value: details.model.type })
+      rows.push({
+        labelKey: 'aris.details.general.modelType',
+        value: arisModelTypeName(details.model.type)
+      })
       rows.push({
         labelKey: 'aris.details.general.occurrences',
         value: details.model.occurrences.length
@@ -356,10 +363,16 @@ export const buildAttributesTab: ArisTabBuilder = (element, doc) => {
   } else if (element.kind === 'objectOccurrence') {
     const occ = objectOccurrenceById(doc, element.id)
     if (occ) {
+      // The occurrence-attribute row has no `bilingual` field to mask its
+      // `value` (unlike the definition/model rows above), so this is the one
+      // place in this tab where the raw `AT_*` code would otherwise reach the
+      // UI directly (Lane L-P10b, user issue 10) — resolve it against the
+      // owning definition's object type before it becomes a row.
+      const ownerDef = objectDefinitionById(doc, occ.definitionId)
       for (const attrOcc of occ.attributeOccurrences) {
         rows.push({
           labelKey: 'aris.details.attributes.occurrence',
-          value: attrOcc.attributeType
+          value: arisAttributeTypeName(attrOcc.attributeType, ownerDef?.type)
         })
       }
     }
@@ -419,7 +432,7 @@ export const buildRelationsTab: ArisTabBuilder = (element, doc) => {
       })
       rows.push({
         labelKey: 'aris.details.relations.connectionType',
-        value: satellite.relation.connectionType
+        value: arisConnectionTypeName(satellite.relation.connectionType)
       })
       rows.push({
         labelKey: 'aris.details.relations.owner',
