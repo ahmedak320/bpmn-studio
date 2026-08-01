@@ -22,6 +22,7 @@ import type { Point } from 'diagram-js/lib/util/Types'
 
 import type { ArisEditCommand } from '../model/commands'
 import type { ArisAttributeOccurrence, ArisWorkingDocument } from '../model/types'
+import { resolveArisCatalogSymbol, resolveArisSymbol } from '../symbols'
 import { ArisCanvasCommandError, ArisCommandBridge } from './commandBridge'
 import { ArisDocumentStore, type ArisCommandThunk } from './documentStore'
 import {
@@ -224,8 +225,29 @@ export class ArisModeling {
       throw new ArisUnsupportedOperationError(`resizeShape(${businessObject?.kind ?? 'unknown'})`)
     }
     const occurrenceId = businessObject.occurrenceId
+    // Floor at the descriptor's default bounds — the modeling-seam twin of
+    // `ArisResizeBehavior`'s `resize.start` minimum (see resizeBehavior.ts's
+    // module docstring for why `commandFactory`/`authoring` callers, which
+    // need exact import/AI/bridge bounds, are exempt from this floor).
+    const catalogDescriptor =
+      businessObject.catalogId === undefined
+        ? null
+        : resolveArisCatalogSymbol(businessObject.catalogId)
+    const descriptor =
+      catalogDescriptor ??
+      resolveArisSymbol({
+        modelType: businessObject.modelType,
+        objectType: businessObject.objectType,
+        symbolNum: businessObject.symbolNum
+      }).descriptor
+    const flooredBounds = {
+      ...newBounds,
+      width: Math.max(newBounds.width, descriptor.defaultBounds.width),
+      height: Math.max(newBounds.height, descriptor.defaultBounds.height)
+    }
     this.bridge.execute('resize', [
-      (document, context) => resizeOccurrenceCommand(context, document, occurrenceId, newBounds),
+      (document, context) =>
+        resizeOccurrenceCommand(context, document, occurrenceId, flooredBounds),
       (document, context) => moveOccurrenceCommand(context, document, occurrenceId, newBounds)
     ])
   }

@@ -75,6 +75,7 @@ import { ArisModeling } from './arisModeling'
 import { ArisPaletteProvider } from './paletteProvider'
 import { ArisQuickPick } from './quickPick'
 import { ArisRenderer } from './renderer'
+import { ArisResizeBehavior } from './resizeBehavior'
 import { ArisRules } from './arisRules'
 import { ArisSearchProvider } from './searchProvider'
 import { ArisSelectionHighlight } from './highlight'
@@ -96,6 +97,7 @@ export const ArisCanvasModule: DiagramModuleDeclaration = {
     'modeling',
     'arisRenderer',
     'arisRules',
+    'arisResizeBehavior',
     'arisPaletteProvider',
     'arisQuickPick',
     'arisContextPadProvider',
@@ -113,6 +115,7 @@ export const ArisCanvasModule: DiagramModuleDeclaration = {
   layouter: ['type', BaseLayouter],
   arisRenderer: ['type', ArisRenderer],
   arisRules: ['type', ArisRules],
+  arisResizeBehavior: ['type', ArisResizeBehavior],
   arisPaletteProvider: ['type', ArisPaletteProvider],
   arisQuickPick: ['type', ArisQuickPick],
   arisContextPadProvider: ['type', ArisContextPadProvider],
