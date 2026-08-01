@@ -6,6 +6,7 @@
 // (which object types are steps vs. metadata, which connections mean
 // "responsible"/"input"/"output"/"system") live in `arisVocabulary.ts`.
 
+import { humanizeArisCode } from '../conventions/displayNames'
 import {
   gatewayTypeFromSymbol,
   isApplicationSystemType,
@@ -37,17 +38,6 @@ function rawText(t: ArisAssistantLocalizedText): string | undefined {
   return undefined
 }
 
-/** Humanize an ARIS type code for a placeholder display name: `OT_EVT` -> `Event`. */
-function humanizeTypeCode(code: string): string {
-  const withoutPrefix = code.replace(/^(OT|CT|MT)_/, '')
-  return withoutPrefix
-    .toLowerCase()
-    .split('_')
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ')
-}
-
 interface DisplayName {
   readonly name: string
   readonly nameEn?: string
@@ -58,7 +48,7 @@ interface DisplayName {
 function displayName(t: ArisAssistantLocalizedText, objectType: string): DisplayName {
   const en = t.en?.trim() || undefined
   const ar = t.ar?.trim() || undefined
-  const name = en ?? ar ?? t.fallback?.trim() ?? humanizeTypeCode(objectType) ?? '(unnamed)'
+  const name = en ?? ar ?? t.fallback?.trim() ?? humanizeArisCode(objectType) ?? '(unnamed)'
   const out: { name: string; nameEn?: string; nameAr?: string } = { name }
   if (en) out.nameEn = en
   if (ar) out.nameAr = ar
