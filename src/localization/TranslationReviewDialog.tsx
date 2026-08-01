@@ -360,6 +360,11 @@ export function TranslationReviewDialog({
     }
     return indexed
   }, [acceptedValues])
+  const sendableQueue = review.queue.filter((item) => item.requiresSegmentationReview !== true)
+  const sendableWithoutProposal = sendableQueue.filter((item) => {
+    const id = translationRecoveryFieldId(item)
+    return !proposalsByField.has(id) && !acceptedByField.has(id)
+  }).length
   const progress = useMemo(() => {
     const base = deriveTranslationReviewProgress(review, recoveryFields)
     const staged = recoveryFields.filter((field) => acceptedByField.has(field.id))
@@ -461,6 +466,14 @@ export function TranslationReviewDialog({
       setManualError({ kind: 'manual-save', detail: boundedTranslationTechnicalDetail(error) })
     } finally {
       setManualSavingFieldId(null)
+    }
+  }
+
+  const acceptAllVisibleProposals = async (): Promise<void> => {
+    for (const field of visibleRecoveryFields) {
+      const proposal = proposalsByField.get(field.id)
+      if (!proposal || !field.editable) continue
+      await acceptProposal(field, proposal)
     }
   }
 
@@ -627,8 +640,7 @@ export function TranslationReviewDialog({
               onClick={onTranslateNow}
               disabled={
                 memorySaveRecoveryRequired ||
-                proposals.length > 0 ||
-                acceptedValues.length > 0 ||
+                sendableWithoutProposal === 0 ||
                 !selected ||
                 selected.disabled ||
                 !disclosure
@@ -698,11 +710,36 @@ export function TranslationReviewDialog({
                   failed: progress.failed
                 })}
           </div>
+          {sendableQueue.length === 0 && progress.unresolved > 0 ? (
+            <div role="note" style={{ marginTop: 7, color: '#9a6200' }}>
+              {t('translationReview.nothingSendable', { count: progress.unresolved })}
+            </div>
+          ) : null}
         </div>
 
         <section aria-labelledby="translation-review-fields">
-          <div id="translation-review-fields" style={{ fontWeight: 600, marginBottom: 6 }}>
-            {t('translationReview.fields.title')}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 8
+            }}
+          >
+            <div id="translation-review-fields" style={{ fontWeight: 600, marginBottom: 6 }}>
+              {t('translationReview.fields.title')}
+            </div>
+            {proposals.length > 0 && onAcceptProposal ? (
+              <button
+                type="button"
+                className="orbitpm-lite-chrome-btn"
+                onClick={() => void acceptAllVisibleProposals()}
+                disabled={busy || memorySaveRecoveryRequired || manualSavingFieldId !== null}
+                style={{ fontWeight: 700, marginBottom: 6 }}
+              >
+                {t('translationReview.acceptAll')}
+              </button>
+            ) : null}
           </div>
           <ul
             id="translation-review-field-list"

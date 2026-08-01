@@ -46,6 +46,41 @@ describe('extractArisLocalizationFields', () => {
     expect(field.value.active).toBe('ar')
   })
 
+  it('re-slots Arabic text stored under an English locale key', () => {
+    const document = makeDocument({
+      objectDefinitions: [objectDefinition('ObjDef.1', 'OT_FUNC', { '1033': 'مراجعة الطلب' })]
+    })
+    const field = fieldFor(extractArisLocalizationFields(document, { active: 'ar' }), 'ObjDef.1')
+    expect(field.value.ar).toBe('مراجعة الطلب')
+    expect(field.origins.ar).toBe('script-inferred')
+    expect(field.value.en).toBeUndefined()
+    expect(field.storage.arProperty).toBe('1025')
+  })
+
+  it('re-slots English text stored under an Arabic locale key', () => {
+    const document = makeDocument({
+      objectDefinitions: [objectDefinition('ObjDef.1', 'OT_FUNC', { '1025': 'Review request' })]
+    })
+    const field = fieldFor(extractArisLocalizationFields(document, { active: 'en' }), 'ObjDef.1')
+    expect(field.value.en).toBe('Review request')
+    expect(field.origins.en).toBe('script-inferred')
+    expect(field.value.ar).toBeUndefined()
+    expect(field.storage.enProperty).toBe('1033')
+  })
+
+  it('leaves a mixed-script value in its locale-keyed slot', () => {
+    const document = makeDocument({
+      objectDefinitions: [objectDefinition('ObjDef.1', 'OT_FUNC', { '1033': 'Review مراجعة' })]
+    })
+    const field = fieldFor(extractArisLocalizationFields(document, { active: 'en' }), 'ObjDef.1')
+    expect(field.value.en).toBe('Review مراجعة')
+    expect(field.origins.en).toBe('paired')
+    expect(field.value.ar).toBeUndefined()
+    expect(field.origins.ar).toBeUndefined()
+    expect(field.storage.enProperty).toBe('1033')
+    expect(field.storage.arProperty).toBe('1025')
+  })
+
   it('captures a bilingual definition and keeps both write locales', () => {
     const document = makeDocument({
       objectDefinitions: [

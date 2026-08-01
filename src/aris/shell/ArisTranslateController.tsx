@@ -31,7 +31,7 @@ import { getKey, getPref, hasKey } from '../../ai/keys'
 import { getProviderSelection, type ProviderSelection } from '../../ai/providerSelection'
 import { getLiteProvider } from '../../ai/providersLite'
 import { makeBrowserCallLLM } from '../../ai/browserAi'
-import { makeFreeTranslateTexts } from '../../ai/freeTranslate'
+import { FreeTranslateError, makeFreeTranslateTexts } from '../../ai/freeTranslate'
 import type { TranslateTextsFn } from '../../ai/translate'
 import {
   createExternalRequestDisclosure,
@@ -163,6 +163,20 @@ function removeProposal(
 ): TranslationOutputProposal[] {
   const key = proposalKey(target)
   return previous.filter((proposal) => proposalKey(proposal) !== key)
+}
+
+function freeErrorMessage(error: unknown): string {
+  if (error instanceof FreeTranslateError) {
+    switch (error.code) {
+      case 'rate':
+        return t('translate.free.rate')
+      case 'offline':
+        return t('translate.free.offline')
+      case 'service':
+        return t('translate.free.down')
+    }
+  }
+  return error instanceof Error ? error.message : String(error)
 }
 
 /**
@@ -345,7 +359,12 @@ function ArisTranslateControllerInner(
     if (!session) return
     const controller = new AbortController()
     const transport = transportFor(providerId, controller.signal)
-    if (!transport) return
+    if (!transport) {
+      const message = t('translationReview.noProvider')
+      setStatus(message)
+      onToast(message, 'error')
+      return
+    }
     abortRef.current?.abort()
     abortRef.current = controller
     setBusy(true)
@@ -359,12 +378,28 @@ function ArisTranslateControllerInner(
       )
       if (abortRef.current !== controller) return
       setProposals((previous) => mergeProposals(previous, run.proposals))
-      setStatus(null)
+      if (run.failures.length > 0) {
+        const document = getCanvas()?.document ?? liveDocument
+        const result = buildArisLocalizationReview({
+          document,
+          target: session.target,
+          active: contentLang,
+          providerFailures: run.failures,
+          ...(resources ? { resources } : {})
+        })
+        setSession({ result, target: session.target })
+      }
+      setStatus(
+        t('translationReview.runSummary', {
+          proposals: run.proposals.length,
+          failed: run.failures.length
+        })
+      )
     } catch (error) {
       if (controller.signal.aborted) return
       setStatus(
         tk('aris.translate.failed', 'The translation could not be completed: {error}', {
-          error: error instanceof Error ? error.message : String(error)
+          error: freeErrorMessage(error)
         })
       )
       setTechnicalDetail(error instanceof Error ? error.message : String(error))

@@ -143,12 +143,137 @@ function largeFailedReview(count: number): DiagramLocalizationReview {
   }
 }
 
+function proposalFor(index: number) {
+  return {
+    processId: 'Process_1',
+    elementId: `Task_${index}`,
+    field: 'name',
+    sourceLanguage: 'en' as const,
+    sourceValue: `Review request ${index}`,
+    target: 'ar' as const,
+    value: `اقتراح ${index}`
+  }
+}
+
 afterEach(() => {
   cleanup()
   setLang('en')
 })
 
 describe('TranslationReviewDialog recovery controls', () => {
+  it('keeps Translate now enabled while sendable fields remain without proposals', () => {
+    const review = largeFailedReview(3)
+    const disclosure = createExternalRequestDisclosure({
+      purpose: 'diagram-localization',
+      providerId: 'provider',
+      outbound: review.queue.map((item, index) => ({
+        id: `loc_${index}`,
+        text: item.sourceValue
+      })),
+      estimatedRequests: { min: 3, max: 3 }
+    })
+    const commonProps = {
+      review,
+      disclosure,
+      providers: [{ id: 'provider', label: 'Provider', description: 'Provider' }],
+      providerId: 'provider',
+      onProviderChange: vi.fn(),
+      onTranslateNow: vi.fn(),
+      onPartialPreview: vi.fn(),
+      onPostpone: vi.fn(),
+      onCancelTranslation: vi.fn()
+    }
+    const { rerender } = render(
+      <TranslationReviewDialog {...commonProps} proposals={[proposalFor(0)]} />
+    )
+
+    expect(
+      (
+        screen.getByRole('button', {
+          name: t('translationReview.translateNow')
+        }) as HTMLButtonElement
+      ).disabled
+    ).toBe(false)
+
+    rerender(
+      <TranslationReviewDialog
+        {...commonProps}
+        proposals={[proposalFor(0), proposalFor(1), proposalFor(2)]}
+      />
+    )
+    expect(
+      (
+        screen.getByRole('button', {
+          name: t('translationReview.translateNow')
+        }) as HTMLButtonElement
+      ).disabled
+    ).toBe(true)
+  })
+
+  it('disables Translate now and explains when unresolved rows have no sendable queue items', () => {
+    const review = { ...failedReview(), queue: [] }
+    render(
+      <TranslationReviewDialog
+        review={review}
+        disclosure={createExternalRequestDisclosure({
+          purpose: 'diagram-localization',
+          providerId: 'provider',
+          outbound: [],
+          estimatedRequests: { min: 0, max: 0 }
+        })}
+        providers={[{ id: 'provider', label: 'Provider', description: 'Provider' }]}
+        providerId="provider"
+        onProviderChange={vi.fn()}
+        onTranslateNow={vi.fn()}
+        onPartialPreview={vi.fn()}
+        onPostpone={vi.fn()}
+        onCancelTranslation={vi.fn()}
+      />
+    )
+
+    expect(
+      (
+        screen.getByRole('button', {
+          name: t('translationReview.translateNow')
+        }) as HTMLButtonElement
+      ).disabled
+    ).toBe(true)
+    expect(screen.getByText(t('translationReview.nothingSendable', { count: 1 }))).not.toBeNull()
+  })
+
+  it('accepts every editable proposal-bearing field on the visible page', async () => {
+    const user = userEvent.setup()
+    const review = largeFailedReview(2)
+    const proposals = [proposalFor(0), proposalFor(1)]
+    const onAcceptProposal = vi.fn(async () => undefined)
+    render(
+      <TranslationReviewDialog
+        review={review}
+        disclosure={null}
+        providers={[]}
+        providerId=""
+        proposals={proposals}
+        onProviderChange={vi.fn()}
+        onTranslateNow={vi.fn()}
+        onPartialPreview={vi.fn()}
+        onPostpone={vi.fn()}
+        onCancelTranslation={vi.fn()}
+        onAcceptProposal={onAcceptProposal}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: t('translationReview.acceptAll') }))
+    await waitFor(() => expect(onAcceptProposal).toHaveBeenCalledTimes(2))
+    expect(onAcceptProposal).toHaveBeenCalledWith(
+      expect.objectContaining({ elementId: 'Task_0', editable: true }),
+      proposals[0]
+    )
+    expect(onAcceptProposal).toHaveBeenCalledWith(
+      expect.objectContaining({ elementId: 'Task_1', editable: true }),
+      proposals[1]
+    )
+  })
+
   it('requires an explicit accept, edit, or reject decision for provider proposals', async () => {
     const user = userEvent.setup()
     const onAcceptProposal = vi.fn(async () => undefined)
@@ -250,7 +375,7 @@ describe('TranslationReviewDialog recovery controls', () => {
     )
 
     expect(screen.queryByRole('button', { name: t('translationReview.field.manual') })).toBeNull()
-    expect(screen.getByRole('note').textContent).toBe(t('translationReview.field.unavailable'))
+    expect(screen.getByText(t('translationReview.field.unavailable'))).not.toBeNull()
   })
 
   it('keeps partial status truthful and exposes exact per-field retry/manual recovery', async () => {

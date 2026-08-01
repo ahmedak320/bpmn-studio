@@ -362,18 +362,23 @@ describe('makeFreeTranslateTexts', () => {
     expect((err as FreeTranslateError).code).toBe('service')
   })
 
-  it('returns all-undefined WITHOUT throwing when all-fail causes are mixed', async () => {
+  it('throws FreeTranslateError(service, chain) when all-fail causes are mixed', async () => {
     const { fetchImpl } = makeFetch((url) => {
       // text 'b' hits rate on both hops; text 'a' plain service failures.
       if (q(url) === 'b') return jsonResponse(null, 429)
       return jsonResponse('broken', 500)
     })
-    const results = await makeFreeTranslateTexts({
+    const err = await makeFreeTranslateTexts({
       fetchImpl,
       minDelayMs: 0,
       baseRetryDelayMs: 0
-    })(['a', 'b'], 'en', 'ar')
-    expect(results).toEqual([undefined, undefined])
+    })(['a', 'b'], 'en', 'ar').then(
+      () => null,
+      (error: unknown) => error
+    )
+    expect(err).toBeInstanceOf(FreeTranslateError)
+    expect((err as FreeTranslateError).code).toBe('service')
+    expect((err as FreeTranslateError).service).toBe('chain')
   })
 
   it('bounds streamed 2xx bodies before JSON parsing and cancels both oversized hops', async () => {

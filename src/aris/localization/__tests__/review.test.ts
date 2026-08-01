@@ -30,6 +30,66 @@ describe('buildArisLocalizationReview', () => {
     })
   })
 
+  it('queues both directions when English-only and Arabic-only definitions share a review', () => {
+    const document = makeDocument({
+      objectDefinitions: [
+        objectDefinition('ObjDef.en', 'OT_FUNC', { '1033': 'Approve' }),
+        objectDefinition('ObjDef.ar', 'OT_FUNC', { '1025': 'يرفض' })
+      ]
+    })
+    const { review } = buildArisLocalizationReview({
+      document,
+      target: 'ar',
+      active: 'en',
+      queueDirections: 'both',
+      resources: { glossary: [], translationMemory: [] }
+    })
+    expect(review.queue).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ elementId: 'ObjDef.en', sourceLanguage: 'en', target: 'ar' }),
+        expect.objectContaining({ elementId: 'ObjDef.ar', sourceLanguage: 'ar', target: 'en' })
+      ])
+    )
+    expect(review.queue).toHaveLength(2)
+  })
+
+  it('surfaces provider failures as issues while keeping the failed field queued', () => {
+    const document = makeDocument({
+      objectDefinitions: [objectDefinition('ObjDef.1', 'OT_FUNC', { '1033': 'Approve' })]
+    })
+    const providerFailure = {
+      processId: 'document',
+      elementId: 'ObjDef.1',
+      field: 'name',
+      target: 'ar' as const,
+      originalValue: 'Approve'
+    }
+    const { review } = buildArisLocalizationReview({
+      document,
+      target: 'ar',
+      active: 'en',
+      providerFailures: [providerFailure],
+      resources: { glossary: [], translationMemory: [] }
+    })
+    expect(review.issues).toContainEqual(
+      expect.objectContaining({
+        elementId: 'ObjDef.1',
+        target: 'ar',
+        code: 'provider-failed',
+        originalValue: 'Approve'
+      })
+    )
+    expect(review.queue).toContainEqual(
+      expect.objectContaining({
+        elementId: 'ObjDef.1',
+        target: 'ar',
+        issues: expect.arrayContaining([
+          expect.objectContaining({ code: 'provider-failed', originalValue: 'Approve' })
+        ])
+      })
+    )
+  })
+
   it('does not queue a neutral seeded term ("API"): it resolves locally', () => {
     const document = makeDocument({
       objectDefinitions: [objectDefinition('ObjDef.1', 'OT_FUNC', { 'en-US': 'API' })]
@@ -41,14 +101,28 @@ describe('buildArisLocalizationReview', () => {
     expect(review.localUpdates.every((patch) => patch.value !== '')).toBe(true)
   })
 
-  it('raises a wrong-script audit issue for Arabic text stored under an English key', () => {
+  it('re-slots Arabic stored under an English key, queues English, and seeds the Arabic source', () => {
     const document = makeDocument({
-      objectDefinitions: [objectDefinition('ObjDef.1', 'OT_FUNC', { 'en-US': 'يعتمد' })]
+      objectDefinitions: [objectDefinition('ObjDef.1', 'OT_FUNC', { '1033': 'مراجعة الطلب' })]
     })
     const { review } = buildArisLocalizationReview({ document, target: 'en', active: 'ar' })
-    expect(
-      review.issues.some((issue) => issue.target === 'en' && issue.code === 'wrong-script')
-    ).toBe(true)
+    expect(review.queue).toContainEqual(
+      expect.objectContaining({
+        elementId: 'ObjDef.1',
+        sourceLanguage: 'ar',
+        sourceValue: 'مراجعة الطلب',
+        target: 'en'
+      })
+    )
+    expect(review.localUpdates).toContainEqual(
+      expect.objectContaining({
+        elementId: 'ObjDef.1',
+        property: '1025',
+        target: 'ar',
+        value: 'مراجعة الطلب',
+        reason: 'source-seed'
+      })
+    )
   })
 
   it('raises a mixed audit issue for a mixed-script value', () => {

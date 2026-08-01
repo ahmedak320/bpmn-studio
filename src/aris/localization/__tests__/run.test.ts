@@ -34,6 +34,64 @@ describe('runArisReviewedTranslation', () => {
     })
   })
 
+  it('deduplicates identical source texts per direction and maps the result to every item', async () => {
+    const base = reviewWithOneArGap()
+    const item = base.queue[0]
+    const review = {
+      ...base,
+      queue: [
+        { ...item, elementId: 'ObjDef.yes.1', sourceValue: 'Yes' },
+        { ...item, elementId: 'ObjDef.yes.2', sourceValue: 'Yes' },
+        { ...item, elementId: 'ObjDef.no', sourceValue: 'No' }
+      ]
+    }
+    const translateTexts: TranslateTextsFn = vi.fn(async () => ['نعم', 'لا'])
+
+    const result = await runArisReviewedTranslation(review, translateTexts)
+
+    expect(translateTexts).toHaveBeenCalledOnce()
+    expect(translateTexts).toHaveBeenCalledWith(['Yes', 'No'], 'en', 'ar', undefined)
+    expect(result.failures).toHaveLength(0)
+    expect(result.proposals).toHaveLength(3)
+    expect(
+      result.proposals
+        .filter((proposal) => proposal.sourceValue === 'Yes')
+        .map((proposal) => [proposal.elementId, proposal.value])
+    ).toEqual([
+      ['ObjDef.yes.1', 'نعم'],
+      ['ObjDef.yes.2', 'نعم']
+    ])
+  })
+
+  it('keeps bidirectional source texts in one provider call per direction', async () => {
+    const base = reviewWithOneArGap()
+    const arItem = base.queue[0]
+    const review = {
+      ...base,
+      queue: [
+        arItem,
+        {
+          ...arItem,
+          elementId: 'ObjDef.2',
+          sourceLanguage: 'ar' as const,
+          sourceValue: 'يرفض',
+          target: 'en' as const
+        }
+      ]
+    }
+    const translateTexts: TranslateTextsFn = vi.fn(async (_texts, _from, to) =>
+      to === 'ar' ? ['يعتمد'] : ['Reject']
+    )
+
+    const result = await runArisReviewedTranslation(review, translateTexts)
+
+    expect(translateTexts).toHaveBeenCalledTimes(2)
+    expect(translateTexts).toHaveBeenNthCalledWith(1, ['Approve'], 'en', 'ar', undefined)
+    expect(translateTexts).toHaveBeenNthCalledWith(2, ['يرفض'], 'ar', 'en', undefined)
+    expect(result.failures).toHaveLength(0)
+    expect(result.proposals.map((proposal) => proposal.target)).toEqual(['ar', 'en'])
+  })
+
   it('records a per-text miss (undefined) as a ProviderFailure', async () => {
     const review = reviewWithOneArGap()
     const result = await runArisReviewedTranslation(review, async () => [undefined])

@@ -20,7 +20,11 @@ import {
   planLocalResourceApplication
 } from '../../localization/plan'
 import type { DiagramLocalizationReview } from '../../localization/modelerAdapter'
-import type { LocalizationField, LocalizationResources } from '../../localization/types'
+import type {
+  LocalizationField,
+  LocalizationResources,
+  ProviderFailure
+} from '../../localization/types'
 import { hasArabicName, hasEnglishName } from '../chat/locale'
 import type { ArisWorkingDocument } from '../model/types'
 import {
@@ -33,6 +37,8 @@ export interface ArisLocalizationReviewInput {
   readonly document: ArisWorkingDocument
   readonly target: 'en' | 'ar'
   readonly active: 'en' | 'ar'
+  readonly queueDirections?: 'target' | 'both'
+  readonly providerFailures?: readonly ProviderFailure[]
   readonly resources?: LocalizationResources // default: SEEDED_GLOSSARY + empty TM
 }
 
@@ -70,15 +76,19 @@ export function buildArisLocalizationReview(
   }
   const extract = extractArisLocalizationFields(input.document, { active: input.active })
   const sourceSignature = arisSourceSignature(extract.fields)
+  const failureOptions =
+    input.providerFailures === undefined ? {} : { providerFailures: input.providerFailures }
 
   const plan = planLocalResourceApplication(extract.fields, {
     glossary: resources.glossary,
-    translationMemory: resources.translationMemory
+    translationMemory: resources.translationMemory,
+    ...failureOptions
   })
   // `plan.fields` are the folded clones (resolved glossary/TM values applied),
   // so projection and queue see the post-resolution state.
   const projection = planLanguageProjection(plan.fields, input.target)
-  const queue = buildTranslationQueue(plan.fields, {}, input.target)
+  const requestedTarget = input.queueDirections === 'both' ? undefined : input.target
+  const queue = buildTranslationQueue(plan.fields, failureOptions, requestedTarget)
 
   const review: DiagramLocalizationReview = {
     source: 'aris',

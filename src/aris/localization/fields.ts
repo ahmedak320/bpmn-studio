@@ -18,6 +18,7 @@
  */
 
 import { localeLang } from '../../library/amlParse'
+import { classifyScript } from '../../localization/script'
 import {
   LocalizationSource,
   type BilingualValue,
@@ -104,17 +105,26 @@ function buildField(
   active: 'en' | 'ar',
   locales: ArisLocaleIds
 ): LocalizationField {
-  const en = slotFor(input.localized.values, 'en')
-  const ar = slotFor(input.localized.values, 'ar')
+  let en = slotFor(input.localized.values, 'en')
+  let ar = slotFor(input.localized.values, 'ar')
   const value: BilingualValue = { active }
   const origins: LocalizationField['origins'] = {}
+  if (en && !ar && classifyScript(en.value) === 'arabic') {
+    ar = { localeId: locales.ar, value: en.value }
+    en = undefined
+    origins.ar = 'script-inferred'
+  } else if (ar && !en && classifyScript(ar.value) === 'english') {
+    en = { localeId: locales.en, value: ar.value }
+    ar = undefined
+    origins.en = 'script-inferred'
+  }
   if (en) {
     value.en = en.value
-    origins.en = 'paired'
+    origins.en ??= 'paired'
   }
   if (ar) {
     value.ar = ar.value
-    origins.ar = 'paired'
+    origins.ar ??= 'paired'
   }
   return {
     source: LocalizationSource.Aris,

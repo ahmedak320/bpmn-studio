@@ -39,17 +39,19 @@ export async function runArisReviewedTranslation(
     )
     if (directional.length === 0) continue
     const source: LanguageCode = target === 'ar' ? 'en' : 'ar'
+    const uniqueTexts: string[] = []
+    const textIndexes = new Map<string, number>()
+    for (const item of directional) {
+      if (textIndexes.has(item.sourceValue)) continue
+      textIndexes.set(item.sourceValue, uniqueTexts.length)
+      uniqueTexts.push(item.sourceValue)
+    }
     // A whole-service failure (e.g. FreeTranslateError) throws here and
     // propagates unhandled, exactly like the reviewed transports.
-    const results = await translateTexts(
-      directional.map((item) => item.sourceValue),
-      source,
-      target,
-      signal
-    )
+    const results = await translateTexts(uniqueTexts, source, target, signal)
     for (let index = 0; index < directional.length; index += 1) {
       const item = directional[index]
-      const raw = results[index]
+      const raw = results[textIndexes.get(item.sourceValue) as number]
       const value = typeof raw === 'string' ? raw.trim() : undefined
       const validation =
         value === undefined ? { valid: false } : validateTargetScript(value, target, scriptOptions)

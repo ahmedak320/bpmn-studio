@@ -14,10 +14,10 @@
 //    services answer with `Access-Control-Allow-Origin: *`. Both hosts are
 //    allow-listed in lite/index.html's CSP connect-src.
 //  * Per-text failure degrades to an `undefined` result slot (the entry is
-//    counted as skipped and a later re-run picks it up). Only when EVERY text
-//    failed with ONE consistent classified cause does the chain throw a typed
-//    FreeTranslateError, so the caller can show a truthful localized toast
-//    (translate.free.rate / .offline / .down) instead of "0 translated".
+//    counted as skipped and a later re-run picks it up). When EVERY text fails,
+//    the chain throws a typed FreeTranslateError; a consistent cause is kept,
+//    while mixed causes become `service`, so the caller can show a truthful
+//    localized toast instead of "0 translated".
 //  * Error taxonomy: fetch rejection while `navigator.onLine === false` ⇒
 //    'offline'; rejection while online (incl. per-request timeout aborts) ⇒
 //    'service'; HTTP 429 or MyMemory's quota body ⇒ 'rate'; other non-OK
@@ -385,8 +385,8 @@ async function translateOne(
  * MyMemory fallback, an index-claiming worker pool capped at `concurrency`,
  * a per-request abort timeout, and `minDelayMs` pacing between one worker's
  * consecutive requests. Per-text failures come back as positional
- * `undefined`s; when EVERY text failed with the same classified cause the
- * whole call throws `FreeTranslateError(code, 'chain')`.
+ * `undefined`s; when EVERY text failed the whole call throws
+ * `FreeTranslateError(code, 'chain')`, using `service` for mixed causes.
  */
 export function makeFreeTranslateTexts(opts: FreeTranslateOpts = {}): TranslateTextsFn {
   // Never call an extracted global fetch directly (illegal-invocation traps
@@ -442,14 +442,11 @@ export function makeFreeTranslateTexts(opts: FreeTranslateOpts = {}): TranslateT
     }
     await Promise.all(Array.from({ length: Math.min(concurrency, texts.length) }, () => worker()))
 
-    // Whole-service failure: every text failed AND every failure classified
-    // to one consistent cause. Mixed causes stay a quiet all-skipped result —
-    // there is no single truthful toast for them, and a re-run is harmless.
-    if (results.every((value) => value === undefined)) {
-      const firstCode = failures[0]
-      if (firstCode !== undefined && failures.every((code) => code === firstCode)) {
-        throw new FreeTranslateError(firstCode, 'chain')
-      }
+    if (results.every((v) => v === undefined)) {
+      const first = failures[0]
+      const code: FreeErrorCode =
+        first !== undefined && failures.every((c) => c === first) ? first : 'service'
+      throw new FreeTranslateError(code, 'chain')
     }
     return results
   }

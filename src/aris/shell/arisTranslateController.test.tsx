@@ -212,6 +212,83 @@ describe('ArisTranslateController — apply', () => {
   })
 })
 
+describe('ArisTranslateController — manual run reliability', () => {
+  it('reports all positional failures and marks the failed row for retry', async () => {
+    hoisted.freeImpl = vi.fn(async (texts: string[]) => texts.map(() => undefined))
+    const { ref } = renderController()
+    act(() => ref.current!.openReview('ar'))
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: t('translationReview.translateNow') })
+    )
+
+    expect(
+      await screen.findByText(
+        t('translationReview.runSummary', {
+          proposals: 0,
+          failed: 1
+        })
+      )
+    ).not.toBeNull()
+    const retryButton = screen.getByRole('button', {
+      name: t('translationReview.field.retry')
+    })
+    expect(retryButton.closest('li')?.textContent).toContain(
+      t('translationReview.issue.providerFailed')
+    )
+  })
+
+  it('maps a free-chain rate failure to localized provider feedback', async () => {
+    hoisted.freeImpl = vi.fn(async () => {
+      throw new FreeTranslateError('rate', 'chain')
+    })
+    const { ref } = renderController()
+    act(() => ref.current!.openReview('ar'))
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: t('translationReview.translateNow') })
+    )
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.firstElementChild?.textContent).toBe(
+      t('aris.translate.failed', { error: t('translate.free.rate') })
+    )
+  })
+
+  it('summarizes a partial run and leaves Translate now enabled for the failed item', async () => {
+    hoisted.freeImpl = vi.fn(async (texts: string[]) =>
+      texts.map((_text, index) => (index === 0 ? AR_APPROVE : undefined))
+    )
+    const { ref } = renderController({
+      liveDocument: mixedDocument(),
+      resources: { glossary: [], translationMemory: [] }
+    })
+    act(() => ref.current!.openReview('ar'))
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: t('translationReview.translateNow') })
+    )
+
+    expect(
+      await screen.findByText(
+        t('translationReview.runSummary', {
+          proposals: 1,
+          failed: 1
+        })
+      )
+    ).not.toBeNull()
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByRole('button', {
+            name: t('translationReview.translateNow')
+          }) as HTMLButtonElement
+        ).disabled
+      ).toBe(false)
+    )
+  })
+})
+
 describe('ArisTranslateController — silent auto-translate', () => {
   it('fires exactly once for a generated model and applies as one gesture', async () => {
     hoisted.freeImpl = vi.fn(async (texts: string[]) => texts.map(() => AR_APPROVE))

@@ -125,6 +125,23 @@ describe('applyArisTranslations', () => {
     expect(canvas.canRedo).toBe(true)
   })
 
+  it('writes an entity-reference locale id under that exact key', () => {
+    harness = bootCanvas({ document: resolvableDocument(), modelId: 'Model.1' })
+    const { canvas } = harness
+    const updates: ArisTranslationUpdate[] = [
+      {
+        owner: { kind: 'objectDefinition', id: 'ObjDef.approve', modelId: 'Model.1' },
+        localeId: '&LocaleId.AEar;',
+        value: 'يعتمد'
+      }
+    ]
+
+    expect(applyArisTranslations(canvas, updates, 'aris.localization.apply')).toBe(1)
+    expect(canvas.document.objectDefinitions.get('ObjDef.approve')?.names.values).toMatchObject({
+      '&LocaleId.AEar;': 'يعتمد'
+    })
+  })
+
   it('is idempotent: re-reviewing after apply yields a complete review and empty queue', () => {
     harness = bootCanvas({ document: resolvableDocument(), modelId: 'Model.1' })
     const { canvas } = harness
