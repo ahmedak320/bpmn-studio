@@ -15,6 +15,7 @@ import {
 import { t } from './i18n'
 import { setLang, useLang } from './i18n/useLang'
 import { SettingsDialogLite } from './settings/SettingsDialogLite'
+import { ArisGenerationPanel } from './ArisGenerationPanel'
 import { ResponsiveDrawer, ResponsiveShell, useResponsiveShellMode } from './shell'
 import { Toaster, type ToastMsg, type ToastTone } from './workspace/Toaster'
 import { WorkspacePickerLite, type PickerMode } from './workspace/WorkspacePickerLite'
@@ -1513,12 +1514,6 @@ export default function ArisApp(): JSX.Element {
               }
               onOpenWorkspaceFile={handleOpenWorkspaceFile}
               onRejectUnsupported={() => pushToast(t('toast.import.arisOnly'))}
-              onOpenAssistant={() => setAssistantOpen(true)}
-              onContinueInChat={handleContinueInChat}
-              workspaceId={workspaceAdapter?.id ?? null}
-              onCreateModel={handleCreateModel}
-              onDownloadFile={downloadBytes}
-              onOpenSettings={() => setSettingsOpen(true)}
               multiFile={multiFile}
               adapter={workspaceAdapter}
               tree={explorerTree}
@@ -1609,8 +1604,19 @@ export default function ArisApp(): JSX.Element {
 
             <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
               {tabs.length === 0 ? (
-                <div style={{ padding: '1.5rem', opacity: 0.7, lineHeight: 1.6 }}>
-                  {t('aris.emptyMain')}
+                <div style={{ padding: '1.5rem', overflow: 'auto' }}>
+                  <p style={{ marginTop: 0, opacity: 0.7, lineHeight: 1.6 }}>
+                    {t('aris.emptyMain')}
+                  </p>
+                  <ArisGenerationPanel
+                    embedded
+                    workspaceId={workspaceAdapter?.id ?? null}
+                    onCreateModel={handleCreateModel}
+                    onDownloadFile={downloadBytes}
+                    onOpenAssistant={() => setAssistantOpen(true)}
+                    onOpenSettings={() => setSettingsOpen(true)}
+                    onContinueInChat={handleContinueInChat}
+                  />
                 </div>
               ) : (
                 tabs.map((tab) => {
@@ -1655,7 +1661,12 @@ export default function ArisApp(): JSX.Element {
                           onDownloadAttachment={(filename, bytes, mimeType) =>
                             downloadBytes(filename, bytes, mimeType)
                           }
+                          workspaceId={workspaceAdapter?.id ?? null}
+                          onCreateModel={handleCreateModel}
+                          onDownloadFile={downloadBytes}
                           onOpenAssistant={() => setAssistantOpen(true)}
+                          onOpenSettings={() => setSettingsOpen(true)}
+                          onContinueInChat={handleContinueInChat}
                           onImportPackage={() => void handlePrepareImport(tab)}
                           onToast={pushToast}
                           sourceFileName={tab.relPath?.split('/').pop() ?? `${tab.title}.aml`}

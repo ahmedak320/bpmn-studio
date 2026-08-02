@@ -8,14 +8,13 @@ export const ARIS_RAIL_MIN_WIDTH = 260
 export const ARIS_RAIL_MAX_WIDTH = 560
 export const ARIS_RAIL_DEFAULT_WIDTH = 340
 
-export type ArisRailTab = 'details' | 'tools'
+export type ArisRailTab = 'details' | 'tools' | 'generate'
 
 export function readArisRailTab(): ArisRailTab {
   try {
-    return typeof localStorage !== 'undefined' &&
-      localStorage.getItem(ARIS_RAIL_TAB_KEY) === 'details'
-      ? 'details'
-      : 'tools'
+    const stored =
+      typeof localStorage !== 'undefined' ? localStorage.getItem(ARIS_RAIL_TAB_KEY) : null
+    return stored === 'details' || stored === 'generate' ? stored : 'tools'
   } catch {
     return 'tools'
   }

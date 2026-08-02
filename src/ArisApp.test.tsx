@@ -467,6 +467,19 @@ describe('ArisApp production shell', () => {
     vi.restoreAllMocks()
   })
 
+  it('auto-opens the create flow in the empty main area and keeps it out of the explorer', async () => {
+    render(<ArisApp />)
+    await openAml()
+
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'animalwf.aml' }), { key: 'Delete' })
+
+    const main = await screen.findByRole('main', { name: 'ARIS workspace' })
+    await waitFor(() => expect(main.querySelector('[data-orbitpm-aris-create]')).not.toBeNull())
+    const explorer = document.querySelector('#orbitpm-aris-explorer')
+    expect(explorer).not.toBeNull()
+    expect(explorer?.querySelector('[data-orbitpm-aris-create]')).toBeNull()
+  })
+
   it('rejects BPMN files at the top-level ARIS shell boundary', async () => {
     render(<ArisApp />)
 
@@ -634,8 +647,19 @@ describe('ArisApp production shell', () => {
     render(<ArisApp />)
     await openAml()
 
+    const rail = document.querySelector<HTMLElement>('[data-orbitpm-aris-rail]')!
     expect(
-      screen.getByText(
+      within(rail)
+        .getAllByRole('tab')
+        .map((tab) => tab.textContent)
+    ).toEqual(['Tools', '✨ Generate', 'Details'])
+    expect(document.querySelector('#orbitpm-aris-explorer [data-orbitpm-aris-create]')).toBeNull()
+    fireEvent.click(within(rail).getByRole('tab', { name: '✨ Generate' }))
+    expect(
+      rail.querySelector('[data-orbitpm-aris-rail-panel="generate"]')?.hasAttribute('hidden')
+    ).toBe(false)
+    expect(
+      within(rail).getByText(
         'Generate a native ARIS model — an EPC or a value-added chain diagram — from a plain-language description, a document, or the Excel template.'
       )
     ).not.toBeNull()
@@ -1052,6 +1076,7 @@ describe('ArisApp production shell', () => {
     render(<ArisApp />)
     await openAml()
 
+    fireEvent.click(screen.getByRole('tab', { name: '✨ Generate' }))
     fireEvent.click(
       document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-create-excel-tab]')!
     )

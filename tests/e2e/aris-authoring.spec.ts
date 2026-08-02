@@ -579,7 +579,8 @@ test('the official ARIS Excel template downloads from the single file and re-ope
 }) => {
   await openReferenceExport(page)
 
-  const createPanel = page.locator('[data-orbitpm-aris-create]').first()
+  await page.locator('[data-orbitpm-aris-rail-tab="generate"]:visible').click()
+  const createPanel = page.locator('[data-orbitpm-aris-create]:visible')
   await createPanel.locator('[data-orbitpm-aris-create-excel-tab]').click()
 
   const templateDownload = page.waitForEvent('download')

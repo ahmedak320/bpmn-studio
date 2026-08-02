@@ -228,6 +228,8 @@ async function openReferenceExport(page: Page): Promise<void> {
     .locator('[data-orbitpm-aris-canvas] [data-element-id^="ObjOcc."]')
     .first()
     .waitFor({ state: 'attached' })
+  await page.locator('[data-orbitpm-aris-rail-tab="generate"]:visible').click()
+  await expect(createPanel(page)).toBeVisible()
 }
 
 /**
@@ -260,6 +262,7 @@ async function openMinimalSource(page: Page): Promise<void> {
   // the lone model opens directly as its own studio tab rather than a picker
   // button. Wait on that tab (and the create panel this test drives).
   await expect(page.getByRole('tab', { name: 'minimal.aml' })).toBeVisible({ timeout: 30_000 })
+  await page.locator('[data-orbitpm-aris-rail-tab="generate"]:visible').click()
   await expect(createPanel(page)).toBeVisible()
 }
 
@@ -271,10 +274,12 @@ async function reloadAndReopenReferenceExport(page: Page): Promise<void> {
   })
   await page.locator('input[type="file"]').first().setInputFiles(REFERENCE_AML)
   await expect(page.locator('[data-orbitpm-aris-model]')).toHaveCount(8, { timeout: 30_000 })
+  await page.locator('[data-orbitpm-aris-rail-tab="generate"]:visible').click()
+  await expect(createPanel(page)).toBeVisible()
 }
 
 function createPanel(page: Page): Locator {
-  return page.locator('[data-orbitpm-aris-create]')
+  return page.locator('[data-orbitpm-aris-create]:visible')
 }
 
 function settingsDialog(page: Page): Locator {
@@ -930,17 +935,22 @@ test('mandatory AI reliability and accounting: transient failures retry up to th
   })
   await openReferenceExport(page)
   await configureSessionOpenRouter(page)
-  const { panel, submit } = await prepareGeneration(
+  const { submit } = await prepareGeneration(
     page,
     'Create a transient-retry test process.',
     'transient-retry'
   )
   await submit.click()
   await expect(
-    panel.getByRole('status').filter({
-      hasText: 'Created 2 models, 4 objects, 3 relations; 1 uncertainties reported.'
-    })
-  ).toBeVisible({ timeout: 30_000 })
+    page
+      .locator('[data-orbitpm-aris-create] [role="status"]')
+      .filter({
+        hasText: 'Created 2 models, 4 objects, 3 relations; 1 uncertainties reported.'
+      })
+      .last()
+  ).toContainText('Created 2 models, 4 objects, 3 relations; 1 uncertainties reported.', {
+    timeout: 30_000
+  })
   // Three physical attempts reached the transport: two transient 503s, then
   // the success — proving the retry bound rather than a single lucky call.
   expect(chatRequests).toBe(3)

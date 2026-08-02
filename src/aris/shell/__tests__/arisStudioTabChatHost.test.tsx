@@ -82,7 +82,12 @@ describe('ArisStudioTab chat host registration', () => {
         onModelChange={() => undefined}
         onDownloadSource={() => undefined}
         onDownloadAttachment={() => undefined}
+        workspaceId={null}
+        onCreateModel={() => undefined}
+        onDownloadFile={() => undefined}
         onOpenAssistant={() => undefined}
+        onOpenSettings={() => undefined}
+        onContinueInChat={() => undefined}
         onImportPackage={() => undefined}
         onToast={() => undefined}
         chatHostKey="tab-1"

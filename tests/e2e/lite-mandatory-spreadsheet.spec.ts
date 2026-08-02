@@ -154,14 +154,18 @@ async function openReferenceExport(page: Page): Promise<void> {
 /** Boots to 'ready' and switches the Create panel to its Excel tab. */
 async function openExcelTab(page: Page): Promise<Locator> {
   await openReferenceExport(page)
-  const createPanel = page.locator('[data-orbitpm-aris-create]').first()
+  await page.locator('[data-orbitpm-aris-rail-tab="generate"]:visible').click()
+  const railPanel = page.locator('[data-orbitpm-aris-rail-panel="generate"]:visible')
+  const railPanelId = await railPanel.getAttribute('id')
+  expect(railPanelId).not.toBeNull()
+  const createPanel = page.locator(`[id="${railPanelId}"] [data-orbitpm-aris-create]`)
   await expect(createPanel).toBeVisible()
   await createPanel.locator('[data-orbitpm-aris-create-excel-tab]').click()
   return createPanel
 }
 
-async function uploadWorkbook(page: Page, bytes: Uint8Array, fileName: string): Promise<void> {
-  await page.locator('input[accept=".xlsx"]').setInputFiles({
+async function uploadWorkbook(panel: Locator, bytes: Uint8Array, fileName: string): Promise<void> {
+  await panel.locator('input[accept=".xlsx"]').setInputFiles({
     name: fileName,
     mimeType: XLSX_MIME,
     buffer: Buffer.from(bytes)
@@ -173,7 +177,7 @@ function excelIssueItems(panel: Locator): Locator {
 }
 
 function excelStatus(panel: Locator): Locator {
-  return panel.getByRole('status')
+  return panel.locator('[role="status"]')
 }
 
 function visibleOccurrences(page: Page): Locator {
@@ -342,7 +346,7 @@ for (const languageCase of LANGUAGE_CASES) {
     page
   }) => {
     const panel = await openExcelTab(page)
-    await uploadWorkbook(page, languageCase.workbook(), `${languageCase.fileBase}.xlsx`)
+    await uploadWorkbook(panel, languageCase.workbook(), `${languageCase.fileBase}.xlsx`)
 
     await expect(excelIssueItems(panel)).toHaveCount(0)
     await expect(excelStatus(panel)).toHaveText('Created 1 models, 2 objects, 1 connections.', {
@@ -394,7 +398,7 @@ test('mandatory spreadsheet: an ARIS workbook is recognized by its custom templa
     customProperties: [],
     banner: false
   })
-  await uploadWorkbook(page, stripped, 'mandatory-unmarked.xlsx')
+  await uploadWorkbook(panel, stripped, 'mandatory-unmarked.xlsx')
   await expect(excelStatus(panel)).toContainText('The workbook was rejected', { timeout: 30_000 })
   await expect(
     excelIssueItems(panel).filter({
@@ -411,7 +415,7 @@ test('mandatory spreadsheet: an ARIS workbook is recognized by its custom templa
     customProperties: [],
     banner: true
   })
-  await uploadWorkbook(page, bannerOnly, 'mandatory-banner-only.xlsx')
+  await uploadWorkbook(panel, bannerOnly, 'mandatory-banner-only.xlsx')
   await expect(excelIssueItems(panel)).toHaveCount(0)
   await expect(excelStatus(panel)).toHaveText('Created 1 models, 2 objects, 1 connections.', {
     timeout: 30_000
@@ -446,7 +450,7 @@ test('mandatory spreadsheet X3/X10: the official example workbook commits every 
   page
 }) => {
   const panel = await openExcelTab(page)
-  await uploadWorkbook(page, createArisTemplateWorkbook('example'), 'mandatory-complex.xlsx')
+  await uploadWorkbook(panel, createArisTemplateWorkbook('example'), 'mandatory-complex.xlsx')
 
   await expect(excelIssueItems(panel)).toHaveCount(0)
   await expect(excelStatus(panel)).toHaveText('Created 3 models, 11 objects, 8 connections.', {
@@ -651,7 +655,7 @@ test('mandatory spreadsheet X5: row-level errors preserve worksheet and cell evi
     await test.step(scenario.name, async () => {
       const workbook = buildValidFixtureWorkbook(scenario.overrides)
       const fileName = `mandatory-${index}-${scenario.name.replace(/\s+/g, '-')}.xlsx`
-      await uploadWorkbook(page, workbook, fileName)
+      await uploadWorkbook(panel, workbook, fileName)
       if (scenario.expectedOutcome === 'rejected') {
         await expect(excelStatus(panel)).toContainText('The workbook was rejected', {
           timeout: 30_000
@@ -765,7 +769,7 @@ test('mandatory spreadsheet X7: formula cells with and without cached displayed 
         formulaCell('C3', 'CONCATENATE("Leave"," approval")', 'Leave approval')
       )
     )
-    await uploadWorkbook(page, bytes, 'mandatory-formula-cached.xlsx')
+    await uploadWorkbook(panel, bytes, 'mandatory-formula-cached.xlsx')
     const issue = excelIssueItems(panel).filter({
       hasText: 'read using its cached value instead of evaluating the formula'
     })
@@ -783,7 +787,7 @@ test('mandatory spreadsheet X7: formula cells with and without cached displayed 
     const bytes = workbookWithFormulaModelName(
       modelsWorksheetXmlWithFormula(formulaCell('C3', 'RAND()'))
     )
-    await uploadWorkbook(page, bytes, 'mandatory-formula-missing-cache.xlsx')
+    await uploadWorkbook(panel, bytes, 'mandatory-formula-missing-cache.xlsx')
     const issue = excelIssueItems(panel).filter({
       hasText: 'formula cell has no cached value to read'
     })
@@ -834,7 +838,7 @@ test('mandatory spreadsheet X7/X8: external links and data connections are inert
   bytes = withExtraZipEntry(bytes, 'xl/connections.xml', connectionsPayload)
 
   const panel = await openExcelTab(page)
-  await uploadWorkbook(page, bytes, 'mandatory-inert-external-content.xlsx')
+  await uploadWorkbook(panel, bytes, 'mandatory-inert-external-content.xlsx')
 
   const externalIssue = excelIssueItems(panel).filter({
     hasText: 'external workbook links; they were ignored'
@@ -914,7 +918,7 @@ test('mandatory spreadsheet X8: oversize, encrypted, macro-enabled, malformed, a
   const tabsBefore = await page.getByRole('tab').count()
   for (const scenario of cases) {
     await test.step(scenario.name, async () => {
-      await uploadWorkbook(page, scenario.bytes(), scenario.name)
+      await uploadWorkbook(panel, scenario.bytes(), scenario.name)
       await expect(excelStatus(panel)).toHaveText(
         'The workbook was rejected: 1 errors, 0 warnings.',
         {

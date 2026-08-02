@@ -117,6 +117,8 @@ async function openReferenceExport(page: Page): Promise<void> {
     .locator('[data-orbitpm-aris-canvas] [data-element-id^="ObjOcc."]')
     .first()
     .waitFor({ state: 'attached' })
+  await page.locator('[data-orbitpm-aris-rail-tab="generate"]:visible').click()
+  await expect(page.locator('[data-orbitpm-aris-create]:visible')).toBeVisible()
 }
 
 test('Settings lists only the three supported browser providers', async ({ page }) => {
@@ -163,7 +165,7 @@ test('Settings lists only the three supported browser providers', async ({ page 
 test('AI panel documents the updated browser-capable provider set', async ({ page }) => {
   await openReferenceExport(page)
 
-  const createPanel = page.locator('[data-orbitpm-aris-create]')
+  const createPanel = page.locator('[data-orbitpm-aris-create]:visible')
   await expect(createPanel).toBeVisible()
 
   const providerSelect = createPanel.locator('[data-orbitpm-aris-create-provider]')
@@ -263,7 +265,7 @@ test('OpenRouter generation sends only the reviewed payload and opens the result
   await settings.getByRole('button', { name: 'Close', exact: true }).last().click()
   await expect(settings).toBeHidden()
 
-  const createPanel = page.locator('[data-orbitpm-aris-create]')
+  const createPanel = page.locator('[data-orbitpm-aris-create]:visible')
   await expect(createPanel).toBeVisible()
   await createPanel.getByLabel('Draft name', { exact: true }).fill('Consent path')
   // Provider defaults to OpenRouter (LITE_PROVIDERS[0]); select it explicitly
@@ -282,10 +284,15 @@ test('OpenRouter generation sends only the reviewed payload and opens the result
   await submit.click()
 
   await expect(
-    createPanel.getByRole('status').filter({
-      hasText: 'Created 2 models, 4 objects, 3 relations; 1 uncertainties reported.'
-    })
-  ).toBeVisible({ timeout: 30_000 })
+    page
+      .locator('[data-orbitpm-aris-create] [role="status"]')
+      .filter({
+        hasText: 'Created 2 models, 4 objects, 3 relations; 1 uncertainties reported.'
+      })
+      .last()
+  ).toContainText('Created 2 models, 4 objects, 3 relations; 1 uncertainties reported.', {
+    timeout: 30_000
+  })
 
   // The result opened as a new, active tab titled after the draft name, and
   // its canvas rendered the generated model's four object occurrences —
@@ -349,7 +356,7 @@ test('PDF flow: pick a PDF + Arabic hint, hit the no-key provider gate', async (
   const offending = recordOffendingRequests(page)
   await openReferenceExport(page)
 
-  const createPanel = page.locator('[data-orbitpm-aris-create]')
+  const createPanel = page.locator('[data-orbitpm-aris-create]:visible')
   await expect(createPanel).toBeVisible()
   // OpenRouter is the default provider (LITE_PROVIDERS[0]); no key has been
   // stored for it (forceFallbackMode clears localStorage before every test).

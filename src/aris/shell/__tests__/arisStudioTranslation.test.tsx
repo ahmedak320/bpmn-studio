@@ -90,7 +90,12 @@ describe('ArisStudioTab translation composition', () => {
         onModelChange={noop}
         onDownloadSource={noop}
         onDownloadAttachment={noop}
+        workspaceId={null}
+        onCreateModel={noop}
+        onDownloadFile={noop}
         onOpenAssistant={noop}
+        onOpenSettings={noop}
+        onContinueInChat={noop}
         onImportPackage={noop}
         onToast={noop}
       />

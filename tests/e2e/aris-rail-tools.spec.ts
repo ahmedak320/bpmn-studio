@@ -49,18 +49,55 @@ test('rail tools: docked placement, hover title, friendly details, right-click c
 }) => {
   await page.setViewportSize({ width: 1500, height: 950 })
   await gotoLanding(page)
+  await createBlankEpc(page, 'Empty workspace setup')
+
+  await page
+    .getByRole('tablist', { name: 'Open ARIS source tabs' })
+    .getByRole('tab')
+    .press('Delete')
+
+  const main = page.getByRole('main', { name: 'ARIS workspace' })
+  await expect(main.locator('[data-orbitpm-aris-create]')).toBeVisible()
+  await expect(page.locator('#orbitpm-aris-explorer [data-orbitpm-aris-create]')).toHaveCount(0)
+
+  await page.reload({ waitUntil: 'load' })
+  await page
+    .getByRole('heading', { name: 'OrbitPM ARIS Studio Lite' })
+    .waitFor({ state: 'visible' })
   await createBlankEpc(page, 'Rail tools')
 
   const rail = page.locator('[data-orbitpm-aris-rail]')
   const toolsTab = rail.locator('[data-orbitpm-aris-rail-tab="tools"]')
+  const generateTab = rail.locator('[data-orbitpm-aris-rail-tab="generate"]')
   const detailsTab = rail.locator('[data-orbitpm-aris-rail-tab="details"]')
   const tools = rail.locator('[data-orbitpm-aris-tools]')
   const canvas = page.locator('[data-orbitpm-aris-canvas]')
 
+  await expect(rail.getByRole('tab')).toHaveText(['Tools', '✨ Generate', 'Details'])
+  await expect(rail.getByRole('tab')).toHaveCount(3)
   await expect(toolsTab).toHaveAttribute('aria-selected', 'true')
+  await expect(generateTab).toHaveAttribute('aria-selected', 'false')
   await expect(detailsTab).toHaveAttribute('aria-selected', 'false')
   await expect(tools).toBeVisible()
   await expect(canvas.locator('.djs-palette')).toHaveCount(0)
+  await expect(page.locator('#orbitpm-aris-explorer [data-orbitpm-aris-create]')).toHaveCount(0)
+
+  await toolsTab.focus()
+  await page.keyboard.press('ArrowRight')
+  await expect(generateTab).toBeFocused()
+  await expect(generateTab).toHaveAttribute('aria-selected', 'true')
+  const generatePanel = rail.locator('[data-orbitpm-aris-rail-panel="generate"]')
+  await expect(generatePanel.locator('[data-orbitpm-aris-create]')).toBeVisible()
+  await expect(generatePanel.locator('[data-orbitpm-aris-create-provider]')).toBeVisible()
+  await expect(generatePanel.locator('[data-orbitpm-aris-create-model]')).toBeVisible()
+
+  await page.keyboard.press('ArrowRight')
+  await expect(detailsTab).toBeFocused()
+  await page.keyboard.press('ArrowRight')
+  await expect(toolsTab).toBeFocused()
+  await page.keyboard.press('ArrowLeft')
+  await expect(detailsTab).toBeFocused()
+  await toolsTab.click()
 
   const canvasBox = await canvas.boundingBox()
   expect(canvasBox).not.toBeNull()

@@ -12,7 +12,7 @@ import { ArisStudioTab } from '../ArisStudioTab'
 import { buildArisStudioDocument } from '../arisStudioDocument'
 import { createArisXmlSourcePackage } from '../../source/sourcePackage'
 import { SYNTHETIC_AML } from '../../model/testFixture'
-import { readArisRailCollapsed } from '../arisRailLayout'
+import { readArisRailCollapsed, readArisRailTab } from '../arisRailLayout'
 
 async function buildPopulatedStudio() {
   const pkg = await createArisXmlSourcePackage({
@@ -50,7 +50,12 @@ describe('ARIS details rail layout', () => {
         onModelChange={noop}
         onDownloadSource={noop}
         onDownloadAttachment={noop}
+        workspaceId={null}
+        onCreateModel={noop}
+        onDownloadFile={noop}
         onOpenAssistant={noop}
+        onOpenSettings={noop}
+        onContinueInChat={noop}
         onImportPackage={noop}
         onToast={noop}
       />
@@ -87,7 +92,12 @@ describe('ARIS details rail layout', () => {
         onModelChange={noop}
         onDownloadSource={noop}
         onDownloadAttachment={noop}
+        workspaceId={null}
+        onCreateModel={noop}
+        onDownloadFile={noop}
         onOpenAssistant={noop}
+        onOpenSettings={noop}
+        onContinueInChat={noop}
         onImportPackage={noop}
         onToast={noop}
       />
@@ -123,7 +133,12 @@ describe('ARIS details rail layout', () => {
         onModelChange={noop}
         onDownloadSource={noop}
         onDownloadAttachment={noop}
+        workspaceId={null}
+        onCreateModel={noop}
+        onDownloadFile={noop}
         onOpenAssistant={noop}
+        onOpenSettings={noop}
+        onContinueInChat={noop}
         onImportPackage={noop}
         onToast={noop}
       />
@@ -149,7 +164,12 @@ describe('ARIS details rail layout', () => {
         onModelChange={noop}
         onDownloadSource={noop}
         onDownloadAttachment={noop}
+        workspaceId={null}
+        onCreateModel={noop}
+        onDownloadFile={noop}
         onOpenAssistant={noop}
+        onOpenSettings={noop}
+        onContinueInChat={noop}
         onImportPackage={noop}
         onToast={noop}
       />
@@ -187,7 +207,12 @@ describe('ARIS details rail layout', () => {
         onModelChange={noop}
         onDownloadSource={noop}
         onDownloadAttachment={noop}
+        workspaceId={null}
+        onCreateModel={noop}
+        onDownloadFile={noop}
         onOpenAssistant={noop}
+        onOpenSettings={noop}
+        onContinueInChat={noop}
         onImportPackage={noop}
         onToast={noop}
       />
@@ -215,7 +240,12 @@ describe('ARIS details rail layout', () => {
         onModelChange={noop}
         onDownloadSource={noop}
         onDownloadAttachment={noop}
+        workspaceId={null}
+        onCreateModel={noop}
+        onDownloadFile={noop}
         onOpenAssistant={noop}
+        onOpenSettings={noop}
+        onContinueInChat={noop}
         onImportPackage={noop}
         onToast={noop}
       />
@@ -251,7 +281,12 @@ describe('ARIS details rail layout', () => {
         onModelChange={noop}
         onDownloadSource={noop}
         onDownloadAttachment={noop}
+        workspaceId={null}
+        onCreateModel={noop}
+        onDownloadFile={noop}
         onOpenAssistant={noop}
+        onOpenSettings={noop}
+        onContinueInChat={noop}
         onImportPackage={noop}
         onToast={noop}
       />
@@ -277,7 +312,12 @@ describe('ARIS details rail layout', () => {
         onModelChange={noop}
         onDownloadSource={noop}
         onDownloadAttachment={noop}
+        workspaceId={null}
+        onCreateModel={noop}
+        onDownloadFile={noop}
         onOpenAssistant={noop}
+        onOpenSettings={noop}
+        onContinueInChat={noop}
         onImportPackage={noop}
         onToast={noop}
       />
@@ -309,5 +349,16 @@ describe('ARIS details rail layout', () => {
     })
     expect(readArisRailCollapsed()).toBe(false)
     getItem.mockRestore()
+  })
+
+  it('restores Generate as a persisted rail tab and defaults unknown values to Tools', () => {
+    localStorage.setItem('orbitpm.aris.railTab', 'generate')
+    expect(readArisRailTab()).toBe('generate')
+
+    localStorage.setItem('orbitpm.aris.railTab', 'unknown')
+    expect(readArisRailTab()).toBe('tools')
+
+    localStorage.removeItem('orbitpm.aris.railTab')
+    expect(readArisRailTab()).toBe('tools')
   })
 })

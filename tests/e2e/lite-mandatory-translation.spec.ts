@@ -469,12 +469,20 @@ function recordOffendingRequests(page: Page): string[] {
   return offending
 }
 
+async function openGenerationPanel(page: Page): Promise<Locator> {
+  const railTab = page.locator('[data-orbitpm-aris-rail-tab="generate"]:visible')
+  if ((await railTab.count()) > 0) await railTab.click()
+  const panel = page.locator('[data-orbitpm-aris-create]:visible')
+  await expect(panel).toBeVisible()
+  return panel
+}
+
 async function fillDescriptionRequest(
   page: Page,
   name: string,
   description: string
 ): Promise<void> {
-  const createPanel = page.locator('[data-orbitpm-aris-create]')
+  const createPanel = await openGenerationPanel(page)
   await createPanel.locator('[data-orbitpm-aris-create-description-tab]').click()
   await createPanel.locator('[data-orbitpm-aris-create-provider]').selectOption('openrouter')
   await createPanel.getByLabel('Draft name', { exact: true }).fill(name)
@@ -488,7 +496,7 @@ async function fillDescriptionRequest(
 }
 
 async function submitGeneration(page: Page): Promise<void> {
-  const createPanel = page.locator('[data-orbitpm-aris-create]')
+  const createPanel = await openGenerationPanel(page)
   await createPanel.locator('[data-orbitpm-aris-create-submit]').click()
 }
 
@@ -848,7 +856,7 @@ test('TR5/TR7: AI text, DOCX, PDF, PNG and Excel use their real generation/impor
   const offending = recordOffendingRequests(page)
   await openReferenceExport(page, false)
   await configureOpenRouterKey(page, apiKey)
-  const createPanel = page.locator('[data-orbitpm-aris-create]')
+  const createPanel = await openGenerationPanel(page)
   await createPanel.locator('[data-orbitpm-aris-create-provider]').selectOption('openrouter')
   await createPanel.locator('[data-orbitpm-aris-create-model]').fill(modelId)
 
@@ -862,8 +870,11 @@ test('TR5/TR7: AI text, DOCX, PDF, PNG and Excel use their real generation/impor
   await submitGeneration(page)
   await expect.poll(() => chatRequests.length, { timeout: 30_000 }).toBe(1)
   await expect(
-    page.getByRole('status').filter({ hasText: 'Created 2 models, 4 objects, 3 relations' })
-  ).toBeVisible({ timeout: 30_000 })
+    page
+      .locator('[data-orbitpm-aris-create] [role="status"]')
+      .filter({ hasText: 'Created 2 models, 4 objects, 3 relations' })
+      .last()
+  ).toContainText('Created 2 models, 4 objects, 3 relations', { timeout: 30_000 })
   // The generated bilingual content actually reached the new tab's canvas as a
   // shape. Scope to the shape (`g.djs-element`) rather than a bare text query:
   // the authorized print frame renders the model's Process Name row-value with
@@ -874,11 +885,12 @@ test('TR5/TR7: AI text, DOCX, PDF, PNG and Excel use their real generation/impor
   await expect(nameField(page, 'definition', 'ar')).toHaveValue('الموافقة على الطلب')
 
   // --- AI text + local DOCX extraction --------------------------------------
+  await openGenerationPanel(page)
   await createPanel.locator('[data-orbitpm-aris-create-description-tab]').click()
   await createPanel.getByLabel('Draft name', { exact: true }).fill('DOCX boundary')
   await createPanel.locator('textarea').fill('Use the attached brief')
   const docxOffending = recordOffendingRequests(page)
-  await page.locator('input[type="file"][accept*=".docx"]').setInputFiles({
+  await createPanel.locator('input[type="file"][accept*=".docx"]').setInputFiles({
     name: 'mandatory-translation.docx',
     mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     buffer: createDocxFixture()
@@ -894,10 +906,11 @@ test('TR5/TR7: AI text, DOCX, PDF, PNG and Excel use their real generation/impor
   expect(JSON.stringify(chatRequests[beforeDocx])).toContain('Review the attached permit request')
 
   // --- AI PDF via the Description tab's own attachment ----------------------
+  await openGenerationPanel(page)
   await createPanel.locator('[data-orbitpm-aris-create-description-tab]').click()
   await createPanel.getByLabel('Draft name', { exact: true }).fill('PDF description boundary')
   await createPanel.locator('textarea').fill('Model the process in the attached PDF')
-  await page
+  await createPanel
     .locator('input[type="file"][accept*="application/pdf"]')
     .first()
     .setInputFiles({
@@ -911,6 +924,7 @@ test('TR5/TR7: AI text, DOCX, PDF, PNG and Excel use their real generation/impor
   expect(JSON.stringify(chatRequests[beforePdf])).toContain('data:application/pdf;base64,')
 
   // --- AI PDF/Picture tab: a PNG picture of a process drawing ---------------
+  await openGenerationPanel(page)
   await createPanel.locator('[data-orbitpm-aris-create-document-tab]').click()
   await createPanel.getByLabel('Draft name', { exact: true }).fill('PNG boundary')
   // Image attachments are only verified for the reviewed Claude/Gemini routes
@@ -918,7 +932,7 @@ test('TR5/TR7: AI text, DOCX, PDF, PNG and Excel use their real generation/impor
   // — a prior `[data-orbitpm-aris-create-provider]` re-selection above reset it
   // back to the curated default (`z-ai/glm-5.2`, PDF-only).
   await createPanel.locator('[data-orbitpm-aris-create-model]').fill(modelId)
-  await page.locator('input[type="file"][accept*="image/png"]').setInputFiles({
+  await createPanel.locator('input[type="file"][accept*="image/png"]').setInputFiles({
     name: 'mandatory-translation.png',
     mimeType: 'image/png',
     buffer: Buffer.from(
@@ -936,6 +950,7 @@ test('TR5/TR7: AI text, DOCX, PDF, PNG and Excel use their real generation/impor
   expect(chatRequests).toHaveLength(beforePng + 1)
 
   // --- Excel (no AI, no network): the official bilingual template -----------
+  await openGenerationPanel(page)
   await createPanel.locator('[data-orbitpm-aris-create-excel-tab]').click()
   const excelOffending = recordOffendingRequests(page)
   const templateDownload = page.waitForEvent('download')
@@ -944,7 +959,7 @@ test('TR5/TR7: AI text, DOCX, PDF, PNG and Excel use their real generation/impor
   const templatePath = await template.path()
   if (!templatePath) throw new Error('Playwright did not retain the official Excel example')
   const tabsBeforeExcel = await page.getByRole('tab').count()
-  await page.locator('input[accept=".xlsx"]').setInputFiles({
+  await createPanel.locator('input[accept=".xlsx"]').setInputFiles({
     name: template.suggestedFilename(),
     mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     buffer: readFileSync(templatePath)
@@ -1064,8 +1079,11 @@ test('TR6/TR9: AI provider 429 retry, transport exhaustion, cancellation and man
   await submitGeneration(page)
   await expect.poll(() => attempts.retry, { timeout: 30_000 }).toBe(3)
   await expect(
-    page.getByRole('status').filter({ hasText: 'Created 2 models, 4 objects, 3 relations' })
-  ).toBeVisible({ timeout: 30_000 })
+    page
+      .locator('[data-orbitpm-aris-create] [role="status"]')
+      .filter({ hasText: 'Created 2 models, 4 objects, 3 relations' })
+      .last()
+  ).toContainText('Created 2 models, 4 objects, 3 relations', { timeout: 30_000 })
   await expect.poll(async () => page.getByRole('tab').count()).toBe(tabsBeforeRetry + 1)
 
   // --- transport exhaustion: truthful failure, no false completion (TR-09) --
@@ -1344,9 +1362,19 @@ test('TR-auto-generated: generated models fill missing labels automatically unle
     'Review a permit request and record the decision.'
   )
   await submitGeneration(page)
-  await expect(page.getByRole('status').filter({ hasText: /^Created/u })).toBeVisible({
+  const createdStatus = page
+    .locator('[data-orbitpm-aris-create] [role="status"]')
+    .filter({ hasText: /^Created/u })
+    .last()
+  await expect(createdStatus).toContainText(/^Created/u, {
     timeout: 30_000
   })
+  const sourceTab = page.getByRole('tab', { name: 'bilingual-matrix.aml', exact: true })
+  const generatedTab = page.getByRole('tab', { name: 'Auto-translate draft', exact: true })
+  await sourceTab.click()
+  const completedPanel = await openGenerationPanel(page)
+  await expect(completedPanel.getByRole('status').filter({ hasText: /^Created/u })).toBeVisible()
+  await generatedTab.click()
   // Confirm the free chain was actually invoked.
   await expect.poll(() => translateFetches.length, { timeout: 30_000 }).toBeGreaterThan(0)
 
@@ -1409,9 +1437,19 @@ test('TR-auto-generated: generated models fill missing labels automatically unle
 
   await fillDescriptionRequest(offPage, 'No auto-translate', 'Another permit review.')
   await submitGeneration(offPage)
-  await expect(offPage.getByRole('status').filter({ hasText: /^Created/u })).toBeVisible({
+  const offCreatedStatus = offPage
+    .locator('[data-orbitpm-aris-create] [role="status"]')
+    .filter({ hasText: /^Created/u })
+    .last()
+  await expect(offCreatedStatus).toContainText(/^Created/u, {
     timeout: 30_000
   })
+  const offSourceTab = offPage.getByRole('tab', { name: 'bilingual-matrix.aml', exact: true })
+  const offGeneratedTab = offPage.getByRole('tab', { name: 'No auto-translate', exact: true })
+  await offSourceTab.click()
+  const offCompletedPanel = await openGenerationPanel(offPage)
+  await expect(offCompletedPanel.getByRole('status').filter({ hasText: /^Created/u })).toBeVisible()
+  await offGeneratedTab.click()
   await offPage.waitForTimeout(1500)
 
   // Zero outbound translation requests; the missing-translation badge is the

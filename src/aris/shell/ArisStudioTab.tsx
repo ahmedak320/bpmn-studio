@@ -92,6 +92,7 @@ import { buildArisLocalizationReview } from '../localization'
 import { listTranslationRecoveryFields } from '../../localization/translationRecovery'
 import type { LocalizationResources } from '../../localization/types'
 import { tk } from './shellI18n'
+import { ArisGenerationPanel } from '../../ArisGenerationPanel'
 
 export type ArisLayoutModeState = 'source' | 'clean'
 
@@ -125,7 +126,12 @@ export interface ArisStudioTabProps {
   readonly onModelChange: (modelId: string) => void
   readonly onDownloadSource: () => void
   readonly onDownloadAttachment: (filename: string, bytes: Uint8Array, mimeType: string) => void
+  readonly workspaceId: string | null
+  readonly onCreateModel: React.ComponentProps<typeof ArisGenerationPanel>['onCreateModel']
+  readonly onDownloadFile: React.ComponentProps<typeof ArisGenerationPanel>['onDownloadFile']
   readonly onOpenAssistant: () => void
+  readonly onOpenSettings: () => void
+  readonly onContinueInChat: () => void
   readonly onImportPackage: () => void
   readonly onToast: (message: string, tone?: 'info' | 'error' | 'success') => void
   /** File name of the imported source, used to name the derived export. */
@@ -199,7 +205,7 @@ interface CanvasContextMenuState {
   readonly returnFocus: HTMLElement | null
 }
 
-const ARIS_RAIL_TABS: readonly ArisRailTab[] = Object.freeze(['details', 'tools'])
+const ARIS_RAIL_TABS: readonly ArisRailTab[] = Object.freeze(['tools', 'generate', 'details'])
 
 export function ArisStudioTab({
   title,
@@ -212,7 +218,12 @@ export function ArisStudioTab({
   onModelChange,
   onDownloadSource,
   onDownloadAttachment,
+  workspaceId,
+  onCreateModel,
+  onDownloadFile,
   onOpenAssistant,
+  onOpenSettings,
+  onContinueInChat,
   onImportPackage,
   onToast,
   sourceFileName,
@@ -1326,7 +1337,7 @@ export function ArisStudioTab({
       >
         <div
           role="tablist"
-          aria-label={tk('aris.rail.tabsAria', 'Details and tools panels')}
+          aria-label={tk('aris.rail.tabsAria', 'Tools, generation, and details panels')}
           style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}
         >
           {ARIS_RAIL_TABS.map((tab, index) => (
@@ -1351,11 +1362,48 @@ export function ArisStudioTab({
               onClick={() => setRailTab(tab)}
               onKeyDown={(event) => onRailTabKeyDown(event, index)}
             >
-              {tab === 'details'
-                ? tk('aris.rail.details', 'Details')
-                : tk('aris.rail.tab.tools', 'Tools')}
+              {tab === 'tools'
+                ? tk('aris.rail.tab.tools', 'Tools')
+                : tab === 'generate'
+                  ? tk('aris.rail.tab.generate', '✨ Generate')
+                  : tk('aris.rail.details', 'Details')}
             </button>
           ))}
+        </div>
+
+        <div
+          role="tabpanel"
+          id={railPanelId('tools')}
+          aria-labelledby={railTabId('tools')}
+          hidden={railTab !== 'tools'}
+          data-orbitpm-aris-rail-panel="tools"
+          style={{ minHeight: 0, overflow: 'hidden' }}
+        >
+          <ArisToolsPanel
+            key={canvasTick}
+            canvas={canvasRef.current}
+            modelType={liveDocument.models.get(renderableModelId ?? '')?.type ?? 'MT_EEPC'}
+            lang={lang}
+          />
+        </div>
+
+        <div
+          role="tabpanel"
+          id={railPanelId('generate')}
+          aria-labelledby={railTabId('generate')}
+          hidden={railTab !== 'generate'}
+          data-orbitpm-aris-rail-panel="generate"
+          style={{ minHeight: 0, overflow: 'auto' }}
+        >
+          <ArisGenerationPanel
+            embedded
+            workspaceId={workspaceId}
+            onCreateModel={onCreateModel}
+            onDownloadFile={onDownloadFile}
+            onOpenAssistant={onOpenAssistant}
+            onOpenSettings={onOpenSettings}
+            onContinueInChat={onContinueInChat}
+          />
         </div>
 
         <div
@@ -1394,22 +1442,6 @@ export function ArisStudioTab({
           />
 
           <ArisEpcRail findings={validationFindings} onSelectFinding={handleRevealFinding} />
-        </div>
-
-        <div
-          role="tabpanel"
-          id={railPanelId('tools')}
-          aria-labelledby={railTabId('tools')}
-          hidden={railTab !== 'tools'}
-          data-orbitpm-aris-rail-panel="tools"
-          style={{ minHeight: 0, overflow: 'hidden' }}
-        >
-          <ArisToolsPanel
-            key={canvasTick}
-            canvas={canvasRef.current}
-            modelType={liveDocument.models.get(renderableModelId ?? '')?.type ?? 'MT_EEPC'}
-            lang={lang}
-          />
         </div>
       </aside>
 
