@@ -1,8 +1,13 @@
 name: Deploy ARIS Studio Lite to Pages
 
 # Simple, direct GitHub Pages deployment of the self-contained ARIS Studio Lite
-# single-file build. Replaces the old v0.4.5 deployment. This intentionally does
-# NOT go through the evidence-hardened pages.yml release pipeline.
+# single-file build. Replaces the old v0.4.5 deployment. Intentionally does NOT
+# go through the evidence-hardened pages.yml release pipeline.
+#
+# All actions are pinned to full commit SHAs (repo policy). We tar the site and
+# use upload-artifact + deploy-pages directly (the SHA-pinned actions already
+# vetted in pages.yml) instead of upload-pages-artifact, which transitively
+# depends on an unpinned actions/upload-artifact.
 
 on:
   workflow_dispatch:
@@ -31,16 +36,24 @@ jobs:
       - name: Checkout main
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Assemble Pages site from the ARIS single-file build
+      - name: Assemble and tar the Pages site from the ARIS single-file build
         run: |
-          mkdir -p _site
-          cp release/OrbitPM-ARIS-Studio-Lite.html _site/index.html
-          ls -la _site
+          mkdir -p pages-dist
+          cp release/OrbitPM-ARIS-Studio-Lite.html pages-dist/index.html
+          tar \
+            --dereference --hard-dereference \
+            --directory pages-dist \
+            --create --file "$RUNNER_TEMP/artifact.tar" \
+            --exclude=.git --exclude=.github \
+            .
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+      - name: Upload the Pages artifact (name deploy-pages expects)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          path: _site
+          name: github-pages
+          path: ${{ runner.temp }}/artifact.tar
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Deploy to GitHub Pages
         id: deployment
