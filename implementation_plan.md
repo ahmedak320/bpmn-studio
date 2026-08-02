@@ -1,30 +1,23 @@
-# ARIS Studio Lite — Waves 11–16: Translation Reliability, Docked Tools & Friendly Types, Render Fidelity, AI-Creation Evaluation — Implementation Plan
+# ARIS Studio Lite — Waves 17–23: EPC Engine as a Service (Canonical Schema, Projection, Headless SVG, Package + CLI, Verification Contract, Enterprise Handoff) — Implementation Plan
 
-> **For the orchestrator:** dispatch rules, model policy, worker routing, and the commit protocol live in `desktop/goal.md`. THIS file is the work ledger — its checkboxes are the single source of progress truth. Tick them in the same commit as the lane's code.
+> **For the orchestrator:** the commit protocol and worktree conventions live in `goal.md` (Waves 11–16 vintage); where this file's model policy, lane matrix, or dispatch mechanics differ from goal.md, THIS file supersedes it for Waves 17–23. THIS file is the work ledger — its checkboxes are the single source of progress truth. Tick them in the same commit as the lane's code. Kimi lanes dispatch via the fenced block in Global Constraints; Claude-family lanes via normal Agent/model settings. Lanes may equally be run by the user in their own sessions — this plan is executor-agnostic: every lane is self-sufficient from this file alone.
 >
-> **For workers:** you own ONLY the files your lane lists under "Files owned". If completing your lane seems to require touching any other file, STOP and report back — do not touch it. Every step uses checkbox (`- [ ]`) syntax. Never run mutating git commands (commit, push, stash, checkout, reset, branch, rebase). Run every verification command listed for your lane and report each exit code verbatim. Your final message is machine-consumed: return raw findings, file lists, and command results — no pleasantries. Everything you need is in THIS file — you do not need the source PDFs or any prior conversation.
+> **For workers:** you own ONLY the files your lane lists under "Owns". If completing your lane seems to require touching any other file, STOP and report back — do not touch it. Every step uses checkbox (`- [ ]`) syntax. Never run mutating git commands (commit, push, stash, checkout, reset, branch, rebase). Run every verification command listed for your lane and report each exit code verbatim. Your final message is machine-consumed: return raw findings, file lists, and command results — no pleasantries. Everything you need is in THIS file — you do not need the master-plan document or any prior conversation.
 >
-> **Previous campaign (Waves 1–10)** lives in git history at `abe1d57`; do not resurrect it. Wave-10 create-from-PDF v2 remains deferred on branch `feat/aris-w10-cfp2` (worktree `../desktop-w10`) and is touched ONLY by lane P13 (read/run, never merge).
+> **Previous campaign (Waves 11–16, COMPLETE)** lives at `8bbc01a` (the last commit carrying that ledger) — do not resurrect it. `aris_transformation.md` Phases 17/18 (§20–§21) stay PARKED, not superseded: Phase 17 is blocked on user-supplied ARIS artifacts, Phase 18 is release QA. The Experimental AML-export label (`ARIS_EXPORT_COMPATIBILITY_STATUS = 'experimental'`, `src/aris/writer/compatibility.ts:25`, keys `aris.export.experimentalLabel|Notice`) is NOT touched by this campaign.
 
-**Goal:** Fix 10 product defects and run 3 AI-creation evaluation campaigns on `feat/aris-only-studio`:
+**Goal:** Make bpmn-studio consumable by a private Azure enterprise repo (master-plan Part II §3) as a versioned dependency, while the studio UX ships unchanged. Six deliverables:
 
-1. Automatic translation reliably works and every created/imported process is auto-translated both ways (AR↔EN).
-2. The floating tools palette is docked into the right rail behind Details/Tools tabs.
-3. The VACD "overall process" renders clean like the EPC subprocesses (no overlapping/huge blocks).
-4. Text inside step blocks and top-right reference blocks never leaks past the block edges.
-5. XOR/OR/AND marks keep a consistent thickness at every zoom; gateways are added to the legend.
-6. The Requirements hand icon matches the ARIS reference PDF.
-7. The RACI legend shows Arabic translations of the R/A/C/I letters.
-8. Small function / system-function blocks enforce a minimum size so their icons never squish.
-9. The process-interface block loses its grey "duplication" slab under the caption.
-10. Raw `OT_*`/`ST_*`/`MT_*` codes never leak into tooltips or the details pane (friendly names instead); hovering a placed block shows its friendly object type; right-click changes a block's object type.
-11. Create-from-description is vigorously tested with **glm-5.2** across EN / MSA / Emirati-dialect descriptions at 3 detail levels (humanized + scrambled), iterated to a documented capture bar.
-12. Create-from-Excel is tested with human-filled workbooks at 3 fidelity levels, with template improvements, iterated to a documented capture bar.
-13. Create-from-PDF is re-evaluated with **gpt-5.6-terra** and **claude-opus-4-8** against the current models on the v1 pipeline AND the w10 v2 pipeline — evaluation only, no production fix.
+1. **CanonicalProcessV1** — a notation-neutral, bilingual (en/ar), evidence-linked zod `strictObject` contract + hand-written JSON Schema emitter under `src/aris/canonical/`, with valid + invalid fixtures.
+2. **Projection canonical→EPC** — a deterministic pure function CanonicalProcessV1 → `ArisAiDraftV1`-shaped draft → existing AML/import/layout pipeline, with specified EPC expansion rules, alternation completion, structural validation BEFORE render, and a machine-readable bilingual findings artifact keyed by canonical logicalIds. Includes 2 NEW EPC rules the master plan requires (labeled decision branches, reachable end outcomes).
+3. **Headless SVG render** — jsdom-booted `ArisCanvas` behind a `src/aris/headless/` entry: byte-stable SVG with embedded version/hash metadata and `data-epc-node`/`data-epc-edge` anchors; model-derived bounds replace `getBBox`; PNG stays optional via the existing injected-deps rasterizer.
+4. **Package + CLI** — sub-package `packages/epc-engine/` (own manifest, jsdom-only runtime dep, built by a new `vite.lib.config.ts` into `packages/epc-engine/dist/`, NO npm workspaces, root manifest name/private untouched) + CLI `packages/epc-engine/bin/epc-project.mjs` (`validate` / `project` / `render`), CI-smoked.
+5. **Review/verification contract** — anchored SVG + findings JSON + `buildVerificationPackage()` (trigger, outcome, owner, main flow, roles, systems, decisions, unknowns, evidence summary), all keyed by logicalId so the enterprise portal can implement Confirm/Correct per element. No React export — documented embed pattern only.
+6. **Docs + handoff** — `docs/EPC_PROJECTION.md` + `docs/ENTERPRISE_HANDOFF.md` (interface contracts only), README/CONTRIBUTING updates.
 
-**Architecture:** React 18.3 + Vite 6 single-file SPA; diagram-js 15.22 canvas; ARIS-native model/render pipeline. Defects 1–10 are surgical fixes at verified anchors. Campaigns 11–13 add Node-side eval harnesses that drive the REAL creation pipelines against the AnimalWF reference and score structure-only similarity, iterating prompt/normalizer/template code between rounds.
+**Architecture:** The engine stays where it is — ALL implementation lands under `src/aris/**` (so vitest include, the 80 % coverage denominator, lint, and typecheck keep working); `packages/epc-engine/` is a build artifact + manifest + bin shim only. The canonical→EPC projection lives INSIDE bpmn-studio (public, reusable); the private repo's `epc-adapter/` stays thin (subprocess/import of this engine). The headless path reuses the live diagram-js renderer under jsdom (the recommended path: ~90 % existing code, two seams), NOT a second string renderer. The studio browser app is untouched except the Authorized product changes below.
 
-**Tech stack:** React 18.3, Vite 6, TypeScript 5.9, diagram-js 15.22 (generic; NOT bpmn-js on the ARIS path), vitest 3.2, Playwright 1.61. Browser SPA, single-file build. NOT Electron.
+**Tech stack:** React 18.3 + Vite 6 single-file SPA (unchanged); diagram-js 15.22.0 canvas; zod 4.4.3; vitest 3.2.7; Playwright 1.61.1; jsdom 29.1.1 (already a root devDependency — ZERO new root dependencies is a hard target). New: Vite library build (`vite.lib.config.ts`) + Node CLI. Browser SPA, single-file build. NOT Electron. NOT a server — the CLI is a headless batch tool for the same engine, no server/bridge/desktop shell.
 
 ---
 
@@ -32,42 +25,54 @@
 
 Every task's requirements implicitly include this section.
 
-- Repo: `/home/ahmed/Desktop/bpmn_tool/desktop` (this directory IS the git root). Branch: `feat/aris-only-studio`. Remote: `https://github.com/ahmedak320/bpmn-studio.git`. Canonical artifact: `release/OrbitPM-ARIS-Studio-Lite.html`, rebuilt via `npm run build:aris` in every product commit (orchestrator's job).
-- **Private reference assets live OUTSIDE the repo** under `/home/ahmed/Desktop/bpmn_tool/reference/` (reachable as `../reference/`), and are NEVER committed:
-  - `../reference/AnimalWF/ARISAMLExport.xml` — the AML fixture (4.37 MB; 1× `MT_VAL_ADD_CHN_DGM` overall + 7× `MT_EEPC` subprocesses).
-  - `../reference/AnimalWF/pdf/*.pdf` — the 4 process printouts (`Register_Animal_Owner_Profile_Draft03.pdf`, `Renew_an_Animals_profile_Draft02.pdf`, `Animal_Ownership_Transfer_between_Citizens_Draft01.pdf`, `Transfer_of_Pet_Ownership_V1_Draft02_2025.pdf`).
-  - `../reference/AnimalWF/png/Register_Animal_Owner_Profile_Draft03-1.png` — rendered page 1 oracle.
-  - `../reference/AnimalWF/expected/*.expected.json` — fidelity expectations for 4 processes (register-owner, renew-profile, transfer-citizens, transfer-citizens-companies).
-  - `../reference/conventions/ARIS_Convention_Manual_DMT_v02.pdf` + extracted page images — the symbol/colour/RACI ground truth.
-  - NEW this campaign (staged in Wave 11 prep): `../reference/AnimalWF/crops/` (relocated oracle crops + icon board), `../reference/AnimalWF/gen-tests/` (all P11/P12/P13 descriptions, workbooks, runs, reports), `../reference/openrouter.env` (the `OPENROUTER_API_KEY` for glm-5.2). `.gitignore` already excludes `AnimalWF/`; nothing under `../reference/` is inside the worktree.
+- Repo: `/home/user/bpmn-studio` (this directory IS the git root). **Campaign branch: `claude/bpmn-studio-implementation-plan-c13dn3`** at baseline HEAD `8bbc01a`. The repo default branch is `main`; the old `feat/aris-only-studio` does NOT exist on this remote — never reference it in commands. Canonical artifact: `release/OrbitPM-ARIS-Studio-Lite.html`, rebuilt via `npm run build:aris` in every product commit (orchestrator's job).
+- **Private reference assets** (`../reference/AnimalWF/**`) are NOT present in remote containers. All `*.animalwf.test.ts` suites, `test:aris:animalwf`, `:holdout`, `test:aris:phase16|golden|fidelity-report` are **environment-blocked** here (throw-at-module-load guards, by design — never a skip). Record this in the Baseline record; run them only where the assets exist. Nothing in this campaign depends on them.
 - **Gate commands** every lane runs before reporting done (plus lane-specific extras listed per lane):
 
   ```bash
-  npm run typecheck && npm run lint && npm run check:aris-runtime-boundary && npm run check:ui-copy && npm run check:no-skips
+  npm run typecheck && npm run lint && npm run check:aris-runtime-boundary && npm run check:ui-copy && npm run check:no-skips && npm run check:lite-only
   npx vitest run <lane's test paths>
-  npx prettier --write <every file the lane touched>   # format:check is a CI gate
+  npx prettier --write <every file the lane touched>   # format:check is a CI gate; prettier also checks packages/** and docs/**
   ```
 
-- **Secrets:** lanes that call model APIs source keys via `set -a; . ../reference/openrouter.env; set +a` (OpenRouter) or `set -a; . /home/ahmed/Desktop/bpmn_tool/.env; set +a` (OpenAI/Anthropic/Gemini). NEVER echo a key value, never commit it, never write it into a brief or log.
-- **Runtime-boundary rules** (`scripts/check-aris-runtime-boundary.mjs` walks runtime imports from `src/main.tsx`; **type-only imports are exempt**; the ban list is `bpmn-*` packages **by name** plus specific graph paths): never runtime-import `src/App.tsx`, `src/editor/**`, `src/org/orbitpmModdle.ts`, `src/validation/ReadOnlyDiagramPreview.tsx`, or any `bpmn-*` package. Port old concepts, never the code. `src/aris/conventions/**`, `src/aris/canvas/**`, `src/aris/shell/**`, `src/localization/**`, `src/aris/localization/**` are all boundary-legal.
-- **i18n rules:** every user-visible string goes through `t()` with keys added to BOTH the `en` and `ar` maps in `src/i18n/dictionaries.ts` (identical key sets enforced by `src/__tests__/i18n.test.ts`; `ar` is typed `Record<keyof typeof en, string>` so parity is compile-enforced), or through `tk(key, 'English fallback')` from `src/aris/shell/shellI18n.ts` (shell only; keys registered in `ARIS_SHELL_MESSAGE_KEYS`, enforced by `i18n.test.ts:212-221`). Palette/library copy has its own manifest `src/aris/shell/dmtLibraryI18n.ts:10-33`. Never hardcode English in JSX text/attributes (`title`, `aria-label`, `placeholder`) or in `pushToast`/`setStatus` calls — `check:ui-copy` blocks it. **All keys needed by Waves 12–15 are pre-registered by Lane L-I18N in Wave 11**, so downstream lanes never touch `dictionaries.ts` except L-P10b (which DELETES three now-unused keys in the same commit that removes their uses).
-- **Lint:** `--max-warnings 0`; `react-hooks/exhaustive-deps` is an ERROR — list every dependency.
-- **No test games:** no `.skip`, `.only`, retries, quarantines, or inflated timeouts — `npm run check:no-skips` must stay green. Private-fixture suites use the `*.animalwf.test.ts` (or `*.holdout.animalwf.test.ts`) filename pattern with a throw-at-module-load guard (never a skip), run only via their dedicated npm scripts; `check-no-skips.mjs` exempts that filename pattern.
-- **Model edits** go through `ArisAuthoring` → `bridge.execute` so they land as one undo step. `canvasSync` rebuilds every occurrence business object from `definition.type` + `occurrence.symbol` on every document change, and the bridge rebuilds the canvas after every execute/undo — so a definition-type change re-renders, re-colours and re-validates with no extra wiring.
+- **Kimi execution mechanics** — the orchestrator dispatches kimi lanes through the Claude Code CLI against Moonshot's Anthropic-compatible endpoint:
+
+  ```bash
+  export ANTHROPIC_BASE_URL="https://api.kimi.com/anthropic"   # or https://api.moonshot.ai/anthropic
+  export ANTHROPIC_AUTH_TOKEN="$KIMI_API_KEY"                  # from local secrets, never committed
+  export ANTHROPIC_MODEL="<kimi-k2.7 model id>"                # verify exact id at dispatch: /model or provider docs
+  export ANTHROPIC_SMALL_FAST_MODEL="<kimi-k2.7 model id>"
+  MAX_THINKING_TOKENS=32000 claude -p "<lane prompt>"          # xhigh lanes: kimi k3 id + larger thinking budget
+  ```
+
+  Exact model IDs are **verify-at-dispatch** (do not treat the placeholders as facts). `kimi k3 xhigh` lanes use the kimi k3 model id with a larger `MAX_THINKING_TOKENS` budget. Claude-family lanes (`sonnet medium`, `opus48 high`, `fable max (judge)`) dispatch via normal Agent/model settings. Any lane may instead be executed by the user in their own session — the lane briefs below are complete either way. NEVER echo a key value, never commit one, never write one into a brief or log.
+
+- **Determinism is a first-class requirement everywhere.** No `Date.now`, no `Math.random`, no `crypto.getRandomValues`-derived ids in ANY new module. Same input + same engine version ⇒ byte-identical output for: projection draft JSON (via `canonicalJsonText`), AML, layout, findings JSON, SVG markup, verification package. Every producing lane ships a double-run byte-identity test. The one existing determinism hole — `src/aris/writer/ids.ts` `defaultRandom()` (:158-179) — is AVOIDED: all campaign ids use the `prefix.logicalId` scheme (`arisIdForLogicalId`, `src/aris/shell/arisAiCreate.ts:49-51`). Never import the ids.ts allocator in campaign code.
+- **Runtime-boundary rules** (`scripts/check-aris-runtime-boundary.mjs` walks runtime imports from `src/main.tsx`; type-only imports exempt): the new `src/aris/headless/**` and `src/aris/canonical/**` entries are NOT reachable from `src/main.tsx` and are therefore not walked — legal. But any unresolved local import INSIDE the walked graph fails hard, and moving ANY `bpmn-*` package from devDependencies to dependencies fails immediately. The new EPC rules (L-EPC-RULES) DO enter the walked graph via `src/aris/epc/validate.ts` — keep them dependency-clean (epc/ imports nothing outside epc/).
+- **dist/ purity:** `scripts/check-artifact-size.mjs:13-34` fails if `dist/` contains anything but `index.html`. The library build emits ONLY into `packages/epc-engine/dist/` (git-ignored), NEVER into `dist/`. `scripts/clean-output.mjs:6` allowlists only `'dist'` — L-PKG edits the allowlist (authorized change 3).
+- **Root manifest discipline:** root `package.json` keeps `"name": "orbitpm-aris-studio-lite"` (pinned by `check-lite-only.mjs`) and `"private": true`. The ONLY root-manifest edits authorized are script additions (`build:lib`, `clean:lib`). ZERO new root dependencies or devDependencies; lockfile untouched (`check:lock` requires exact pins + JSON-identical manifest/lock roots; CI runs `git diff --exit-code package.json package-lock.json` after `npm ci`). Consequently `license:check` (19-license allowlist) and `sbom` (production lockfile closure) are unaffected — verify they still pass, change nothing in them.
+- **Coverage / test placement:** the `overall` coverage profile is `src/**/*.{ts,tsx}` at 80 % branches/functions/lines/statements (`scripts/run-coverage.mjs`), and vitest `include` is `src/**` ONLY — tests outside `src/` never run. Therefore: every new `src/` module ships with its unit tests IN THE SAME LANE, tests live under `src/aris/{canonical,headless}/`, and the CLI (which must print to stdout — `no-console` is an error in `src/**`) lives OUTSIDE `src/` in `packages/epc-engine/bin/` with its coverage provided by `scripts/epc-engine-cli.test.mjs` (node:test, wired into quality.yml exactly once — `check:no-skips` enforces this).
+- **Path-segment bans** (`check-lite-only.mjs`): `packages/`, `bin/`, `cli/` are legal path segments; `server`, `bridge`, `desktop`, `installer`, `updater`, `docker` are banned at any depth — never name anything with them, including in docs filenames.
+- **Workflow discipline:** NO new workflow files this campaign. Touch exactly (a) the two workflow-inventory scripts (authorized change 1) and (b) the `node --test` line in `quality.yml`'s policy job (authorized change 4). `check-release-workflows.mjs` pins the exact job lists of release.yml/pages.yml/pages-rollback.yml — never add jobs there. **npm registry publishing is DEFERRED**: the package is consumed via `npm pack` tarball or git dependency (see `docs/ENTERPRISE_HANDOFF.md`); a future publish workflow is a noted follow-up requiring its own authorized change + both inventory updates + `id-token: write`.
+- **Version drift (note-only, parked):** root version is `0.5.0` while release.yml/pages.yml/`release-workflow-critical-invariants.mjs` pin `v0.4.5`. This campaign does not touch the tag-release path; `packages/epc-engine` versions independently at `0.1.0`.
+- **i18n rules:** any user-visible STUDIO string goes through `t()` with keys in BOTH `en`/`ar` maps of `src/i18n/dictionaries.ts` (parity compile-enforced). This campaign adds NO new `.tsx` — `check:ui-copy` scans `src/**/*.tsx` only, so pure-`.ts` engine modules are out of its scope; the two new EPC rule messageKeys ARE registered in dictionaries (they surface in the live rail). The canonical module carries its own EN/AR finding-message tables for the machine-readable artifact, drift-tested against the dictionaries.
+- **Lint:** `--max-warnings 0`; `no-console` error in `src/**` (only `console.error|warn`); new non-`src` locations get eslint coverage per authorized change 3.
+- **No test games:** no `.skip`/`.only`, retries, quarantines, or inflated timeouts — `npm run check:no-skips` stays green. New `scripts/*.test.mjs` must appear exactly once in a `node --test` command in quality.yml; any new e2e spec must be added to `REQUIRED_BROWSER_SUITES` in `scripts/release-suite-manifest.mjs` (both directions enforced).
+- **Worktrees** (goal.md conventions): within a wave, lanes sharing no files run in the main tree; if the orchestrator wants physical isolation, use sibling worktrees `git worktree add ../bpmn-studio-w<lane> <branch>` and fold back via the orchestrator (workers never run mutating git). Orchestrator owns all builds/commits/pushes.
 
 ### Authorized product changes
 
-The user explicitly requested these; updating tests that assert the OLD behavior is **required work, not assertion-weakening**. Workers must NOT "fix" the product to satisfy old tests.
+The user explicitly requested these; updating tests/guards that assert the OLD behavior is **required work, not assertion-weakening**. Workers must NOT "fix" the product to satisfy old guards.
 
-1. The floating diagram-js palette is REMOVED; tools render as a Details/Tools-tabbed panel in the right rail. e2e selector migration authorized in `aris-authoring`, `aris-canvas-interaction`, `aris-new-model`, `aris-i18n-rtl` (palette-is-LTR assertions become rail-is-RTL-in-Arabic), `aris-details-rail`; `arisPaletteDrag.test.ts` is deleted; `paletteCatalog.test.ts` re-targets `targets()`.
-2. Palette tooltips show `{name}` only; details-pane raw `OT_/ST_/MT_/AT_/CT_` values are replaced by friendly names; dictionary keys `aris.details.general.type|defaultSymbol|symbol` are deleted; `aris.library.dock|undock|move` are deleted.
-3. Auto-translate fires for EVERY opened/created/imported document (was: generated only). An e2e opt-out init-script helper is added to ~16 non-translation specs; `tests/e2e/mandatory-translation-evidence.json` (`exactInventory: true`) is updated; the translation spec is restructured (TR-auto-import, TR-auto-generated, TR-auto-animalwf).
-4. The legend gains AND/XOR/OR tiles (`legend.test.ts` 19→22) and bilingual RACI rows; `aris.printFrame.*` keys become registered (Arabic now renders where the English fallback used to win).
-5. VACD `Flags=16` chevrons render as background container frames; `CT_IS_PRCS_ORNT_SUPER` edges are hidden (convention manual p.18 approves).
-6. Interactive resize is floored at descriptor `defaultBounds` (import/programmatic paths stay verbatim).
-7. `processInterfaceShape` and the `requirement` icon geometry are redrawn (`symbols.test.ts` asserts only symbol count 36 + fingerprint uniqueness, both stay green).
-8. New commands/UX: a `setDefinitionType` command, a `changeObjectType` authoring path, a canvas right-click menu, and a hover type tooltip.
-9. **Create-from-PDF is LOCKED to `claude-opus-4.8` as its only model** (user directive 2026-08-02, productionizing the P13 A/B winner — see L-P13-prod). When the Create attachment is a PDF, the model is forced to Claude Opus 4.8 (route `anthropic/claude-opus-4.8`, P13-verified for native-PDF document-vision at similarity 0.96) regardless of the user's provider/model selection; the model picker is disabled/locked for the PDF path and the UI shows the lock. `firstLiteModelForAttachment('…','pdf')`-style fallbacks and any test asserting a different PDF model are updated. This SUPERSEDES L-P13's original "evaluation only, no production fix" scope.
+1. **Workflow-inventory fix (pre-existing red at HEAD):** `pages-aris.yml` is added to the hard-coded inventories in `scripts/check-actions.mjs:9-15` and `scripts/check-release-workflows.mjs:8-14`. This makes `check:actions` and the release-invariants script green again; `pages-aris.yml` is already SHA-pinned and avoids `upload-pages-artifact` (verified), so the pin/ban scans it now enters must pass unchanged.
+2. **CONTRIBUTING.md carve-out:** lines 3-5 ban an "alternate executable application". Amend to explicitly permit "a headless Node CLI for the same engine (`packages/epc-engine/bin/`), which is a batch projection/render tool — still no server, bridge, desktop shell, installer, or updater." This is the house mechanism for exactly this change.
+3. **New-location plumbing edits:** `scripts/clean-output.mjs:6` allowlist gains `'packages/epc-engine/dist'`; `eslint.config.js` gains `packages/epc-engine/bin/**/*.mjs` (node globals, mirroring the exception block at `eslint.config.js:66-79`) and ignores `packages/epc-engine/dist/**`; `.prettierignore` and `.gitignore` gain `packages/epc-engine/dist/`; root `package.json` gains scripts `build:lib` + `clean:lib` (nothing else); `tsconfig.json` is expected to need NO edit (`*.config.ts` already covers `vite.lib.config.ts`; the bin is `.mjs`) — an include addition is pre-authorized only if a stray `.ts` proves necessary.
+4. **quality.yml `node --test` line:** `scripts/epc-engine-cli.test.mjs` is appended to the existing folded `node --test` command in the policy job (the 10-file list becomes 11). No other workflow edit.
+5. **README scope note:** a short "EPC engine as a service" section (what `packages/epc-engine` is, that the studio UX is unchanged, pointer to the two docs).
+6. **New EPC rules surface in the product:** `epc.rule.unlabeledDecisionBranch` and `epc.startEnd.unreachableEnd` (both `error`) join `validateEpcGraph` — they will appear in the live EPC rail, canvas markers, gap scanner, and AI-generation repair turns. Updating `arisEpcFindings`/`gapScanner`/`epcSemantics` tests and any fixture counts they change is required work. Fixtures that were only "valid" by omission (unlabeled XOR branches) get labels, not weakened assertions.
+7. **e2e manifest addition:** `tests/e2e/aris-headless-parity.spec.ts` is added to `REQUIRED_BROWSER_SUITES` (`scripts/release-suite-manifest.mjs`).
+
+Nothing else in the studio UX, CSP, providers, or release lifecycle changes.
 
 ---
 
@@ -75,852 +80,567 @@ The user explicitly requested these; updating tests that assert the OLD behavior
 
 Within a wave, every lane is dispatched concurrently. No wave starts before every lane of the previous wave passed its verification commands. **One owner per contended file per wave** — the "Owns" column is binding.
 
-| Wave  | Lane                      | Worker                                    | Owns (exclusive this wave)                                                                                                                                                                                                                                                                                                               |
-| ----- | ------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 11    | W11-ORCH (prep)           | orchestrator                              | baseline record; `../reference/` asset staging; humanizer install; worker smoke tests                                                                                                                                                                                                                                                    |
-| 11    | L-I18N                    | sonnet med                                | `src/i18n/dictionaries.ts`, `src/aris/shell/shellI18n.ts`, `src/aris/shell/dmtLibraryI18n.ts`, `src/aris/canvas/printFrameI18n.ts`, `src/__tests__/i18n.test.ts`                                                                                                                                                                         |
-| 12    | L-P1a                     | codex gpt-5.6-sol xhigh                   | `src/ai/freeTranslate.ts`, `src/aris/localization/*`, `src/localization/TranslationReviewDialog.tsx`, `src/aris/shell/ArisTranslateController.tsx`, their tests (reads `src/localization/plan.ts`, `run.ts`)                                                                                                                             |
-| 12    | L-P4                      | opus48-1m high                            | `src/aris/canvas/renderer.ts` (text regions), `src/aris/canvas/typography.ts`, typography/renderer tests (reads `src/aris/renderer/textWrap.ts`)                                                                                                                                                                                         |
-| 12    | L-P8                      | sonnet med                                | NEW `src/aris/canvas/resizeBehavior.ts`, `src/aris/canvas/modules.ts`, `src/aris/canvas/arisModeling.ts`, their tests                                                                                                                                                                                                                    |
-| 12    | L-P10a                    | sonnet med                                | NEW `src/aris/conventions/displayNames.ts` (+test), `src/aris/assistant/digest.ts` (re-point only)                                                                                                                                                                                                                                       |
-| 12→15 | L-ASSETS (P11/P12 assets) | sonnet + codex (Emirati)                  | `../reference/AnimalWF/gen-tests/**` only (outside repo)                                                                                                                                                                                                                                                                                 |
-| 13    | L-P1b                     | codex gpt-5.6-sol xhigh                   | `src/aris/shell/ArisStudioTab.tsx`, `ArisTranslateController.tsx` (2nd pass), `tests/e2e/*` (translation + opt-out sweep), `tests/e2e/mandatory-translation-evidence.json`                                                                                                                                                               |
-| 13    | L-P5                      | opus48-1m high                            | `renderer.ts` (`drawPrimitive`), `src/aris/canvas/legend.ts`, `src/aris/symbols/shapes.ts` (rule marks), `src/aris/symbols/types.ts`, legend/stroke tests                                                                                                                                                                                |
-| 13    | L-P10b                    | sonnet med                                | `src/aris/details/tabs.ts` (+test), `src/aris/shell/ArisDetailsRail.tsx`, `ArisDetailsEditors.tsx`, `ArisEpcRail.tsx`, `dictionaries.ts` (3 deletions only)                                                                                                                                                                              |
-| 13    | L-P13                     | opus48-1m high (+fable judge)             | NEW `scripts/aris-pdf-model-ab.ts` + harness adapters (test-side only); runs in `../desktop-w10` (no merge)                                                                                                                                                                                                                              |
-| 13    | L-P11-runner              | sonnet med                                | NEW `scripts/aris-description-eval.ts`, NEW `scripts/aris-excel-eval.ts`, NEW `src/aris/fidelity/structureCompare.ts` (+tests)                                                                                                                                                                                                           |
-| 14    | L-P2                      | codex gpt-5.6-sol xhigh                   | `src/aris/canvas/paletteProvider.ts`, NEW `src/aris/shell/ArisToolsPanel.tsx` (+css/test), `ArisStudioTab.tsx`, `modules.ts`, `src/aris/shell/ArisCanvasView.tsx`, `src/aris/canvas/dmtLibrary.css`, `src/aris/shell/arisRailLayout.ts`, DELETE `arisPaletteDrag.ts` (+test), e2e palette specs, NEW `tests/e2e/aris-rail-tools.spec.ts` |
-| 14    | L-P3                      | opus48-1m high                            | `src/aris/canvas/canvasSync.ts`, `src/aris/canvas/elements.ts`, `renderer.ts` (`drawShape`/`drawConnection`), NEW `vacdOverview.animalwf.test.ts`                                                                                                                                                                                        |
-| 14    | L-P9→P6                   | sonnet med                                | `src/aris/symbols/shapes.ts` (process-interface then requirement icon), NEW `processInterface.test.ts`, `symbols.test.ts` additions                                                                                                                                                                                                      |
-| 14    | L-P7                      | sonnet med                                | `legend.ts` (RACI rows), `legend.test.ts`, printFrame test audit                                                                                                                                                                                                                                                                         |
-| 14→15 | L-P11-loop / L-P12-loop   | fable max (judge) + codex xhigh (improve) | `src/aris/ai/*` (P11) / `src/aris/excel/*` (P12) + tests; `../reference/AnimalWF/gen-tests/**`                                                                                                                                                                                                                                           |
-| 15    | L-P10c                    | codex gpt-5.6-sol xhigh                   | `src/aris/model/commands.ts`, `src/aris/canvas/commandFactory.ts`, `src/aris/canvas/authoring.ts`, NEW `src/aris/canvas/hoverTooltip.ts`, `modules.ts`, NEW `src/aris/shell/ArisCanvasContextMenu.tsx`, `ArisStudioTab.tsx`, `src/aris/canvas/quickPick.ts` (open-by-id touch), e2e change-type spec                                     |
-| 16    | W16-SHIP                  | orchestrator                              | full gates, artifact, evidence set, ledger, push                                                                                                                                                                                                                                                                                         |
+| Wave | Lane        | Worker                                  | Owns (exclusive this wave)                                                                                                                                                                                                                                        |
+| ---- | ----------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 17   | W17-ORCH    | orchestrator                            | baseline record; branch/worktree setup; kimi + claude dispatch smoke; environment-blocked-suite census                                                                                                                                                            |
+| 17   | L-POLICY    | kimi k2.7                               | `scripts/check-actions.mjs`, `scripts/check-release-workflows.mjs`, `CONTRIBUTING.md`, `README.md`                                                                                                                                                                |
+| 18   | L-SCHEMA    | sonnet medium                           | NEW `src/aris/canonical/contract.ts`, NEW `src/aris/canonical/jsonSchema.ts`, NEW `src/aris/canonical/index.ts`, NEW `src/aris/canonical/contract.test.ts`, NEW `src/aris/canonical/jsonSchema.test.ts`                                                           |
+| 18   | L-FIXTURES  | kimi k2.7                               | NEW `src/aris/canonical/fixtures.ts`, NEW `src/aris/canonical/fixtures.test.ts`                                                                                                                                                                                   |
+| 18   | L-EPC-RULES | kimi k3 xhigh                           | `src/aris/epc/validate.ts`, the epc validate test file, `src/aris/ai/epcSemantics.ts`, `src/aris/shell/arisValidationFindings.ts`, `src/i18n/dictionaries.ts` (2 keys EN+AR only), their touched tests                                                            |
+| 19   | L-PROJECT   | kimi k3 xhigh                           | NEW `src/aris/canonical/projectToEpc.ts`, NEW `src/aris/canonical/findings.ts`, NEW `src/aris/canonical/findingMessages.ts`, NEW `src/aris/canonical/projectToEpc.test.ts`, NEW `src/aris/canonical/findings.test.ts`, `src/aris/canonical/index.ts` (re-exports) |
+| 19   | L-VPKG      | sonnet medium                           | NEW `src/aris/canonical/verificationPackage.ts`, NEW `src/aris/canonical/verificationPackage.test.ts`                                                                                                                                                             |
+| 20   | L-HEADLESS  | opus48 high                             | NEW `src/aris/headless/*` (index, environment, render, version, tests), `src/aris/canvas/testing/jsdomSvg.ts` + `harness.ts` (header/promotion edits), `src/aris/canvas/exportArisPdf.ts` (+its test)                                                             |
+| 21   | L-PKG       | opus48 high                             | NEW `vite.lib.config.ts`, NEW `packages/epc-engine/package.json`, NEW `packages/epc-engine/README.md`, `scripts/clean-output.mjs`, `eslint.config.js`, `.prettierignore`, `.gitignore`, root `package.json` (scripts only)                                        |
+| 21   | L-PARITY    | opus48 high                             | NEW `tests/e2e/aris-headless-parity.spec.ts`, NEW `tests/e2e/helpers/arisHeadlessRender.ts`, NEW `tests/e2e/fixtures/epc-parity-canonical.json`, `scripts/release-suite-manifest.mjs`                                                                             |
+| 22   | L-CLI       | sonnet medium                           | NEW `packages/epc-engine/bin/epc-project.mjs`, NEW `scripts/epc-engine-cli.test.mjs`, `.github/workflows/quality.yml` (node --test line only)                                                                                                                     |
+| 22   | L-DOCS      | kimi k2.7                               | NEW `docs/EPC_PROJECTION.md`, NEW `docs/ENTERPRISE_HANDOFF.md`                                                                                                                                                                                                    |
+| 23   | W23-JUDGE   | fable max (judge)                       | read-only review reports (scratchpad only — judge never implements)                                                                                                                                                                                               |
+| 23   | W23-FIX     | opus48 high / sonnet medium (as routed) | files named by accepted judge findings only                                                                                                                                                                                                                       |
+| 23   | W23-SHIP    | orchestrator                            | full gates, artifact, evidence, ledger, push                                                                                                                                                                                                                      |
 
-**Serialization rationale (binding):** `renderer.ts` chain P4 (W12) → P5 (W13) → P3 (W14); `shapes.ts` P5 (W13) → P9/P6 (W14); `legend.ts` P5 (W13) → P7 (W14); `ArisStudioTab.tsx` P1b (W13) → P2 (W14) → P10c (W15); `modules.ts` P8 (W12) → P2 (W14) → P10c (W15); `dictionaries.ts` centralized in L-I18N (W11), with P10b deletions the only later edit (W13). The e2e translation sweep (P1b, W13) precedes the e2e selector migration (P2, W14) so their edits to shared spec files don't collide.
+**Serialization rationale (binding):** `src/aris/epc/validate.ts` is owned ONCE (L-EPC-RULES, W18) and thereafter read-only — L-PROJECT (W19) consumes the new rules through `validateEpcGraph`, never edits them. `src/aris/canonical/index.ts` chain: L-SCHEMA (W18) creates it → L-PROJECT (W19) is its sole W19 owner and adds BOTH its own re-exports AND the `buildVerificationPackage` re-export line (the export name is fixed by this plan, so L-PROJECT does not need L-VPKG's file to exist first); L-VPKG touches only its own two files. `src/i18n/dictionaries.ts` is touched ONLY by L-EPC-RULES (W18). `src/aris/canvas/testing/*` and `exportArisPdf.ts` only by L-HEADLESS (W20). Root `package.json`, `eslint.config.js`, `clean-output.mjs`, ignore files only by L-PKG (W21). `quality.yml` and `scripts/` workflow-guard files: L-POLICY (W17, the two inventory scripts) → L-CLI (W22, quality.yml + the new scripts test) — never both in one wave. `scripts/release-suite-manifest.mjs` only by L-PARITY (W21). This ordering also guarantees the CLI (W22) builds against a lib build config that already exists (W21), and the parity spec (W21) runs against headless code that landed in W20.
 
 ---
 
 ## Embedded reference facts (workers use these instead of re-deriving)
 
-All anchors verified against the working tree at `abe1d57`. Corrections found during verification are marked **[VERIFIED]**.
+All anchors verified against the working tree at `8bbc01a`. Corrections found during verification are marked **[VERIFIED]**.
 
-### App shape
+### Build system + guard scripts (constraints on every lane)
 
-React 18 + Vite 6 single-file SPA (`vite-plugin-singlefile`). Entry `src/main.tsx` mounts `<ArisApp/>`. NOT Electron. Canvas is diagram-js 15.22. Largest files: `src/i18n/dictionaries.ts` (6018 lines), `src/ArisApp.tsx` (1763), `src/aris/shell/ArisStudioTab.tsx` (1261). `src/ai/AiPanelLite.tsx` is DEAD (not mounted). CSP `connect-src` allowlist in `index.html:30-33`: `api.anthropic.com`, `generativelanguage.googleapis.com`, `openrouter.ai`, `translate.googleapis.com`, `api.mymemory.translated.net` (irrelevant to Node-side eval harnesses).
+`npm run build` = `vite build` → single inlined `dist/index.html`; plugin order `embedAppVersionMarker(), stripLegacyBpmnSvgFont(), react(), viteSingleFile()` (`vite.config.ts:72`). `embedAppVersionMarker()` THROWS if `data-orbitpm-app-version` already exists — it must NOT be reused in the lib config. `check:size` (`scripts/check-artifact-size.mjs:13-34`): when the artifact is `index.html`, its directory must contain ONLY `index.html`; raw ≤ 8 MiB, gzip ≤ 2.5 MiB. `clean-output.mjs:6` — `allowedTargets = new Set(['dist'])`. `build:aris` = build + `scripts/update-rolling-artifact.mjs` → `release/OrbitPM-ARIS-Studio-Lite.html`. `check:lock`: lockfileVersion 3, `npm@11.13.0`, every dep exact `x.y.z`, manifest/lock roots JSON-identical; CI Node `22.22.0`. `check:lite-only`: banned path segments `desktop|installer|updater|server|bridge|docker` at any depth; root manifest name pinned `orbitpm-aris-studio-lite`; electron/docker word-scan of the scripts blob; import scan of `src|tests|scripts`. `check:aris-runtime-boundary`: TS-AST BFS from `src/main.tsx` only; type-only imports exempt; fails on any unresolved local import in the graph and on any `bpmn-*` package in `dependencies`. `check:no-skips`: no `.skip/.only/retries` anywhere in `src|tests|scripts/*.test.mjs`; every tracked `scripts/*.test.mjs` exactly once in a quality.yml `node --test` command (current list: 10 files in the policy job, step "Release evidence verifier regression tests"); `REQUIRED_BROWSER_SUITES` (`scripts/release-suite-manifest.mjs`, currently 22 specs) must equal tracked `tests/e2e/*.spec.ts` exactly. `check:ui-copy` scans `src/**/*.tsx` ONLY. Coverage: `scripts/run-coverage.mjs` `overall` profile = `src/**/*.{ts,tsx}` at 80 % b/f/l/s (plus 4 focused 90 % profiles, none touching aris). vitest: `environment: 'node'`, `include: src/**/*.test.ts(x)`, jsdom opt-in per file via `// @vitest-environment jsdom` docblock. eslint: `applicationFiles = ['src/**/*.{ts,tsx}','tests/**/*.{ts,tsx}','*.{config,setup}.ts']`, `scripts/**/*.mjs` covered with node globals at `eslint.config.js:23-29`, exception-block pattern at `:66-79`. Prettier checks everything not in `.prettierignore` (which already has `*.xml`, `*.xlsx`; NOT `.svg` — prettier has no svg parser, so committed SVG fixtures are safe). Workflow inventory red at HEAD: 6 files on disk, `check-actions.mjs:9-15` + `check-release-workflows.mjs:8-14` expect 5 (missing `pages-aris.yml`); `pages-aris.yml` is SHA-pinned, uses `upload-artifact`+`deploy-pages` (NOT the banned `upload-pages-artifact`), single job `deploy` **[VERIFIED]**.
 
-### Data model
+### Engine module map + purity verdicts
 
-`ArisWorkingDocument { database, models: Map, objectDefinitions: Map, connectionDefinitions: Map, styleCatalog, sourceIndex, revision }` (`src/aris/model/types.ts:335-343`). `ArisModel.type ∈ {'MT_EEPC','MT_VAL_ADD_CHN_DGM',…}`. Object type lives on the DEFINITION (`ArisObjectDefinition.type`, :250-258); symbol lives on the OCCURRENCE (`ArisObjectOccurrence.symbol`, :261-270). Names are `ArisLocalizedValue { values: Record<localeId,string>, fallback }` (:19-22) — NO `nameEn`/`nameAr`; locale keys are `'1033'`(EN)/`'1025'`(AR), BCP-47, OR raw entity refs `&LocaleId.USen;`/`&LocaleId.AEar;`. Canvas business object `ArisOccurrenceBusinessObject { kind, objectType, symbolNum, catalogId?, style, name, … }` (`src/aris/canvas/elements.ts:67-85`) is rebuilt in `canvasSync.ts:551/832`.
+Pure Node (no DOM at all): `src/aris/model/**` (`ArisWorkingDocument` `types.ts:335`; `buildFromSource` `buildFromSource.ts:623`; `applyCommand` `commands.ts:1125`), `src/aris/epc/**` (`toEpcGraph` `adapter.ts`, structurally typed — the sanctioned producer seam), `src/aris/layout/**` (all 12 modules; `cleanLayout` `cleanLayout.ts:483`, header :19-24 documents "no Math.random and no clock… byte-identical JSON"), `src/aris/renderer/**` (incl. `textWrap.ts` AFM tables + 3-tier Arabic table, `measureTextWidth` :340), `src/aris/source/xmlTokenizer.ts` (`tokenizeXmlDocument` :705) + `semanticIndex.ts` (`buildSemanticArisDocument` :956), `src/aris/canvas/layoutSeam.ts` `buildLayoutGraph` (:115), `canvasSync.ts` geometry helpers (`modelContentBounds` :318), `typography.ts`, `bidi.ts`, `fitView.ts` (`arisContentBounds` :88 — includes occurrence/freeText/**label**/connection elements, i.e. external captions, which the jsdom `getBBox` shim misses), `printFrame.ts` `buildPrintFrame`, `emptyDocument.ts`. jsdom-OK (needs only `createElementNS` + the shim): `svg.ts`, `renderer.ts` `drawShape`:1040/`drawConnection`:1396, `ArisCanvas.create` (`ArisCanvas.ts:72`; `applyCleanLayout` :268; `setPrintFrameVisible(false)` `renderer.ts:905`) + the full diagram-js module list — proven by ~40 canvas suites booting via `src/aris/canvas/testing/harness.ts` `bootCanvas` (:48) + `src/aris/canvas/testing/jsdomSvg.ts` `installJsdomSvgSupport()` (:329) / `createCanvasContainer(w=1200,h=800)` (:427). jsdom-approximate: `measureArisCanvasSvgBounds` (`exportArisPdf.ts:480`, `getBBox`-based — the shim returns null for `<text>` at `jsdomSvg.ts:252-256`), `collectArisExportTextRuns` (:507, `getScreenCTM` — PDF-only). Browser-only: `browserArisSvgToPngDeps` (:611), `exportArisCanvasPdf` (:642). `arisSvgToPngDataUrl(markup, size, deps)` (:360) takes INJECTED `createCanvas`/`loadImage` deps — Node-testable, PNG stays optional with no new rasterizer dependency. `EXPORT_STRIP_SELECTOR` (:426-427) = `.djs-outline, .djs-segment-dragger, .djs-bendpoint, [data-aris-kind="lane"]`; `buildArisExportSvgMarkup(svgRoot, bounds, padding)` (:448) accepts arbitrary bounds and clones the live SVG (attributes on `.djs-element` groups survive). Vite-only specifier trap: `src/aris/source/browserXmlTokenizer.ts:1` imports `./xmlTokenizer.worker?worker&inline` — the headless entry NEVER imports `browserXmlTokenizer`/`sourcePackage`; it calls `tokenizeXmlDocument` directly. Arabic/RTL works headlessly: measurement is table-driven (`textWrap.ts`), direction attrs from `canvas/bidi.ts:27` (`direction=rtl` + `unicode-bidi=plaintext` when Arabic present); the SVG references font families by name only (`Noto Sans Arabic`, Arial) — consumers rasterizing must provide fonts (documented, not solved here).
 
-### Model/symbol identity
+### The recommended headless pipeline (build exactly this chain)
 
-Presentation catalog `ARIS_CONVENTION_SYMBOLS` (36 rows, `src/aris/conventions/catalog.ts:70`): each row has `catalogId`, `objectType`, `symbolNum`, `labelKey` (→ `aris.symbol.*`), `accessibleLabel`, `defaultFill`, `paletteGroup`, `paletteOrder`. Lookups: `conventionSymbol(objectType, symbolNum)` (:669), `conventionSymbolByCatalogId(catalogId)` (:664), `conventionDefaultFill` (:676). Geometry descriptors `src/aris/symbols/shapes.ts` (`DmtSymbolDescriptor`: `defaultBounds`, `iconBox`, `contentBox`, `hitPath`, groups with `paintRole`/`scale`); resolver `resolveArisSymbol` (`src/aris/symbols/registry.ts:206`). Friendly-name precedent: `legendName(catalogId)` (`legend.ts:115-121`, chain dictionary→accessibleLabel→catalogId), `dictionaryLabel` (`dmtLibrary.ts:102-107`), `humanizeTypeCode` (`digest.ts:41-49`).
+```
+CanonicalProcessV1
+  → parseCanonicalProcess (zod)          src/aris/canonical/contract.ts       [NEW, pure]
+  → projectCanonicalToDraft              src/aris/canonical/projectToEpc.ts   [NEW, pure] → ArisAiDraftV1 + anchor map
+  → validateArisAiDraft                  src/aris/ai/validateDraft.ts:58-75   [pure]
+  → per-model toEpcGraph + validateEpcGraph  (template: src/aris/ai/epcSemantics.ts:103-153 adapterModelFor)  ← GATE BEFORE RENDER
+  → buildAmlFromArisAiDraft              src/aris/shell/arisAiCreate.ts:76    [pure; ids = prefix.logicalId :49-51; geometry col x=240,y=120+i*160]
+  → tokenizeXmlDocument                  src/aris/source/xmlTokenizer.ts:705  [pure]
+  → buildSemanticArisDocument            src/aris/source/semanticIndex.ts:956 [pure]
+  → buildFromSource                      src/aris/model/buildFromSource.ts:623[pure] → ArisWorkingDocument
+  → jsdom boot + installJsdomSvgSupport() + createCanvasContainer            [src/aris/canvas/testing/jsdomSvg.ts]
+  → ArisCanvas.create({container, document, modelId, minimap:false})          [ArisCanvas.ts:72]
+  → canvas.applyCleanLayout((graph) => cleanLayout(graph))                    [ArisCanvas.ts:268 — the app's own one-liner]
+  → setPrintFrameVisible(false) on the renderer                              [renderer.ts:905]
+  → stamp data-epc-node/data-epc-edge on live .djs-element groups via elementRegistry
+  → bounds = arisContentBounds(elementRegistry.getAll())                     [fitView.ts:88 — replaces getBBox]
+  → buildArisExportSvgMarkup(svgRoot, bounds)                                [exportArisPdf.ts:448; no text-runs overlay]
+```
 
-### Rendering + zoom
+### Live IR + vocabularies (the projection target)
 
-Text is manual SVG `<text>/<tspan>` with greedy whitespace wrapping (`src/aris/canvas/typography.ts:99-137`) and per-char AFM measurement (`src/aris/renderer/textWrap.ts:340`; regular table :49, BOLD :154, Arabic 3-tier :258-260). Primitive drawing `renderer.ts:369 drawPrimitive`; caption `drawCaption` :530. Zoom = SVG matrix transform on the viewport `<g>` (diagram-js `Canvas.js:1333-1337`); UI ± steps 0.2, range 0.2–4 (`ArisStudioTab.tsx:918/928/940`). PDF export clones the live canvas SVG (`exportArisPdf.ts:448`) so canvas fixes propagate to the PDF.
+`ArisAiDraftV1` (`src/aris/ai/contract.ts:271-291`, zod `strictObject`, no defaults/coercion): `{version:1, models[], objects[], relations[], attributes[], assignments[], uncertainties[]}`. `ArisAiObject` (:153-177): `logicalId, modelLogicalId, objectType, symbolType?, names{en?,ar?}, attributes[], suggestedOrder?, evidence?, confidence('high'|'medium'|'low')`. `ArisAiRelation` (:183-205): `…, connectionType, names?, returnOutcome?`. `ArisAiUncertainty` (:238-265): kinds `missing-field|missing-translation|ambiguous-mapping|unclear-symbol|other`. Vocab (`src/aris/ai/typeValidation.ts`): 12 object types (:22-35 — incl. `OT_FUNC, OT_EVT, OT_RULE, OT_INFO_CARR, OT_BUSINESS_RULE, OT_APPL_SYS, OT_PERS, OT_PERS_TYPE, OT_POLICY, OT_REQUIREMENT, OT_ENT_TYPE, OT_PERF`), 17 connection types (:52-70), rule symbols `ST_OPR_AND_1|ST_OPR_OR_1|ST_OPR_XOR_1` (:81-85). **[VERIFIED]** `symbolType` is vocab-checked ONLY on `OT_RULE` (:116-128) — `symbolType:'ST_PRCS_IF'` on an `OT_FUNC` passes validation, flows into both definition and occurrence symbols (`arisAiCreate.ts:133` and `:197` — `object.symbolType ?? DEFAULT_SYMBOLS[objectType] ?? 'ST_FUNC'`), and renders via the catalog (`ST_PRCS_IF` at `conventions/catalog.ts:111`; also `excel/templateSchema.ts:119`) — so the handoff projection needs NO vocabulary expansion. JSON Schema emitter pattern to mirror: `buildArisAiDraftJsonSchema()` (`src/aris/ai/draftJsonSchema.ts:174-197` — hand-written, enum-locked, `additionalProperties:false`). Draft validation composition (`validateDraft.ts:58-75`): forbidden-content → zod → types → logical integrity, never throws.
 
-### AI creation
+### EPC rule table + the two gaps this campaign closes
 
-`ArisGenerationPanel` (description/document/excel tabs) → `buildArisAiPrompt` (`src/aris/ai/promptBuilder.ts:167-197`) → default model `z-ai/glm-5.2` via OpenRouter → strict-JSON `ArisAiDraftV1` (`src/aris/ai/contract.ts`) → `runArisAiGeneration` (`src/aris/shell/arisAiGeneration.ts:169+`: validate, normalize, ≤3 repair turns) → `buildAmlFromArisAiDraft` (`src/aris/shell/arisAiCreate.ts:76-250`, deterministic one-column layout) → model. Excel: `templateWriter.ts` (generated workbooks), `xlsxReader.ts`/`workbookParser.ts:1042` (fflate parse), `arisExcelCreate.ts` (rows→AML). PDF v1: `src/ai/pdf.ts` (native PDF to vision model, no local raster). Live-eval precedent: `createFromPdf.seq2.test.ts` (env-gated `OPENROUTER_API_KEY`, cost ceiling, soft-target similarity).
+`validateEpcGraph(graph, {knownModelIds})` (`src/aris/epc/validate.ts:29-44`; rule table comment :14-28): `epc.alternation` (error, :51-79, exception `CT_IS_PREDEC_OF_1` Func→Func), `epc.startEnd.missingStart`/`missingEnd` (error, :82-111 — existence only), `epc.rule.splitMergeConflict` (error, :119), `epc.event.decisionViolation` (error, :147), `epc.connectivity.orphanNode` (warning, :177), `epc.rule.unrecognizedSymbol` (warning, :210), `epc.connection.missingType` (error, :229), `epc.linkedModel.danglingReference` (error, :250). `EpcFinding` (`epc/types.ts:88-95`): `{ruleId, severity, messageKey, messageParams?, nodeIds[], edgeIds[]}` — i18n keys, never prose. Existing dictionary keys `aris.epc.finding.*` EN `dictionaries.ts:2511-2523` / AR `:5507-5519`. Wiring surface for a NEW rule (5 places): `epc/validate.ts` (+rule table comment), `epcSemantics.ts:50-70` `EPC_RULE_MESSAGES` (English repair prompts), `arisValidationFindings.ts:47-57` `EPC_RULE_GAP_KINDS`, `src/i18n/dictionaries.ts` EN+AR keys, and the canonical findings message tables (L-PROJECT). **Missing vs master plan:** labeled-XOR-conditions (nothing validates decision-branch labels) and reachable-end-outcomes (`missingEnd` checks existence, not reachability from a start).
 
-### Worktrees
+### Determinism facts
 
-`desktop` @ `feat/aris-only-studio` (abe1d57). `desktop-w10` @ `feat/aris-w10-cfp2` (ef0f93f): Wave-10 create-from-PDF v2 (band tiling `regionTiling.ts`, `mergeDraft.ts`, `arisAiCoarseToFine.ts` default OFF at :80, `createFromPdf.seq2v2.test.ts` A/B harness); merge-base `956d314`; does NOT contain Wave 9. READ/RUN-ONLY for P13 — never merged.
+Deterministic today (with in-code proof headers): `buildArisAiPrompt`, `normalizeArisAiDraft`, `buildAmlFromArisAiDraft` (ids `prefix.logicalId`, sort with index tie-break `:155-159`, fixed geometry `:36-40`), `cleanLayout` (byte-identical JSON, `cleanLayout.ts:19-24`), `scanArisChatGaps`, revision ids (`packages/revisions.ts:11-13` "No Date.now() or Math.random()"), `canonicalJsonText/Bytes` (`src/aris/packages/canonicalJson.ts:153-167` — sorted keys, trailing newline part of hashed content). NOT deterministic: `src/aris/writer/ids.ts` allocator (:158-179) — never used by the AI/canonical path; keep it that way.
+
+### Master-plan contract facts (what the enterprise repo expects)
+
+EPC generation sequence (master plan Part IV §7): freeze normalized draft → project canonical nodes/edges into EPC events/functions/connectors/lanes → **validate EPC structural rules BEFORE rendering** → SVG as the primary artifact, PNG/PDF only when needed → narrative → verification package showing **trigger, outcome, owner, main flow, roles, systems, decisions, unresolved questions, evidence summary** → contributor corrections create evidence + a NEW version, never direct diagram edits. Canonical taxonomy (Part III §3): notation-neutral; objects = events, activities, decisions, roles/units, information objects, systems, controls, exceptions; edges = sequence, conditional branch, parallel dependency, handoff, data flow, exception route; every citable object has an ID; evidence-linked facts; unknowns + critical gaps; versions immutable; artifact metadata must record generator/renderer + mapping/schema versions. Repository split (Part II §3): bpmn-studio stays the public reusable engine; the private repo consumes it as a package/versioned dependency with a thin `packages/epc-adapter/`.
+
+### Versions
+
+Root `orbitpm-aris-studio-lite@0.5.0`, `private:true`, `type:module`. Runtime deps: diagram-js 15.22.0, diagram-js-direct-editing 3.5.1, diagram-js-minimap 5.4.0, fflate 0.8.3, jspdf 4.2.1, papaparse 5.5.4, react/react-dom 18.3.1, read-excel-file 9.3.4, xmllint-wasm 5.2.0, zod 4.4.3. Relevant devDeps: **jsdom 29.1.1**, vite 6.4.3, vite-node 3.2.4, vitest 3.2.7, @playwright/test 1.61.1, typescript 5.9.3. Node pin 22.22.0 / npm 11.13.0 in CI. New sub-package: `@orbitpm/epc-engine@0.1.0`.
 
 ---
 
-## Wave 11 — Prep (orchestrator) + i18n foundation
+## Wave 17 — Prep (orchestrator) + policy/CI foundation
 
-### W11-ORCH — orchestrator prep
+### W17-ORCH — orchestrator prep
 
-- [x] Record the true baseline: run the full gate suite at HEAD (`npm run typecheck lint check:aris-runtime-boundary check:ui-copy check:no-skips`, `npm test`, `npm run test:aris:animalwf`, `npm run test:aris:animalwf:holdout`) and write the SHA + every failure verbatim into the **Baseline record** section below. If red at HEAD, dispatch a default-worker fix lane before Wave 12 and re-record. — **DONE: all green at `a21c6a1`, no fix lane needed (see Baseline record).**
-- [x] Stage reference assets (reference/ is gitignored, outside the worktree — safe): — **DONE: crops (40 orig-/cmp- files) + icon-board + 3 generated 600-dpi crops (hand/process-interface/operators) + openrouter.env staged; gen-tests dir created.**
+- [ ] Record the true baseline into the **Baseline record** section below: HEAD SHA (`git rev-parse HEAD`, expect `8bbc01a`), branch (`claude/bpmn-studio-implementation-plan-c13dn3`), and the full gate suite at HEAD with every failure verbatim:
 
   ```bash
-  mkdir -p /home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/crops /home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/gen-tests
-  cp /home/ahmed/.claude/jobs/501f0ce4/tmp/pdf-fidelity-crops/{orig-legend.png,cmp-legend.png,orig-requirements.png,cmp-requirements.png,cmp-gate-merge.png,orig-1.png,orig-1-overview.png,crop.py} \
-     /home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/crops/ 2>/dev/null || true
-  cp -r /home/ahmed/.claude/jobs/501f0ce4/tmp/p9 /home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/crops/icon-board 2>/dev/null || true
-  cp /home/ahmed/.claude/jobs/501f0ce4/tmp/openrouter.env /home/ahmed/Desktop/bpmn_tool/reference/openrouter.env && chmod 600 /home/ahmed/Desktop/bpmn_tool/reference/openrouter.env
-  cd /home/ahmed/Desktop/bpmn_tool/reference/AnimalWF/crops
-  pdftoppm -f 1 -l 1 -r 600 -png ../pdf/Register_Animal_Owner_Profile_Draft03.pdf p600
-  python3 - <<'EOF'
-  from PIL import Image
-  im = Image.open('p600-1.png'); W, H = im.size
-  im.crop((int(0.393*W), int(0.212*H), int(0.425*W), int(0.242*H))).resize((900, 1188), Image.LANCZOS).save('orig-hand-600.png')
-  im.crop((int(0.185*W), int(0.815*H), int(0.280*W), int(0.855*H))).save('orig-process-interface-600.png')
-  im.crop((int(0.135*W), int(0.870*H), int(0.190*W), int(0.905*H))).save('orig-operators-600.png')
-  EOF
+  cd /home/user/bpmn-studio
+  npm ci
+  npm run typecheck; npm run lint; npm run format:check
+  npm run check:actions            # EXPECTED RED at HEAD (pages-aris.yml inventory) — record verbatim
+  node scripts/check-release-workflows.mjs   # EXPECTED RED at HEAD — record verbatim
+  npm run check:lite-only; npm run check:no-skips; npm run check:aris-runtime-boundary; npm run check:ui-copy; npm run check:csp; npm run check:lock
+  npm test
+  npm run test:aris:animalwf || echo "ENV-BLOCKED (expected: ../reference/AnimalWF absent)"   # record as environment-blocked, NOT red
   ```
 
-- [x] Confirm the 4 PDFs + 4 expected JSONs are present under `../reference/`; confirm `../reference/openrouter.env` contains `OPENROUTER_API_KEY` (do not print the value). — **DONE: 4 PDFs + 4 expected JSONs + AML fixture present; openrouter.env staged (chmod 600), key len 73.**
-- [x] Install the humanizer skill: `git clone https://github.com/blader/humanizer /home/ahmed/.claude/skills/humanizer` (fallback forks: `jpeggdev/humanize-writing`, `Aboudjem/humanizer-skill`; the skill is a Markdown rewrite checklist — no runtime deps). — **DONE: cloned from blader/humanizer, SKILL.md present.**
-- [x] Worker smoke test: one trivial `codex exec -m gpt-5.6-sol -c model_reasoning_effort="xhigh" "print OK"` and one `opus48-1m` Agent dispatch must round-trip before Wave 12. — **DONE: codex → CODEX-SMOKE-OK (exit 0); opus48-1m → OPUS48-SMOKE-OK.**
+- [ ] Record the environment-blocked census: which suites need `../reference/AnimalWF` (absent in remote containers) and are therefore out of this environment's gate ladder; confirm `release/OrbitPM-ARIS-Studio-Lite.html` is tracked and `npm run check:aris-studio-artifact` passes.
+- [ ] Kimi dispatch smoke: using the fenced block in Global Constraints (verify the exact k2.7/k3 model ids at dispatch time via `/model` or provider docs), run one trivial `claude -p "print KIMI-SMOKE-OK"` per tier and record the tokens. One `opus48 high` and one `sonnet medium` Agent dispatch must round-trip too. If kimi endpoints are unavailable, record it and route kimi lanes to the fallback (`kimi k2.7`→`sonnet medium`, `kimi k3 xhigh`→`opus48 high`) — note every substitution in the ledger.
+- [ ] Worktree setup (optional, per goal.md): sibling worktrees only if the orchestrator parallelizes physically; otherwise dispatch in the main tree wave-by-wave.
 
-### Lane L-I18N — register ALL campaign i18n keys (EN + AR)
+### Lane L-POLICY (Wave 17) — workflow-inventory fix + CONTRIBUTING carve-out + README note _(authorized changes 1, 2, 5)_
 
-**Worker:** sonnet medium. **Read first:** `src/i18n/dictionaries.ts` (EN blocks ~:1058, ~:2307, ~:2619; AR ~:4126, ~:5279, ~:5560), `src/aris/shell/shellI18n.ts:49+`, `src/__tests__/i18n.test.ts`, `src/aris/shell/dmtLibraryI18n.ts`, `src/aris/canvas/printFrameI18n.ts`.
-
-- [x] **Dialog keys** — EN after `'translationReview.noProvider'` (~~:1122), AR after (~~:4188):
-  - `translationReview.runSummary`: EN `{proposals} proposal(s) returned · {failed} item(s) failed and remain listed for retry or manual entry.` / AR `عاد {proposals} من المقترحات · فشل {failed} من العناصر وتبقى مدرجة لإعادة المحاولة أو الإدخال اليدوي.`
-  - `translationReview.nothingSendable`: EN `None of the {count} unresolved field(s) can be sent automatically — fix the source text or enter the value manually below.` / AR `لا يمكن إرسال أي من الحقول غير المحسومة ({count}) تلقائيًا — صحّح نص المصدر أو أدخل القيمة يدويًا أدناه.`
-  - `translationReview.acceptAll`: EN `Accept all proposals` / AR `اعتماد كل المقترحات`
-- [x] **Auto-translate keys** — EN after `aris.translate.*` (~~:2619), AR after (~~:5560); ALSO add all three to `ARIS_SHELL_MESSAGE_KEYS`:
-  - `aris.translate.autoRunning`: EN `Translating {count} labels automatically…` / AR `جارٍ ترجمة {count} تسمية تلقائيًا…`
-  - `aris.translate.autoPartial`: EN `Translated {applied} labels automatically; {remaining} could not be translated — open Translate… to review.` / AR `تمت ترجمة {applied} تسمية تلقائيًا؛ تعذّرت ترجمة {remaining} — افتح «ترجمة…» للمراجعة.`
-  - `aris.translate.autoFailed`: EN `Automatic translation failed: {error}` / AR `فشلت الترجمة التلقائية: {error}`
-  - (`aris.translate.autoDone` already exists — do not re-add. Confirm/register `aris.translate.gestureLabel` = EN `Translate labels` / AR `ترجمة التسميات` if missing.)
-- [x] **Rail / type / context keys** (add to `ARIS_SHELL_MESSAGE_KEYS` AND `dictionaries.ts` EN+AR):
-
-  | Key                               | EN                                                                               | AR                                                                  |
-  | --------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-  | `aris.rail.tab.tools`             | Tools                                                                            | الأدوات                                                             |
-  | `aris.rail.tabsAria`              | Details and tools panels                                                         | لوحتا التفاصيل والأدوات                                             |
-  | `aris.type.blockName`             | {name} block                                                                     | عنصر {name}                                                         |
-  | `aris.details.general.objectType` | Object type                                                                      | نوع الكائن                                                          |
-  | `aris.modelType.eepc`             | Process (EPC)                                                                    | عملية (EPC)                                                         |
-  | `aris.modelType.vacd`             | Value-added chain diagram                                                        | مخطط سلسلة القيمة المضافة                                           |
-  | `aris.contextMenu.aria`           | Element actions                                                                  | إجراءات العنصر                                                      |
-  | `aris.contextMenu.changeType`     | Change object type…                                                              | تغيير نوع الكائن…                                                   |
-  | `aris.changeType.title`           | Change object type                                                               | تغيير نوع الكائن                                                    |
-  | `aris.changeType.current`         | Current: {name}                                                                  | الحالي: {name}                                                      |
-  | `aris.changeType.keepData`        | Connections, attributes and names are kept. Validation re-runs after the change. | تُحتفَظ بالوصلات والسمات والأسماء، ويُعاد تشغيل التحقق بعد التغيير. |
-  | `aris.changeType.failed`          | The type change was refused: {error}                                             | رُفض تغيير النوع: {error}                                           |
-
-- [x] **Print-frame keys** — register all in `dictionaries.ts` EN (mirroring `printFrameI18n.ts:17-29` fallbacks verbatim) + AR; ALSO add `raci.title` to the `printFrameI18n.ts:31` key record:
-  - EN: `processCode` `Process Code` · `processName` `Process Name` · `organizationalOwner` `Organizational Owner` · `headerAria` `Print header for {model}` · `orgBlock` `Organization title block — the imported OLE image is not decoded yet` · `legendAria` `DMT symbol legend and RACI key` · `raci.title` `RACI roles and permissions matrix / RACI` · `raci.responsible` `Responsible` · `raci.approval` `Approval` · `raci.consulted` `Consulted` · `raci.informed` `Informed`
-  - AR (transcribed from the printed legend/header — authoritative over the manual): `processCode` `رمز العملية` · `processName` `اسم العملية` · `organizationalOwner` `المسؤول التنظيمي` · `headerAria` `ترويسة الطباعة للنموذج {model}` · `orgBlock` `مربع بيانات الجهة — صورة OLE المستوردة لم تُفكَّك بعد` · `legendAria` `مفتاح رموز DMT ومصفوفة RACI` · `raci.title` `مصفوفة الصلاحيات للأدوار الوظيفية/ RACI` · `raci.responsible` `مسؤول عن التنفيذ` · `raci.approval` `الموافقة والاعتماد` · `raci.consulted` `يستشار عند التنفيذ` · `raci.informed` `يُعلم بالتنفيذ أو النتيجة`
-- [x] **Palette tooltip template:** `dmtLibraryI18n.ts:26` `'aris.library.item.tooltip'` value `'{name} · {objectType} · {symbolNum}'` → `'{name}'`. Do NOT delete `dock/undock/move` yet (still referenced until L-P2 deletes them and their uses together).
-- [x] Gates: `npm run check:ui-copy`, `npx vitest run src/__tests__/i18n.test.ts`, typecheck, lint. — **orchestrator re-verified: i18n.test 34/34 exit0, check:ui-copy exit0, typecheck exit0.**
-- **Commit:** `i18n(aris): register Wave 11–16 campaign keys (translation summaries, rail tabs, friendly types, print-frame Arabic)`
-
----
-
-## Lane L-P1a (Wave 12) — Translation reliability, part 1 _(user issue 1)_
-
-**Worker:** codex gpt-5.6-sol xhigh. **Read first:** `src/aris/shell/ArisTranslateController.tsx`, `src/localization/TranslationReviewDialog.tsx`, `src/aris/localization/{review,run,fields,apply}.ts`, `src/localization/plan.ts`, `src/localization/script.ts`, `src/ai/freeTranslate.ts`, `src/aris/localization/aiTranslateTexts.ts`, tests under `src/aris/localization/__tests__`, `src/ai/__tests__/freeTranslate.test.ts`, `src/localization/__tests__/TranslationReviewDialog.test.tsx`.
-
-### Verified ground truth (do not re-derive)
-
-- Click path: toolbar `ArisStudioTab.tsx:987-994` → `openReview()` (no target) → `ArisTranslateController.tsx:266-296` (target = opposite of `contentLang`; providerId `'free'` :288; if `review.complete` → toast + return, dialog never opens) → dialog `TranslationReviewDialog.tsx` "Translate now" :620-638, `disabled` expr :628-635 includes `proposals.length > 0 || acceptedValues.length > 0` → `handleTranslateNow` :344-377 (silent `if (!transport) return` :348; discards `run.failures`; `setStatus(null)` :362) → free chain `src/ai/freeTranslate.ts` (Google gtx + MyMemory, pool 4, 150 ms pacing; per-text failure → positional `undefined`; throws only when ALL texts fail with ONE consistent code :448-453) → classifier `src/aris/localization/run.ts:50-77` (`undefined`/empty/`===sourceValue`/`!validateTargetScript` ⇒ failures; `DIRECTIONS=['ar','en']` :24 — already bidirectional over whatever the queue holds) → per-field "Accept this proposal" :819-828 → Apply → `applyArisTranslations` (one `bridge.execute`).
-- Failure modes (all reachable): **H1** queue builder `src/localization/plan.ts:264-317` drops null-source (:286) and any item whose SOURCE side has non-`'mixed'` audit issues (:287-303) — an Arabic value stored under an EN locale key (common in DMT exports) yields visible rows + EMPTY queue + enabled button + zero effect. **H2** all-failures classification (gtx echoes proper nouns/codes ⇒ `value===sourceValue` ⇒ failure; `validateTargetScript` `src/localization/script.ts:168-189` rejects mixed for en-target / non-Arabic for ar-target). **H3** silent null transport (:348). **H4** mixed-cause total failure swallowed (:448-453). **H5** button dead after first run (`proposals.length>0`). **H6** keys session-only (`src/ai/keys.ts:720-742`) — ACCEPTED as-is; free chain needs no key. **H7** per-field accept burden. **H8** badge (`countArisMissingTranslations`, `review.ts:121-140`) uses a DIFFERENT rule than the queue.
-- Locale keys: `fields.ts:52-87` + `localeLang()` handle `'1033'/'1025'`, BCP-47, and entity refs; `slotFor` never script-checks values. AnimalWF uses ONLY entity refs (360×USen, 253×AEar). Canvas display matches by `localeLang` (`src/aris/canvas/localization.ts:37-55`).
-- Edits are in-memory (no autosave); accepted pairs persist to `.orbitpm/i18n/translation-memory.json`; glossary/TM fold in BEFORE network (`planLocalResourceApplication`).
-
-### Steps (TDD; keys pre-registered by L-I18N)
-
-- [x] **T1 — free chain never silent on total failure.** Test `src/ai/__tests__/freeTranslate.test.ts`: two texts failing with different codes (`rate` + `service`) ⇒ expect `FreeTranslateError(code:'service', service:'chain')` (invert the existing "mixed stays quiet" case; keep single-consistent-cause cases). Impl `freeTranslate.ts:448-453`:
-
-  ```ts
-  if (results.every((v) => v === undefined)) {
-    const first = failures[0]
-    const code: FreeErrorCode =
-      first !== undefined && failures.every((c) => c === first) ? first : 'service'
-    throw new FreeTranslateError(code, 'chain')
-  }
-  ```
-
-  Update the file-header comment (lines 17-20).
-
-- [x] **T2 — dedupe identical source texts per direction.** Test `run.test.ts`: queue with two items sharing `sourceValue:'Yes'` ⇒ transport receives 2 unique texts, both items get the proposal; add an explicit bidirectional case (one `ar`-target + one `en`-target ⇒ transport called once per direction). Impl `run.ts` direction loop (:44-49): build `uniqueTexts` + `Map<string,number>`, call `translateTexts(uniqueTexts,…)`, index each item's result via the map.
-- [x] **T3 — script-contradiction slot repair + entity-ref fixtures.** Tests `fields.test.ts`: (1) def `{'1033':'مراجعة الطلب'}` ⇒ `value.ar` set, `origins.ar==='script-inferred'`, `value.en` undefined, `storage.arProperty`=detected AR id; (2) mirror EN-under-`'1025'`; (3) mixed-script value untouched; (4) entity-ref doc ⇒ `storage.enProperty==='&LocaleId.USen;'`, `arProperty==='&LocaleId.AEar;'`; (5) `review.test.ts`: Arabic-under-1033 doc ⇒ queue contains an `en`-target item + `localUpdates` has the `source-seed` patch; (6) `apply.test.ts`: update with `localeId:'&LocaleId.AEar;'` lands under that exact key. Impl `fields.ts` `buildField` (:102-138): import `classifyScript` from `../../localization/script`; when exactly one slot exists and its script contradicts the locale (Arabic in an `en` slot / English in an `ar` slot), re-slot to the other language with origin `'script-inferred'`:
-
-  ```ts
-  let en = slotFor(input.localized.values, 'en')
-  let ar = slotFor(input.localized.values, 'ar')
-  const origins: LocalizationField['origins'] = {}
-  if (en && !ar && classifyScript(en.value) === 'arabic') {
-    ar = { localeId: locales.ar, value: en.value }
-    en = undefined
-    origins.ar = 'script-inferred'
-  } else if (ar && !en && classifyScript(ar.value) === 'english') {
-    en = { localeId: locales.en, value: ar.value }
-    ar = undefined
-    origins.en = 'script-inferred'
-  }
-  if (en) {
-    value.en = en.value
-    origins.en ??= 'paired'
-  }
-  if (ar) {
-    value.ar = ar.value
-    origins.ar ??= 'paired'
-  }
-  ```
-
-  (`planLocalResourceApplication`'s `source-seed` branch `plan.ts:120-135` then persists the re-slotted value — existing behavior, now reachable.)
-
-- [x] **T4 — bidirectional queue + provider-failure feedback.** Extend `ArisLocalizationReviewInput` (`review.ts`) with `readonly queueDirections?: 'target' | 'both'` and `readonly providerFailures?: readonly ProviderFailure[]`; pass `requestedTarget = input.queueDirections === 'both' ? undefined : input.target`; thread `providerFailures` into `planLocalResourceApplication` + `buildTranslationQueue` so failed fields carry a `provider-failed` issue and stay re-sendable; export the widened type from `src/aris/localization/index.ts`. Tests `review.test.ts`: EN-only + AR-only defs with `queueDirections:'both'` ⇒ queue holds both directions; `providerFailures:[…]` ⇒ review issues contain `provider-failed` and the item is still queued.
-- [x] **T6 — dialog: re-runnable button, empty-queue banner, accept-all.** Tests `TranslationReviewDialog.test.tsx`: (1) 2 sendable + 1 proposal ⇒ "Translate now" ENABLED; proposals for all ⇒ disabled; (2) 0 sendable but unresolved rows ⇒ disabled AND `translationReview.nothingSendable` visible; (3) ≥1 proposal ⇒ "Accept all proposals" visible, click ⇒ `onAcceptProposal` once per editable proposal-bearing field. Impl: compute `sendableWithoutProposal` (queue items, `requiresSegmentationReview !== true`, id in neither `proposalsByField` nor `acceptedByField`); disabled expr → `memorySaveRecoveryRequired || sendableWithoutProposal === 0 || !selected || selected.disabled || !disclosure`; banner in the summary box when `review.queue.filter(sendable).length === 0 && progress.unresolved > 0`; accept-all button beside the fields title iterating `visibleRecoveryFields`.
-- [x] **T7 — controller: manual run always reports; failures feed back.** Tests `arisTranslateController.test.tsx`: (1) all-`undefined` transport ⇒ status contains `runSummary` with `failed>0` AND a row shows the provider-failed issue; (2) `FreeTranslateError('rate','chain')` ⇒ status = `aris.translate.failed` interpolated with `t('translate.free.rate')`; (3) partial (1/2) ⇒ summary `proposals:1, failed:1` and the button stays enabled. Impl: add `freeErrorMessage(error)` mapping `FreeTranslateError.code`→`t('translate.free.rate'|'offline'|'down')` else `error.message`; on null transport ⇒ `setStatus(t('translationReview.noProvider'))` + error toast + return; after the run merge proposals, and if `run.failures.length>0` rebuild the review with `providerFailures: run.failures`; ALWAYS `setStatus(t('translationReview.runSummary', { proposals: run.proposals.length, failed: run.failures.length }))`; `catch` uses `freeErrorMessage`.
-- **Commits (one per task group):** `fix(ai): free-translate chain throws on ALL-failed runs even with mixed causes` · `perf(aris): dedupe identical source texts per translation run` · `fix(aris): re-slot values whose script contradicts their locale key` · `feat(aris): bidirectional queue + provider-failure feedback in the ARIS localization review` · `fix(localization): re-runnable translate-now, empty-queue banner, accept-all` · `fix(aris): manual translate run always reports; failures surface per field`
-
-**Gates:** `npx vitest run src/ai/__tests__/freeTranslate.test.ts src/aris/localization/__tests__ src/aris/shell/arisTranslateController.test.tsx src/localization/__tests__/TranslationReviewDialog.test.tsx src/__tests__/i18n.test.ts`, plus the global gate block.
-
----
-
-## Lane L-P1b (Wave 13) — Universal auto-translate + badge consistency + e2e _(user issue 1)_
-
-**Worker:** codex gpt-5.6-sol xhigh. **Read first:** L-P1a's ground-truth block, `ArisTranslateController.tsx:487-556` (auto effect), `ArisStudioTab.tsx:213-274` (contentLang, badge memo :262-268) + :1228-1239 (controller mount), `tests/e2e/lite-mandatory-translation.spec.ts`, `tests/e2e/mandatory-translation-evidence.json`, `src/localization/translationRecovery.ts` (listTranslationRecoveryFields).
+**Worker:** kimi k2.7. **Read first:** `scripts/check-actions.mjs:9-24`, `scripts/check-release-workflows.mjs:8-17` and `:60-72`, `.github/workflows/pages-aris.yml` (whole file), `CONTRIBUTING.md:1-10`, `README.md` (top sections).
 
 ### Verified ground truth
 
-Auto effect `ArisTranslateController.tsx:487-556`: gate `autoTranslateEligible` (= `sourceKind==='generated'`, from `ArisStudioTab.tsx:1235`), pref `arisAutoTranslate!=='off'`, one-shot `autoRanRef`, 200-cap bail :508, free chain only :514, silent `catch{return}` :518-523/:542-544, auto-APPLIES without review :526-544. Every create/import path funnels into an `ArisStudioTab` mount; the canvas boots on first tab activation → universality via the prop is complete coverage of what the user can see. Badge memo `ArisStudioTab.tsx:262-268` uses `countArisMissingTranslations` (H8).
+Six workflow files exist; both inventory scripts hard-code five, so `check:actions` and `check-release-workflows` fail at HEAD `8bbc01a`. `check-actions.mjs` uses a sorted string-array compare (:20) then runs actionlint over `expectedWorkflows` — adding the file means actionlint now lints it. `check-release-workflows.mjs` derives its inventory from `Object.values(workflowFiles).sort()` (:8-14, :60-72); adding an entry ALSO subjects `pages-aris.yml` to `findActionPinFailures` (it is fully SHA-pinned: `actions/checkout@11d5960…`, `actions/upload-artifact@ea165f8…`, `actions/deploy-pages@d6db901…` **[VERIFIED]**) and to the global ban scans (it deliberately does NOT use `actions/upload-pages-artifact@` — the header comment explains the tar+upload-artifact workaround) — all pass. `requireJobs` is only called for release/pages/rollback; `pages-aris.yml`'s single `deploy` job is unconstrained. CONTRIBUTING.md:3-5 currently reads "Changes must not add a native shell, installer, updater, server, bridge, or alternate executable application."
+
+### Steps (TDD)
+
+- [ ] **T1 — inventory fix.** `scripts/check-actions.mjs:9-15`: insert `'pages-aris.yml',` into `expectedWorkflows` (keep the array sorted: it belongs first). `scripts/check-release-workflows.mjs:8-14`: add `pagesAris: 'pages-aris.yml'` to `workflowFiles`. Verify BOTH scripts exit 0, and that the node:test verifier suite still passes: `node --test scripts/release-workflow-critical-invariants.test.mjs scripts/workflow-action-pins.test.mjs scripts/check-no-skips.test.mjs` (these test the helper functions, not the inventories — confirm, and report if any fixture assumes 5 files; updating such a fixture is authorized change 1).
+- [ ] **T2 — CONTRIBUTING carve-out.** After the sentence ending "alternate executable application." append exactly one new sentence: `The one permitted executable addition is the headless Node CLI for this same engine under packages/epc-engine/bin/ — a batch projection/render tool with no server, bridge, desktop shell, installer, or updater.` (`check:lite-only` prose-scans README/docs for legacy-promotion phrases like "desktop app only" — this sentence contains none.)
+- [ ] **T3 — README scope note.** Add a short section `## EPC engine as a service` (3-6 sentences): the studio UX is unchanged; `packages/epc-engine/` packages the same `src/aris` engine (canonical schema → EPC projection → validation → headless SVG) for consumption by a private enterprise repository via `npm pack`/git dependency; pointers to `docs/EPC_PROJECTION.md` and `docs/ENTERPRISE_HANDOFF.md` (authored in Wave 22 — forward references are fine).
+- **Commit:** `ci(policy): add pages-aris.yml to both workflow inventories; authorize the headless engine CLI in CONTRIBUTING; README scope note`
+
+**Verification:** `npm run check:actions` → 0; `node scripts/check-release-workflows.mjs` → 0; `npm run check:lite-only` → 0; `npm run format:check` → 0; the node --test triple above → 0. **Gates:** global block. **Risks:** actionlint findings inside `pages-aris.yml` itself would surface for the first time — if any appear, fix the YAML (shell quoting only), never the linter; rollback lever = reverting the two one-line inventory insertions restores the exact HEAD state.
+
+---
+
+## Lane L-SCHEMA (Wave 18) — CanonicalProcessV1 contract + JSON Schema emitter _(deliverable 1)_
+
+**Worker:** sonnet medium. **Read first:** `src/aris/ai/contract.ts` (whole file — the strictObject house style to mirror), `src/aris/ai/draftJsonSchema.ts:1-197`, `src/aris/packages/canonicalJson.ts:153-167`, master-plan taxonomy in Embedded reference facts.
+
+### Verified ground truth
+
+The live IR is ARIS-typed at every level (`OT_*`/`CT_*`/`ST_*`) — notation-neutrality is the core gap. Strongest existing matches to reuse as shape precedents: `ArisAiUncertainty` (:238-265) for unknowns, `ArisAiConfidence` `'high'|'medium'|'low'` on every entity, `ArisAiLocalizedText {en?, ar?}` min-1 (:67-77). Missing entirely from the live IR: triggers/outcomes as first-class, wait, handoff, exception, labeled conditional edges, ID-keyed facts. zod is 4.4.3 (`z.strictObject`, `.strict()`, `z.enum`, `z.literal`). The emitter pattern is hand-written nested plain objects with `additionalProperties:false` + `enum` locks (`draftJsonSchema.ts:174-197`), NOT zod-to-json-schema tooling.
+
+### Steps (TDD)
+
+- [ ] **T1 — the contract.** New `src/aris/canonical/contract.ts` exporting interfaces + zod schemas (all `strictObject`, no defaults, no coercion) + `parseCanonicalProcess(raw: unknown): CanonicalParseResult` (never throws; `{ok:true, process}` | `{ok:false, issues}` with zod paths). Shape (field names binding — the enterprise repo codes against them):
+
+  ```ts
+  export const CANONICAL_SCHEMA_VERSION = 1 as const
+  export type CanonicalConfidence = 'high' | 'medium' | 'low'
+  export interface CanonicalText {
+    readonly en?: string
+    readonly ar?: string
+  } // min 1 key, min length 1
+  export type CanonicalNodeKind =
+    'event' | 'activity' | 'decision' | 'wait' | 'handoff' | 'exception'
+  export type CanonicalEdgeKind =
+    'sequence' | 'conditional' | 'parallel' | 'handoff' | 'data-flow' | 'exception-route'
+  export interface CanonicalProcessV1 {
+    readonly version: 1
+    readonly identity: { id; names: CanonicalText; code?; processVersion?: string; confidence }
+    readonly nodes: CanonicalNode[] // {id, kind, names, description?, waitDetail?(wait only),
+    //  targetProcessRef?(handoff only), factIds?, confidence}
+    readonly decisions: CanonicalDecision[] // {id, nodeId → a 'decision' node, criteria?: CanonicalText,
+    //  outcomes: [{id, names: CanonicalText, targetNodeId}] (min 2), factIds?, confidence}
+    readonly edges: CanonicalEdge[] // {id, kind, sourceNodeId, targetNodeId,
+    //  condition?: CanonicalText (REQUIRED iff kind==='conditional'),
+    //  factIds?, confidence}
+    readonly roles: CanonicalRole[] // {id, names, unit?: CanonicalText, nodeIds[], owner?: boolean, factIds?, confidence}
+    readonly systems: CanonicalSystem[] // {id, names, nodeIds[], factIds?, confidence}
+    readonly informationObjects: CanonicalInformationObject[] // {id, names, inputToNodeIds[], outputOfNodeIds[], factIds?, confidence}
+    readonly controls: CanonicalControl[] // {id, names, kind: 'policy'|'business-rule'|'requirement', nodeIds[], factIds?, confidence}
+    readonly facts: CanonicalFact[] // {id, statement: CanonicalText, evidenceRefs: string[] (opaque IDs into the caller's evidence store), confidence}
+    readonly unknowns: CanonicalUnknown[] // {targetId, kind: 'missing-field'|'missing-translation'|'ambiguous-mapping'|'unclear-symbol'|'other', field?, message: CanonicalText, factIds?}
+  }
+  ```
+
+  Cross-reference refinements (zod `.superRefine`, each with a stable issue code): unique ids across ALL entity arrays; every `edge.sourceNodeId/targetNodeId`, `decision.nodeId/outcome.targetNodeId`, `role/system/control.nodeIds[*]`, `informationObjects.*NodeIds[*]` resolves to a declared node; every `factIds[*]` resolves to `facts[*].id`; every `unknowns[*].targetId` resolves to some declared id; `condition` present iff `kind==='conditional'`; every `decision.nodeId` points at a node of kind `'decision'` and each decision node is referenced by exactly one `decisions[]` entry; a `'decision'` node's outgoing control-flow is expressed ONLY through its `decisions[]` outcomes (no plain `sequence` edge out of a decision node). Test `src/aris/canonical/contract.test.ts`: minimal valid process parses; each refinement fires with its intended code/path; unknown key anywhere ⇒ rejected; determinism — `canonicalJsonText(parse(x).process)` identical across two parses.
+
+- [ ] **T2 — JSON Schema emitter.** New `src/aris/canonical/jsonSchema.ts` `buildCanonicalProcessJsonSchema(): Record<string, unknown>` — hand-written, mirroring `draftJsonSchema.ts` (:174-197 pattern): `additionalProperties:false` everywhere, enum-locked `kind` fields, `required` arrays matching the zod contract exactly. Test `jsonSchema.test.ts`: (a) the emitted schema is itself stable (`canonicalJsonText` snapshot equality across two calls); (b) contract↔schema drift guard — for every valid fixture, zod accepts ⇔ enumerate the schema's `required`/`properties` keys per object and assert they equal `Object.keys` of the zod shape (structural drift test, no ajv dependency — ZERO new deps).
+- [ ] **T3 — barrel.** New `src/aris/canonical/index.ts` re-exporting contract + emitter (L-PROJECT extends this file in Wave 19).
+- **Commit:** `feat(canonical): CanonicalProcessV1 — notation-neutral bilingual process contract + enum-locked JSON Schema emitter`
+
+**Verification:** `npx vitest run src/aris/canonical` → 0; global gate block (boundary walker unaffected — canonical/ is outside the main graph). **Gates:** coverage — this lane's tests must exercise every refinement branch (the 80 % floor over `src/**` includes these new files). **Risks:** shape churn after L-PROJECT starts would ripple — the field names above are BINDING; if projection needs an addition, it goes through a W19 plan-note, never a silent contract edit.
+
+---
+
+## Lane L-FIXTURES (Wave 18) — valid + invalid canonical fixtures _(deliverable 1)_
+
+**Worker:** kimi k2.7. **Read first:** L-SCHEMA's contract shape above (binding), master-plan fixture rule ("one hand-written valid example and at least five invalid examples… every invalid example fails for the intended reason").
+
+### Steps (TDD)
+
+- [ ] **T1 — fixtures module.** New `src/aris/canonical/fixtures.ts` exporting plain frozen objects (TS, not JSON files — vitest include is `src/**` and TS keeps them typed): `VALID_CANONICAL_MINIMAL` (start event → activity → end event, one role, bilingual names, 2 facts, 1 unknown); `VALID_CANONICAL_FULL` — one process exercising EVERY kind: start event, 3 activities, 1 decision (criteria + 2 labeled outcomes en/ar), 1 parallel fan-out/fan-in, 1 wait, 1 handoff (with `targetProcessRef`), 1 exception (+`exception-route` edge to a rejected-end event), 2 roles (one `owner:true`, with unit), 2 systems, 2 information objects (one input, one output), 2 controls (policy + business-rule), ≥6 facts with evidenceRefs, ≥2 unknowns, mixed confidence values, bilingual everywhere; and 10 `INVALID_CANONICAL_*` objects (typed `unknown`), each broken in exactly one intended way: unknown key, missing `confidence`, dangling `edge.targetNodeId`, duplicate id across arrays, empty `names`, `conditional` edge without `condition`, `sequence` edge out of a decision node, decision with 1 outcome, dangling `factIds`, dangling `unknowns.targetId`.
+- [ ] **T2 — intent test.** New `src/aris/canonical/fixtures.test.ts`: both valid fixtures parse ok; each invalid fixture fails AND the failure's issue path/code matches the intended break (a table `[fixture, expectedPathFragment]` — asserting the reason, not just failure); `canonicalJsonText(VALID_CANONICAL_FULL)` is byte-identical across two serializations.
+- **Commit:** `test(canonical): hand-written valid + 10 intent-labeled invalid CanonicalProcessV1 fixtures`
+
+**Verification:** `npx vitest run src/aris/canonical` → 0. **Risks:** none beyond contract drift (same-wave coordination: L-SCHEMA's shape in this plan is the single source; if the parse rejects a fixture for an unplanned reason, report — do not adjust the contract).
+
+---
+
+## Lane L-EPC-RULES (Wave 18) — labeled decision branches + reachable end outcomes _(deliverable 2, new rules; authorized change 6)_
+
+**Worker:** kimi k3 xhigh. **Read first:** `src/aris/epc/validate.ts` (whole file), `src/aris/epc/flowGraph.ts` (`buildFlowGraphIndex`, `flowEdgesBySource/ByTarget`), `src/aris/epc/xor.ts:23-56` (`classifyRule`), `src/aris/epc/constants.ts` (:49-76 `FLOW_CONNECTION_TYPES`/`isControlFlowTriple`, :88-95 `classifyRuleSymbol`), `src/aris/ai/epcSemantics.ts:50-70`, `src/aris/shell/arisValidationFindings.ts:47-57`, `src/i18n/dictionaries.ts:2511-2523` + `:5507-5519`, the epc test files next to `validate.ts`.
+
+### Verified ground truth
+
+`checkStartEndCompleteness` (:82-111) checks only EXISTENCE of in-degree-0/out-degree-0 events. Nothing validates decision-branch labels anywhere (`gapScanner.missingXorOutcomes` checks decision-basis connections, not branch labels). `EpcFinding.messageKey` is an i18n key; the rail renders via `t()`, AI repair prompts use the separate English `EPC_RULE_MESSAGES` map. New error rules will surface in three products: live rail (`arisEpcFindings.ts`), gap scanner (via `EPC_RULE_GAP_KINDS`), AI repair turns (`epcSemantics.ts`) — updating their tests is authorized change 6. Edge names arrive as `EpcEdge.names?: Readonly<Record<string,string>>`; node names as `EpcNode.names`. A branch is "labeled" when the edge carries a non-empty name in ANY locale OR its target is an `OT_EVT` with a non-empty name in any locale (both EPC conventions accepted — the projection emits labeled outcome events; hand-drawn models may label edges).
+
+### Steps (TDD)
+
+- [ ] **T1 — `epc.rule.unlabeledDecisionBranch` (error).** Test first (in the epc validate test file): XOR split with 2 outgoing edges, one edge unnamed AND targeting an unnamed event ⇒ exactly one finding `{ruleId:'epc.rule.unlabeledDecisionBranch', severity:'error', messageKey:'aris.epc.finding.unlabeledDecisionBranch', nodeIds:[ruleId, targetId], edgeIds:[edgeId]}`; named-edge branch ⇒ no finding; unnamed-edge-but-named-target-event ⇒ no finding; AND rules exempt; OR rules included; out-degree-1 rules exempt. Impl in `validate.ts` (new `checkLabeledDecisionBranches(index)` appended to the composition list :34-43 and to the rule-table comment :14-28):
+
+  ```ts
+  export function checkLabeledDecisionBranches(index: FlowGraphIndex): readonly EpcFinding[] {
+    const findings: EpcFinding[] = []
+    for (const node of index.graph.nodes) {
+      if (node.objectType !== OT_RULE) continue
+      const kind = classifyRuleSymbol(node.symbolType)
+      if (kind !== 'xor' && kind !== 'or') continue
+      const outgoing = index.flowEdgesBySource.get(node.id) ?? []
+      if (outgoing.length < 2) continue
+      for (const edge of outgoing) {
+        const named = Object.values(edge.names ?? {}).some((v) => v.trim().length > 0)
+        const target = index.nodeById.get(edge.target)
+        const targetLabeled =
+          target?.objectType === OT_EVT &&
+          Object.values(target.names).some((v) => v.trim().length > 0)
+        if (named || targetLabeled) continue
+        findings.push({
+          ruleId: 'epc.rule.unlabeledDecisionBranch',
+          severity: 'error',
+          messageKey: 'aris.epc.finding.unlabeledDecisionBranch',
+          nodeIds: target ? [node.id, target.id] : [node.id],
+          edgeIds: [edge.id]
+        })
+      }
+    }
+    return findings
+  }
+  ```
+
+  (Adjust `classifyRuleSymbol`'s exact return vocabulary to the real one in `constants.ts:88-95` — do not guess; read it.)
+
+- [ ] **T2 — `epc.startEnd.unreachableEnd` (error).** Test first: linear start→…→end ⇒ no finding; a start event whose forward BFS (flow edges only) reaches NO out-degree-0 event (e.g. it feeds a cycle) ⇒ one finding per such start `{nodeIds:[startId]}`; graphs already failing `missingStart`/`missingEnd` produce those findings unchanged (no double-reporting: skip this check when there are zero start events or zero end events). Impl: new `checkEndReachability(index)` — deterministic BFS with sorted frontier (iterate edges in stored order; collect findings in start-node id order via an explicit sort before push) so output order is byte-stable.
+- [ ] **T3 — wire the 4 remaining places.** (a) `epcSemantics.ts:50-70` `EPC_RULE_MESSAGES` gains: `'epc.rule.unlabeledDecisionBranch': 'A decision branch out of an XOR/OR rule has no label: name the outgoing relation or the outcome event it leads to.'` and `'epc.startEnd.unreachableEnd': 'No end event is reachable from a start event by following control flow. Connect the flow so every start can finish.'` (b) `arisValidationFindings.ts:47-57` `EPC_RULE_GAP_KINDS` gains `'epc.rule.unlabeledDecisionBranch': 'missingXorOutcomes'` and `'epc.startEnd.unreachableEnd': 'missingStartOrEndEvent'`. (c) `dictionaries.ts` EN after `:2523` + AR after `:5519`: `aris.epc.finding.unlabeledDecisionBranch`: EN `This decision branch has no label — name the connection or the outcome event.` / AR `هذا الفرع من القرار بلا تسمية — سمِّ الوصلة أو حدث النتيجة.`; `aris.epc.finding.unreachableEnd`: EN `No end event can be reached from this start event.` / AR `لا يمكن الوصول إلى أي حدث نهاية انطلاقًا من حدث البداية هذا.` (d) reconcile every unit test the new errors break (rail counts, gap-scanner fixtures, AI-generation fixtures whose XOR branches were unlabeled — LABEL the fixtures, per authorized change 6).
+- **Commit:** `feat(epc): enforce labeled decision branches and start→end reachability (master-plan rules), wired into rail, gaps, and AI repair`
+
+**Verification:** `npx vitest run src/aris/epc src/aris/ai src/aris/shell src/aris/chat src/__tests__/i18n.test.ts` → 0; `npm run test:aris:phase2` → 0 (boundary + full aris tree); global gate block. **Gates:** i18n parity test must stay green (identical EN/AR key sets). **Risks:** the reachability BFS on large imported models — O(V+E) per start, bounded; if `arisEpcFindings` shows noisy findings on real imported models (unverifiable in this environment), the rules are still correct per the master plan — record it; rollback lever = removing the two entries from the composition list at `validate.ts:34-43` (each rule is a self-contained function).
+
+---
+
+## Lane L-PROJECT (Wave 19) — deterministic canonical→EPC projection + findings artifact _(deliverable 2)_
+
+**Worker:** kimi k3 xhigh. **Read first:** `src/aris/canonical/contract.ts` (from W18), `src/aris/ai/contract.ts:102-291`, `src/aris/ai/validateDraft.ts:58-75`, `src/aris/ai/epcSemantics.ts:103-199` (`adapterModelFor` is the projection-to-EpcGraph template), `src/aris/epc/validate.ts` (incl. W18 rules), `src/aris/shell/arisAiCreate.ts:36-51,119-209` (symbol fallback + id scheme + geometry), `src/aris/packages/canonicalJson.ts:153-167`, `src/aris/canonical/fixtures.ts`, typeValidation vocab facts in Embedded reference facts.
+
+### Verified ground truth
+
+The projection target is a fully-valid `ArisAiDraftV1`: 12 object types / 17 connection types / 3 rule symbols; `symbolType` free on non-rule objects (**[VERIFIED]** `ST_PRCS_IF` on `OT_FUNC` passes `validateArisAiTypes` and renders — `typeValidation.ts:116-128`, `arisAiCreate.ts:133/:197`, catalog `:111`). Draft logicalIds become ARIS ids as `ObjDef.<logicalId>`/`ObjOcc.<logicalId>` (`arisAiCreate.ts:49-51`) — so canonical logicalIds embedded in draft logicalIds survive verbatim into canvas element ids (the anchor mechanism L-HEADLESS relies on). Draft ordering: `suggestedOrder ?? index` with index tie-break (:155-159) — the projection MUST set `suggestedOrder` explicitly for a stable spine. `validateEpcGraph` runs per model over the `adapterModelFor`-shaped projection of the draft (logical ids as occurrence ids). `EpcFinding.messageKey` values are the `aris.epc.finding.*` keys (incl. the two new ones).
+
+### Expansion rules (BINDING — implement exactly; document verbatim in docs/EPC_PROJECTION.md)
+
+Draft logicalId scheme (all deterministic, derived only from canonical ids — never random; `<cid>` = canonical id): primary node `n:<cid>`; decision rule `x:<cid>` (cid = decision id); outcome event `xo:<cid>:<outcomeId>`; parallel split `ps:<cid>` / merge `pm:<cid>` (cid = the fan node); exception rule `xe:<cid>` + exception event `xev:<cid>` (cid = exception node); alternation filler event `fe:<edgeCid>` / filler function `ff:<edgeCid>`; satellites `r:<cid>` (role), `s:<cid>` (system), `io:<cid>` (info object), `c:<cid>` (control); relations `e:<cid>` (canonical edge) and synthesized relations `re:<sourceDraftId>:<targetDraftId>`.
+
+| Canonical                                                                     | EPC projection                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `event` node                                                                  | `OT_EVT`/`ST_EV`                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `activity` node                                                               | `OT_FUNC`/`ST_FUNC`                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `wait` node                                                                   | `OT_EVT`/`ST_EV`; `waitDetail` → draft attribute `AT_DESC` with values `{en: 'wait: '+detail.en, ar: 'انتظار: '+detail.ar}` (whichever locales exist)                                                                                                                                                                                                                                                                                                                        |
+| `handoff` node                                                                | `OT_FUNC` + `symbolType:'ST_PRCS_IF'`; when `targetProcessRef` is set, ALSO emit a placeholder `ArisAiModel` `{logicalId:'m:'+ref, modelType:'MT_EEPC', names: from ref}` + `ArisAiAssignment {assignmentType:'linked-model', objectLogicalId, assignedModelLogicalId:'m:'+ref}` (satisfies `epc.linkedModel.danglingReference`)                                                                                                                                             |
+| `decision` node + its `decisions[]` entry                                     | the decision node itself → `OT_FUNC`/`ST_FUNC` (the deciding step; `criteria` → `AT_DESC` attribute); then `OT_RULE`/`ST_OPR_XOR_1` `x:<id>`; per outcome an `OT_EVT` `xo:<id>:<oid>` named by the outcome label (en/ar); relations: decision-func → rule (`CT_LEADS_TO_1`), rule → each outcome event (`CT_ACTIV_1`, `names` = outcome label — belt-and-braces for `epc.rule.unlabeledDecisionBranch`), outcome event → projection of `outcome.targetNodeId` (`CT_ACTIV_1`) |
+| `parallel` edges (≥2 out of one node)                                         | insert `OT_RULE`/`ST_OPR_AND_1` `ps:<nodeId>` after the node; node→ps, ps→each target. ≥2 parallel edges INTO one node: `pm:<nodeId>` before it                                                                                                                                                                                                                                                                                                                              |
+| `exception` node + `exception-route` edge                                     | at the route's source: `OT_RULE`/`ST_OPR_XOR_1` `xe:<excId>` spliced into the outgoing flow; branch A continues the normal flow, branch B → `OT_EVT` `xev:<excId>` named from the exception node's names → then to the route's target if one exists, else it IS the (rejected) end event                                                                                                                                                                                     |
+| `sequence` / `handoff` edge                                                   | control-flow relation `CT_ACTIV_1` when source is `OT_EVT`→func, `CT_CRT_1` when func→event, `CT_LEADS_TO_1` into/out of rules (pick by endpoint types exactly as `promptBuilder`'s cheat sheet does — read `src/aris/ai/promptBuilder.ts:108-150` and reuse its endpoint-type table as a pure helper); `handoff` edges carry `names` from the canonical edge if present                                                                                                     |
+| `conditional` edge                                                            | only legal out of decisions in the canonical contract — realized through the outcome-event chain above; the `condition` text becomes the outcome event's name when the outcome lacks its own label                                                                                                                                                                                                                                                                           |
+| `data-flow` edge via `informationObjects`                                     | `OT_INFO_CARR` `io:<id>`; `inputToNodeIds` → `CT_IS_INP_FOR` (info→func); `outputOfNodeIds` → `CT_HAS_OUT` (func→info)                                                                                                                                                                                                                                                                                                                                                       |
+| `roles`                                                                       | `OT_PERS_TYPE` `r:<id>` + `CT_EXEC_1` (role→func) per `nodeIds` entry; `owner:true` additionally emits attribute `AT_PERS_RESP` on the model carrying the role's names                                                                                                                                                                                                                                                                                                       |
+| `systems`                                                                     | `OT_APPL_SYS` `s:<id>` + `CT_SUPP_3` per node                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `controls`                                                                    | kind `policy`→`OT_POLICY` + `CT_AFFECTS`; `business-rule`→`OT_BUSINESS_RULE` + `CT_IS_EVAL_BY_1`; `requirement`→`OT_REQUIREMENT` + `CT_REFS_TO_2`                                                                                                                                                                                                                                                                                                                            |
+| facts / unknowns                                                              | `facts` referenced by an entity's `factIds` → the entity's `evidence` string = comma-joined sorted fact ids; every canonical unknown → `ArisAiUncertainty` (kind maps 1:1 — the enum was mirrored by design) targeting the projected draft id                                                                                                                                                                                                                                |
+| **alternation completion** (final deterministic pass over the assembled flow) | for every flow relation func→func (except `CT_IS_PREDEC_OF_1`): splice `OT_EVT` `fe:<edgeId>` named EN `<source en name> completed` / AR `اكتمل <source ar name>` (omit a locale when the source lacks it); for evt→evt: splice `OT_FUNC` `ff:<edgeId>` named EN `Handle <target en name>` / AR `معالجة <target ar name>`                                                                                                                                                    |
+
+`suggestedOrder`: depth-first from the start event over canonical `sequence|conditional|parallel|handoff|exception-route` edges, children visited in edge-array order, synthesized nodes ordered immediately after their trigger — assign 0..n; satellites get no order (they are not flow nodes).
+
+### Steps (TDD)
+
+- [ ] **T1 — projection core.** New `src/aris/canonical/projectToEpc.ts` exporting `PROJECTION_VERSION = 1`, `canonicalFlowOrder(process): readonly string[]` (the DFS spine above — exported for L-VPKG), and `projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalProjectionResult` where result = `{draft: ArisAiDraftV1, anchors: {nodeByDraftId: Readonly<Record<string,string>>, edgeByDraftId: Readonly<Record<string,string>>}}` (every draft object/relation maps back to the canonical id that caused it; synthesized entities map to their causing canonical node/edge/decision id). Tests `projectToEpc.test.ts` against `VALID_CANONICAL_FULL` (fixtures): exact expected draft object/relation counts; every table row above asserted by at least one case (handoff emits ST_PRCS_IF + assignment; decision emits XOR + 2 named outcome events; parallel emits AND pair; exception emits XOR + event; wait emits AT_DESC; role/system/info/control connection types; alternation filler present exactly where expected and NOWHERE else on an already-alternating chain); `validateArisAiDraft(draft).ok === true`; anchors cover 100 % of draft ids; **determinism** — two calls produce `canonicalJsonText`-identical drafts, and `buildAmlFromArisAiDraft(draft).xml` is string-identical across two full runs.
+- [ ] **T2 — structural gate + findings artifact.** New `src/aris/canonical/findings.ts`: `validateProjectedDraft(result, canonical): EpcProjectionFindings` — runs `validateArisAiDraft` then per-model `toEpcGraph`+`validateEpcGraph` exactly as `epcSemantics.adapterModelFor` does (copy the adapter shape, do not import the ai-repair wrapper), then maps every `EpcFinding` through the anchor tables. Artifact shape (BINDING):
+
+  ```ts
+  export interface EpcProjectionFinding {
+    readonly ruleId: string
+    readonly severity: 'error' | 'warning'
+    readonly messageKey: string // aris.epc.finding.*
+    readonly messageEn: string
+    readonly messageAr: string
+    readonly canonicalNodeIds: readonly string[]
+    readonly canonicalEdgeIds: readonly string[]
+    readonly draftNodeIds: readonly string[]
+    readonly draftEdgeIds: readonly string[]
+  }
+  export interface EpcProjectionFindings {
+    readonly schemaVersion: 1
+    readonly projectionVersion: 1
+    readonly inputSha256: string // sha256 of canonicalJsonBytes(process)
+    readonly ok: boolean // no error-severity findings
+    readonly findings: readonly EpcProjectionFinding[]
+  }
+  ```
+
+  New `src/aris/canonical/findingMessages.ts`: pure EN + AR message tables keyed by every `aris.epc.finding.*` messageKey (+ params interpolation identical to the dictionaries' `{param}` convention). Tests: drift test — every messageKey producible by `validateEpcGraph` (enumerate the rule-table ids) has EN + AR entries here AND exists in `src/i18n/dictionaries.ts` (read the dictionaries module directly in the test); the mapping path validated on a hand-mutilated draft (a valid CanonicalProcessV1 is correct-by-construction for the new rules — outcomes require names); findings JSON is `canonicalJsonText`-stable; `inputSha256` matches an independently computed `crypto.subtle` digest.
+
+- [ ] **T3 — barrel.** Extend `src/aris/canonical/index.ts`: re-export projection, findings, `buildVerificationPackage` (name fixed; module lands from L-VPKG this same wave), fixtures stay unexported (test-internal import path is fine).
+- **Commit:** `feat(canonical): deterministic CanonicalProcessV1→EPC projection with anchor maps, pre-render structural gate, and bilingual machine-readable findings`
+
+**Verification:** `npx vitest run src/aris/canonical src/aris/ai src/aris/epc` → 0; global gate block. **Gates:** coverage floor (the expansion table is branch-heavy — every row needs a test). **Risks:** connection-type selection per endpoint pair is the subtle part — the promptBuilder cheat sheet (`promptBuilder.ts:108-150`) is the single source; if a pairing is ambiguous, prefer the type `epc/constants.ts` lists in `FLOW_CONNECTION_TYPES` and record the choice in the module header. Rollback lever = the projection is additive (no existing file changes except the barrel); reverting the lane touches nothing live.
+
+---
+
+## Lane L-VPKG (Wave 19) — verification package builder _(deliverable 5)_
+
+**Worker:** sonnet medium. **Read first:** master-plan verification-package field list in Embedded reference facts, `src/aris/canonical/contract.ts`, `src/aris/packages/canonicalJson.ts:153-167`.
+
+### Steps (TDD)
+
+- [ ] **T1 — builder.** New `src/aris/canonical/verificationPackage.ts`: `buildVerificationPackage(process: CanonicalProcessV1): VerificationPackageV1` — pure, deterministic, everything keyed by canonical logicalId so the portal can implement per-element Confirm/Correct. Shape (BINDING): `{schemaVersion:1, processId, names, code?, processVersion?, trigger: entries[] (start events: in-degree 0 over control-flow edge kinds), outcomes: entries[] (end events + decision outcomes that terminate), owner: role entry with owner:true | null, mainFlow: ordered [{id, kind, names}] via `canonicalFlowOrder`(exported by L-PROJECT this same wave — if dispatch ordering makes it unavailable, implement the DFS locally to the identical spec and leave a`// TODO(W23): dedupe with canonicalFlowOrder` marker for the judge), roles[], systems[], informationObjects[], decisions: [{id, names, criteria?, outcomes[]}], unknowns[], evidenceSummary: [{factId, statement, evidenceRefs, referencedBy: sorted ids}], confidenceRollup: {high, medium, low} counts}`. Every array explicitly sorted by id; output `canonicalJsonText`-stable (double-build test).
+- [ ] **T2 — tests.** `verificationPackage.test.ts` against both valid fixtures: trigger/outcome/owner extraction exact; mainFlow order matches the projection spine; evidenceSummary reverse-references correct; determinism double-run byte-identity; a process with no `owner:true` role yields `owner: null` AND (if any unknown targets a role) surfaces it — never a throw.
+- **Commit:** `feat(canonical): buildVerificationPackage — master-plan review fields keyed by logicalId (Confirm/Correct-ready)`
+
+**Verification:** `npx vitest run src/aris/canonical/verificationPackage.test.ts` → 0; global gate block.
+
+---
+
+## Lane L-HEADLESS (Wave 20) — headless SVG render entry _(deliverable 3)_
+
+**Worker:** opus48 high. **Read first:** `src/aris/canvas/testing/jsdomSvg.ts` (:1-16 header, :282-329 measure/install, :427 container), `src/aris/canvas/testing/harness.ts:48-69` (`bootCanvas` — the literal recipe), `src/aris/canvas/exportArisPdf.ts:426-596`, `src/aris/canvas/fitView.ts:88-118`, `src/aris/canvas/canvasSync.ts:300-336`, `src/aris/canvas/ArisCanvas.ts:72-146,268-271`, `src/aris/canvas/renderer.ts:895-915`, `src/aris/packages/canonicalJson.ts`, the pipeline chain in Embedded reference facts, `src/aris/canvas/exportArisPdf.test.ts` (jsdom precedent).
+
+### Verified ground truth
+
+`bootCanvas` proves the whole boot under jsdom: `installJsdomSvgSupport()` + `createCanvasContainer()` + `ArisCanvas.create({container, document, modelId, minimap:false})`. Under plain Node (vitest node env / CLI), the missing piece vs the test suites (which run with `@vitest-environment jsdom`) is constructing the jsdom window FIRST and publishing `document/window/HTMLElement/SVGElement/SVGSVGElement/DOMParser/XMLSerializer/Element/Node/navigator` onto `globalThis` before importing anything DOM-touching — jsdom 29.1.1 is already a devDependency. `captureArisCanvasSvg` (:583-596) composes measure(getBBox) + textRuns(getScreenCTM) + markup; the shim's `getBBox` ignores `<text>` (`jsdomSvg.ts:252-256`) — replacement bounds come from `arisContentBounds(elementRegistry.getAll())` (`fitView.ts:88` — pure math over element rects INCLUDING label elements, strictly better than the shim). Text-runs are PDF-only and dropped. Print frame off via `setPrintFrameVisible(false)` (`renderer.ts:905`). Canvas element ids ARE `ObjOcc.<draftLogicalId>` / connection ids `CxnOcc.<draftLogicalId>`; with L-PROJECT's anchors, canonical ids are recoverable per element. The headless entry is NOT reachable from `src/main.tsx` (boundary-legal); it must never import `browserXmlTokenizer`/`sourcePackage` (`?worker&inline`) — use `tokenizeXmlDocument` directly.
+
+### Steps (TDD)
+
+- [ ] **T1 — environment module.** New `src/aris/headless/environment.ts`: `ensureHeadlessDom(): void` — if `globalThis.document` exists, no-op; else build a `new JSDOM('<!doctype html><html><body></body></html>')` via a static `import { JSDOM } from 'jsdom'` (jsdom resolves in Node; the lib build externalizes it; the studio build never imports headless/), publish the globals listed above, then `installJsdomSvgSupport()`. Update `jsdomSvg.ts` + `harness.ts` headers: replace "test support only" with "shared by the canvas test suites AND the headless render entry (`src/aris/headless`)" — header-only edits, zero behavior change (~40 canvas suites keep their imports).
+- [ ] **T2 — bounds + capture options.** `exportArisPdf.ts`: extend `captureArisCanvasSvg(container, options?: {bounds?: ArisCanvasSvgBounds; includeTextRuns?: boolean})` — when `bounds` given, skip `measureArisCanvasSvgBounds`; when `includeTextRuns === false`, return `textRuns: []` without touching `getScreenCTM`. Browser PDF path (`exportArisCanvasPdf` :642) passes nothing ⇒ byte-identical behavior (rollback lever). Tests in `exportArisPdf.test.ts` (jsdom): provided-bounds path produces the exact viewBox `buildArisExportSvgMarkup` math implies; `includeTextRuns:false` never calls the CTM chain (spy on a stubbed `getScreenCTM`).
+- [ ] **T3 — render entry.** New `src/aris/headless/render.ts`: `renderCanonicalProcess(process: CanonicalProcessV1, options?: {modelIndex?: number}): Promise<HeadlessRenderResult>` implementing the Embedded-reference-facts chain verbatim: parse (reject ⇒ typed error result, no throw) → project → `validateProjectedDraft` (errors ⇒ `{ok:false, findings}` — **structural validation BEFORE rendering**, no canvas boot on failure) → `buildAmlFromArisAiDraft` → tokenize → semantic → `buildFromSource` → `ensureHeadlessDom()` → `createCanvasContainer(1600,1200)` → `ArisCanvas.create(…)` → `applyCleanLayout((g) => cleanLayout(g))` → print frame OFF → anchor stamping: for every element in the registry whose id maps through anchors (strip the `ObjOcc.`/`CxnOcc.` prefix), `gfx.setAttribute('data-epc-node'|'data-epc-edge', canonicalId)` on the `.djs-element` group → `bounds = arisContentBounds(elementRegistry.getAll())` → `captureArisCanvasSvg(container, {bounds, includeTextRuns:false})` → destroy canvas + remove container. Result: `{ok:true, svg: string, findings, metadata, debugAml: string}`.
+- [ ] **T4 — metadata + version.** New `src/aris/headless/version.ts`: `export const EPC_ENGINE_VERSION = '0.1.0'` (+ a test that reads `packages/epc-engine/package.json` when it exists — `existsSync` guard on a REPO path is fine; the `check-no-skips` `existsSync` ban applies only to `reference/…` literals — and asserts equality; until W21 the file is absent and the assertion is vacuous-by-guard, then W21 activates it). Stamp the SVG ROOT: `data-epc-engine-version`, `data-epc-schema-version="1"`, `data-epc-projection-version="1"`, `data-epc-input-sha256` (sha256 of `canonicalJsonBytes(process)` via `globalThis.crypto.subtle`) — added to the live root pre-capture so the clone carries them, then stripped from the live root after capture. Metadata object mirrors the four fields + `modelId`.
+- [ ] **T5 — determinism + Arabic tests.** New `src/aris/headless/render.test.ts` (run under the DEFAULT node env — no jsdom docblock — to prove the CLI path): `VALID_CANONICAL_FULL` renders `ok:true`; the SVG contains `data-epc-node` for every canonical node id and `data-epc-edge` for every flow edge; anchors survive the strip selector (assert on the FINAL markup string); the four metadata attributes present with expected values; **byte-identity**: two full `renderCanonicalProcess` runs produce identical `svg` strings — plus a committed sha256 snapshot-hash constant (updating the constant is an explicit reviewed act, the "engine version changed" signal); Arabic: an AR-only fixture renders `direction="rtl"`-attributed text and non-empty wrapped tspans; a validation-failing canonical input returns `ok:false` with findings and NEVER boots the canvas (assert `globalThis.document` untouched when the pre-gate fails under naked node env).
+- [ ] **T6 — barrel + PNG note.** New `src/aris/headless/index.ts` (environment, render, version re-exports) with a header note: PNG = `arisSvgToPngDataUrl(markup, size, deps)` (`exportArisPdf.ts:360`) with consumer-injected `createCanvas`/`loadImage`; this campaign adds NO rasterizer dependency.
+- **Commit:** `feat(headless): jsdom-booted canonical→SVG render entry — model-derived bounds, logicalId anchors, versioned metadata, byte-stable output`
+
+**Verification:** `npx vitest run src/aris/headless src/aris/canvas/exportArisPdf.test.ts` → 0; `npm run test:aris:phase2` → 0 (proves the ~40 canvas suites survived the header edits and capture-signature change); global gate block. **Gates:** boundary walker unaffected (headless/ not in the main graph — but `exportArisPdf.ts` IS: keep its new options type-local, no new imports). **Risks:** jsdom boot cost per render (~100-300 ms) — acceptable for batch; if diagram-js touches an unshimmed API under naked Node (vs vitest's jsdom env), extend `jsdomSvg.ts` (its explicit purpose) — never stub in render.ts. Rollback lever = `captureArisCanvasSvg` options default to legacy behavior; deleting `src/aris/headless/` restores HEAD.
+
+---
+
+## Lane L-PKG (Wave 21) — library build + sub-package manifest _(deliverable 4, packaging half; authorized change 3)_
+
+**Worker:** opus48 high. **Read first:** `vite.config.ts` (whole file — what NOT to reuse), `scripts/check-artifact-size.mjs:13-34`, `scripts/clean-output.mjs`, `eslint.config.js:6-29,66-79`, `.prettierignore`, `.gitignore`, `scripts/check-lite-only.mjs` manifest/name checks, `scripts/check-lockfile.mjs` behavior notes in Embedded reference facts.
+
+### Verified ground truth
+
+The single-file config cannot be reused: `embedAppVersionMarker()` throws on non-HTML/second use; `viteSingleFile()` is HTML-only. `check:size` forbids anything beside `index.html` in `dist/` ⇒ lib outDir MUST be `packages/epc-engine/dist/`. `clean-output.mjs` hard-allowlists `'dist'` (:6). Root manifest name is pinned; `private:true` stays; NO npm workspaces (root `package.json` gains only scripts; lockfile byte-untouched — `git diff --exit-code package.json package-lock.json` runs in CI after `npm ci`; script-only manifest edits keep `check:lock`'s manifest/lock-root dep-object identity intact). The sub-package is never `npm install`-ed inside this repo (no nested lockfile, no node_modules) — `license:check`/`sbom` walk the ROOT production closure only and are untouched. `check-lite-only` name-pins the ROOT manifest specifically; the sub-package manifest is a tracked JSON file whose path (`packages/…`) is legal — verify with the command, and if the scan proves broader than documented, STOP and report (do not weaken the guard).
+
+### Steps (TDD)
+
+- [ ] **T1 — lib config.** New `vite.lib.config.ts` (root — already inside tsconfig `*.config.ts` and eslint `*.{config,setup}.ts`):
+
+  ```ts
+  import { resolve } from 'node:path'
+  import { defineConfig } from 'vite'
+  export default defineConfig({
+    resolve: { alias: { '@': resolve(__dirname, 'src') }, dedupe: ['zod'] },
+    build: {
+      target: 'es2022',
+      outDir: 'packages/epc-engine/dist',
+      emptyOutDir: true,
+      minify: false,
+      lib: {
+        entry: {
+          index: resolve(__dirname, 'src/aris/headless/index.ts'),
+          canonical: resolve(__dirname, 'src/aris/canonical/index.ts')
+        },
+        formats: ['es']
+      },
+      rollupOptions: { external: ['jsdom', /^node:/] }
+    }
+  })
+  ```
+
+  NO react/singlefile/version-marker plugins. diagram-js + friends bundle IN (they are runtime deps of the engine; the sub-package must not require the consumer to install them). Verify the emitted chunks contain no `?worker` residue and no `import "react"` (grep over `packages/epc-engine/dist/*.js`).
+
+- [ ] **T2 — sub-package manifest.** New `packages/epc-engine/package.json`:
+
+  ```json
+  {
+    "name": "@orbitpm/epc-engine",
+    "version": "0.1.0",
+    "description": "OrbitPM EPC engine as a service — CanonicalProcessV1 → EPC projection, validation, headless SVG render",
+    "license": "MIT",
+    "type": "module",
+    "exports": { ".": "./dist/index.js", "./canonical": "./dist/canonical.js" },
+    "bin": { "epc-project": "./bin/epc-project.mjs" },
+    "files": ["dist", "bin", "README.md"],
+    "engines": { "node": ">=22 <23" },
+    "dependencies": { "jsdom": "29.1.1" }
+  }
+  ```
+
+  jsdom is the ONLY runtime dep, exact-pinned to the version already vetted at root (29.1.1). New `packages/epc-engine/README.md` (short: what it is, build with `npm run build:lib` from repo root, consume via `npm pack`/git dep, pointer to the two docs). The `bin` entry references L-CLI's W22 file — committed path is fine one wave early (npm pack runs in the verification wave, after W22).
+
+- [ ] **T3 — plumbing (authorized change 3).** `scripts/clean-output.mjs:6` → `const allowedTargets = new Set(['dist', 'packages/epc-engine/dist'])` (the path-containment check already guards traversal). Root `package.json` scripts: `"build:lib": "vite build --config vite.lib.config.ts"`, `"clean:lib": "node scripts/clean-output.mjs packages/epc-engine/dist"`. `eslint.config.js`: add `'packages/epc-engine/dist/**'` to `ignores` and `'packages/epc-engine/bin/**/*.mjs'` to the node-globals files block (mirror `:23-29`/`:66-79` patterns). `.gitignore` + `.prettierignore`: add `packages/epc-engine/dist/`.
+- [ ] **T4 — purity proofs.** Run and record: `npm run clean:dist && npm run build && npm run check:size` → 0 (dist untouched by the lib config); `npm run build:lib` → 0 and `ls dist/` unchanged; `npm run check:lite-only` → 0; `npm run check:lock` → 0; `git diff --exit-code package-lock.json` → 0; `npm run lint` + `npm run format:check` → 0.
+- **Commit:** `build(epc-engine): vite library config into packages/epc-engine/dist + sub-package manifest (jsdom-only runtime dep); clean/lint/ignore plumbing`
+
+**Verification:** the T4 command list, exit codes verbatim; `node -e "import('./packages/epc-engine/dist/index.js').then(m => console.error(Object.keys(m).length))"` → 0 with a non-trivial export count. **Gates:** global block. **Risks:** Vite lib-mode multi-entry chunking may split shared chunks — fine (all inside the package `dist/`, `files` allowlists the dir); CSS must NOT exist in the lib graph (the canvas module graph imports no CSS — if Vite emits a `.css`, find and sever the stray import; report it). Rollback lever = delete `vite.lib.config.ts` + `packages/` + revert the 5 plumbing edits; nothing in the app graph changed.
+
+---
+
+## Lane L-PARITY (Wave 21) — browser-vs-headless parity e2e _(deliverable 3; authorized change 7)_
+
+**Worker:** opus48 high. **Read first:** `tests/e2e/helpers/arisRoundtripCompare.ts:1-30` (the vite-node-helper pattern AND the loader constraint: canvas/renderer's extensionless diagram-js ESM imports resolve ONLY under vite/vite-node — Playwright's own loader cannot import them), `tests/e2e/aris-sequence-1.spec.ts` (spawn pattern), `scripts/release-suite-manifest.mjs`, `playwright.config.ts` (file:// against `dist/index.html`, retries 0), L-HEADLESS's render contract.
+
+### Verified ground truth
+
+The house pattern for canvas-importing Node work inside e2e: the spec spawns `npx vite-node tests/e2e/helpers/<helper>.ts …` and parses ONE JSON line from stdout. Do not import ANY engine module from the Playwright loader (partial-graph imports are fragile there) — generate everything in the vite-node helper and pass files. Both sides run the identical deterministic pipeline (same `cleanLayout`), so positions agree exactly in model space; the browser side reads shape-group transforms (model coordinates inside the viewport group); tolerance ±2 model units absorbs rounding. The committed spec must compare in ONE consistent coordinate space (translate x/y plus anchor-set equality; width comparison only if converted to model space via the viewport matrix).
+
+### Steps (TDD)
+
+- [ ] **T1 — fixture + helper.** New `tests/e2e/fixtures/epc-parity-canonical.json` — a JSON serialization of a compact-but-complete canonical process (start→activity→decision(2 outcomes)→ends, one parallel pair, one role, one system, AR+EN names; hand-write it to parse cleanly against `contract.ts`). New `tests/e2e/helpers/arisHeadlessRender.ts` (vite-node, `@/` imports): read the fixture path from argv → `renderCanonicalProcess` → write `<outDir>/parity.svg` + `<outDir>/parity.aml.xml` (the `debugAml` from the same run) → print ONE JSON line `{anchors: {id: {x,y,width,height}}, svgSha256, metadata}` extracted by parsing the SVG's `data-epc-node` groups.
+- [ ] **T2 — spec.** New `tests/e2e/aris-headless-parity.spec.ts` (core body embedded in the e2e scenario section below): spawn the helper into `testInfo.outputPath(...)`, boot the built app over file://, import `parity.aml.xml` via the file input, wait for the canvas, run Clean Layout via the toolbar (adapt selectors from current specs — read `ArisStudioTab.tsx` for stable `data-orbitpm-*` hooks, never invent), then for every headless anchor id assert a canvas element with the matching `ObjOcc.`-suffixed `data-element-id` exists and its model-space position matches within ±2; assert counts both directions; assert the headless `metadata` fields present. Runs on all three engines like every suite.
+- [ ] **T3 — manifest (authorized change 7).** Add `'tests/e2e/aris-headless-parity.spec.ts'` to `REQUIRED_BROWSER_SUITES` (keep sorted). `npm run check:no-skips` → 0 proves the two-way equality.
+- **Commit:** `test(e2e): browser-vs-headless parity — same canonical input, same layout, matching anchored geometry across all three engines`
+
+**Verification:** `npm run clean:dist && npm run build && npx playwright test tests/e2e/aris-headless-parity.spec.ts --project=chromium` → 0 (orchestrator repeats firefox/webkit in Wave 23's full run); `npm run check:no-skips` → 0. **Gates:** global block. **Risks:** engine-specific flake — the spec only imports a file and reads geometry (no dragging). Rollback lever = removing spec + manifest line together (one commit) restores the suite set.
+
+---
+
+## Lane L-CLI (Wave 22) — `epc-project` CLI + CI smoke _(deliverable 4, CLI half; authorized change 4)_
+
+**Worker:** sonnet medium. **Read first:** `packages/epc-engine/dist/` export surface (from W21: `./dist/index.js` = headless barrel, `./dist/canonical.js`), `scripts/clean-output.mjs` pattern for argv handling, quality.yml policy job step "Release evidence verifier regression tests" (the folded `node --test` list), `scripts/check-no-skips.mjs` facts in Embedded reference facts, an existing `scripts/*.test.mjs` for node:test house style.
+
+### Verified ground truth
+
+The CLI lives OUTSIDE `src/**` (stdout printing is banned inside by `no-console`), under `packages/epc-engine/bin/` (eslint-covered since W21). It imports the BUILT lib (`../dist/index.js`) — never `src/` (plain Node cannot resolve the TS/vite graph). Exit-code contract (BINDING for the enterprise worker): `0` success, `1` validation findings with `severity:'error'` (findings JSON still written/emitted — a failure ARTIFACT, not a crash), `2` usage/IO/parse-of-JSON errors. `scripts/epc-engine-cli.test.mjs` must appear EXACTLY once in a quality.yml `node --test` command; the policy job has no lib build step, so the test builds the lib itself.
+
+### Steps (TDD)
+
+- [ ] **T1 — smoke test first.** New `scripts/epc-engine-cli.test.mjs` (node:test): `before` hook runs `npm run build:lib` once (`execFileSync`); tests: (a) `validate` on an inline-written valid canonical JSON tmp file → exit 0, stdout parses as `EpcProjectionFindings` with `ok:true`; (b) `validate` on an invalid file (unknown key) → exit 2 with a zod-path message on stderr; (c) `project --out <dir>` → exit 0, writes `draft.json` + `model.aml.xml` + `findings.json`; (d) `render --out <dir>` → exit 0, writes `process.svg` + `metadata.json` + `findings.json`, SVG root carries the four `data-epc-*` metadata attributes and ≥1 `data-epc-node`; (e) **determinism**: run `render` twice into two dirs → `process.svg` bytes identical, `metadata.json` identical; (f) stdin mode: `validate -` with the JSON piped → exit 0. No `.skip`/`.only`/`todo` anywhere.
+- [ ] **T2 — the CLI.** New `packages/epc-engine/bin/epc-project.mjs` (~150 lines, plain ESM):
+
+  ```js
+  #!/usr/bin/env node
+  // Usage: epc-project <validate|project|render> <input.json|-> [--out <dir>] [--model <index>]
+  // 0 = ok · 1 = EPC validation errors (findings written) · 2 = usage/IO error
+  ```
+
+  Read file or stdin; `import('../dist/canonical.js')` for `parseCanonicalProcess`/`projectCanonicalToDraft`/`validateProjectedDraft` and `import('../dist/index.js')` for `renderCanonicalProcess` (render only — `validate`/`project` never boot jsdom); `validate` prints findings JSON to stdout; `project` writes `draft.json` (canonicalJsonText), `model.aml.xml`, `findings.json`; `render` writes `process.svg`, `findings.json`, `metadata.json` sidecar; parse errors → stderr + exit 2; error-severity findings → artifacts written + exit 1; logging on stderr only (stdout is data). Executable bit set.
+
+- [ ] **T3 — wire quality.yml (authorized change 4).** Append `scripts/epc-engine-cli.test.mjs` to the folded `node --test` block in the policy job. `npm run check:no-skips` → 0; `npm run check:actions` → 0 (actionlint re-passes the edited workflow).
+- **Commit:** `feat(epc-engine): epc-project CLI (validate/project/render, deterministic artifacts, typed exit codes) + CI smoke wired into quality.yml`
+
+**Verification:** `node --test scripts/epc-engine-cli.test.mjs` → 0 (includes the double-run diff); `npm run check:no-skips` → 0; `npm run check:actions` → 0; `npm run lint` → 0; global gate block. **Risks:** lib-build time inside the CI test (~30-60 s) inflates the policy job — acceptable (the job already installs Chromium); if it proves >2 min, note for a future cache step, do NOT remove the build. Rollback lever = revert bin + test + the single quality.yml line together.
+
+---
+
+## Lane L-DOCS (Wave 22) — projection + handoff documentation _(deliverable 6)_
+
+**Worker:** kimi k2.7. **Read first:** L-PROJECT's expansion-rules table (transcribe VERBATIM), L-EPC-RULES' two new rules, L-HEADLESS metadata/anchor contract, L-CLI exit-code contract, L-VPKG package shape, master-plan facts section, `docs/` existing file style.
 
 ### Steps
 
-- [x] **T8 — auto-translate rewrite** (`ArisTranslateController.tsx:487-556`). Add props `onAutoTranslateState?: (s: 'idle'|'running'|'done'|'partial'|'failed'|'off') => void` and `autoTranslateMaxItems?: number` (default `AUTO_TRANSLATE_MAX_ITEMS = 500`, replacing the 200 bail — the cap now means "translate the first N, report the remainder"). Flow:
-
-  ```ts
-  const result = buildArisLocalizationReview({ document: canvas.document, target, active: contentLang, queueDirections: 'both', ...(resources ? { resources } : {}) })
-  const sendable = result.review.queue.filter((i) => i.requiresSegmentationReview !== true)
-  const capped = sendable.slice(0, maxItems)
-  if (capped.length > 0) { onAutoTranslateState?.('running'); onToast(tk('aris.translate.autoRunning', 'Translating {count} labels automatically…', { count: capped.length }), 'info') }
-  let autoProposals = []; let failedCount = 0
-  if (capped.length > 0) {
-    try { const run = await runArisReviewedTranslation({ ...result.review, queue: capped }, makeFreeTranslateTexts({ signal: controller.signal }), controller.signal); autoProposals = run.proposals; failedCount = run.failures.length }
-    catch (error) { if (controller.signal.aborted) return; onAutoTranslateState?.('failed'); onToast(tk('aris.translate.autoFailed', 'Automatic translation failed: {error}', { error: freeErrorMessage(error) }), 'error'); return }
-  }
-  if (controller.signal.aborted) return
-  const fresh = buildArisLocalizationReview({ /* same inputs */ })
-  if ((fresh.sourceSignature ?? '') !== (result.sourceSignature ?? '')) { onAutoTranslateState?.('partial'); return }   // staleness guard
-  const patches = autoProposals.map((p) => proposalToPatch(p, result.review)).filter(Boolean)
-  const updates = toArisTranslationUpdates([...patches, ...result.review.localUpdates], result.owners)
-  let count = 0
-  if (updates.length > 0) { try { count = applyArisTranslations(canvas, updates, tk('aris.translate.gestureLabel', 'Translate labels')) } catch { onAutoTranslateState?.('failed'); onToast(tk('aris.translate.autoFailed', …), 'error'); return } }
-  const remaining = sendable.length - capped.length + failedCount
-  onAutoTranslateState?.(remaining > 0 ? 'partial' : 'done')
-  if (remaining > 0) onToast(tk('aris.translate.autoPartial', …, { applied: count, remaining }), 'info')
-  else if (count > 0) onToast(tk('aris.translate.autoDone', …, { count }), 'success')
-  for (const p of autoProposals) onAcceptedPair?.(proposalPair(p))
-  ```
-
-  Keep the one-shot `autoRanRef`, the unmount abort, free chain only. Tests (rework the silent-degrade describe): bidirectional fill (EN-only + AR-only defs ⇒ both counterparts written); error toast on throw (replaces the "no toast" assertion) + state `failed`; cap/partial with `autoTranslateMaxItems=1` on a 2-item doc ⇒ 1 applied, `autoPartial` toast, state `partial`; pref-off ⇒ no fire, state `off`; staleness (mutate the doc between transport resolution and apply via a deferred transport) ⇒ nothing applied, no success toast.
-
-- [x] **T9 — studio tab: universal eligibility, consistent badge, state attribute.** `ArisStudioTab.tsx:1235` → `autoTranslateEligible={true}`; add `const [autoTranslateState, setAutoTranslateState] = useState('idle')`, pass `onAutoTranslateState={setAutoTranslateState}` at the controller mount, and put `data-orbitpm-aris-auto-translate={autoTranslateState}` on the toolbar root that also carries the translate button. Replace the badge memo (:262-268):
-
-  ```ts
-  const missingTranslationCount = useMemo(() => {
-    const target = contentLang === 'en' ? 'ar' : 'en'
-    const { review } = buildArisLocalizationReview({
-      document: liveDocument,
-      target,
-      active: contentLang,
-      ...(localizationResources ? { resources: localizationResources } : {})
-    })
-    return listTranslationRecoveryFields(review).length
-  }, [liveDocument, contentLang, localizationResources])
-  ```
-
-  (imports via `../localization` + `../../localization/translationRecovery`; verify with `npm run check:aris-runtime-boundary`.) Tests: `sourceKind='aml'` fires auto-translate (universality); badge equals `listTranslationRecoveryFields(...)` length for a doc where the old counter disagreed (e.g. an unnamed model); the state attribute reflects the callback.
-
-- [x] **T10 — reconcile unit suites.** Update the assertions T7/T8 knowingly broke; `npm run test:aris:phase2` green.
-- [x] **E2E.** Add helper (top of `lite-mandatory-translation.spec.ts` or `tests/e2e/helpers/prefs.ts`): `async function disableAutoTranslate(page){ await page.addInitScript(() => localStorage.setItem('orbitpm.lite.cfg.arisAutoTranslate', 'off')) }`. Apply it in the boot of every non-translation spec that imports a file: `aris-authoring`, `aris-canvas-interaction`, `aris-details-editing`, `aris-details-rail`, `aris-explorer-tree`, `aris-i18n-rtl`, `aris-import-split`, `aris-nested-processes`, `aris-new-model`, `aris-sequence-1`, `aris-validation`, `aris-accessibility`, `aris-fidelity-screenshots`, `aris-release-artifact`, `lite-mandatory-reliability`, `lite-mandatory-ai-security` (grep each for `setInputFiles`/`input[type="file"]` to confirm the set). Restructure `lite-mandatory-translation.spec.ts`:
-  - **TR-translate-review**: `disableAutoTranslate(page)` before opening the matrix; after "Translate now", assert `dialog.getByText(/proposal\(s\) returned/u)` (run summary); use "Accept all proposals" once and keep at least one per-field accept.
-  - **TR-auto-import** (new): stub free translate → import the bilingual matrix AML → `await expect(page.locator('[data-orbitpm-aris-auto-translate="done"]')).toBeVisible({ timeout: 60_000 })` → toast `/Translated .* labels automatically/u` → badge hidden → click content-lang toggle → canvas shows the stub → single undo reverts all.
-  - **TR-auto-generated**: keep the existing body; allow up to two auto toasts (import + generated); delete the stale BLOCKED-race comment.
-  - **TR-auto-animalwf** (new, `test.setTimeout(300_000)`): stub free translate → `setInputFiles('../reference/AnimalWF/ARISAMLExport.xml')` → wait `[data-orbitpm-aris-auto-translate="done"]` (timeout 240 s) → toggle content language → `const texts = await page.locator('[data-orbitpm-aris-canvas] svg text').allTextContents(); expect(texts.filter((t) => /\p{Script=Arabic}/u.test(t)).length).toBeGreaterThan(20)`.
-  - Update `tests/e2e/mandatory-translation-evidence.json` (`exactInventory: true`) with the new/renamed titles and a refreshed note.
-- [x] `scripts/soak-gate.ts`: comment-only note above `#exerciseTranslationCancellation` that the ARIS retarget is tracked separately (it targets the retired shell; no functional change).
-- **Commits:** `feat(aris): auto-translate every opened document in both languages with visible outcomes` · `feat(aris): translate badge counts exactly the review rows` · `test(e2e): universal auto-translate — import coverage, AnimalWF flow, opt-out in unrelated specs`
-
-**Gates:** phase2 + `npx playwright test tests/e2e/lite-mandatory-translation.spec.ts --project=chromium`, then a full `npx playwright test --project=chromium` (the opt-out sweep must be in place first). **Risks:** free-endpoint 429s (bounded by T2 dedup + pool pacing + the 500 cap + the now-visible `rate` failure + TM zero-network re-opens); rollback lever = the single `autoTranslateEligible={true}` line.
-
----
-
-## Lane L-P4 (Wave 12) — Text overflow in blocks + reference blocks _(user issue 4)_
-
-**Worker:** opus48-1m high. **Read first:** `src/aris/canvas/typography.ts`, `src/aris/renderer/textWrap.ts`, `src/aris/canvas/renderer.ts` (:489 drawLineBlockText, :530 drawCaption, :576 contentBoxAtSize, :1137-1164 dX-only free text, :1182 full-box free text), `src/aris/model/fontStyleSheet.ts`, `src/aris/canvas/typography.test.ts`, `src/aris/canvas/typography.animalwf.test.ts`, `src/aris/canvas/directEdit.test.ts`.
-
-### Verified ground truth
-
-Four defects: (1) all FIVE `wrapLabelLines` call sites omit `weight` (`renderer.ts:546/629/656/1131/1153`; `labelFontWeight` at `typography.ts:146` is dead) while AnimalWF wraps every `AT_NAME` in `<Bold/>` ⇒ 5–8 % narrow measurement (Helvetica-Bold `b` 611 vs 556, `m` 889 vs 833, `w` 778 vs 722). (2) `wrapParagraphLines` (`typography.ts:115-137`) has NO hard char-break; the port source exists at `textWrap.ts:377-398 wrapSingleLine`. (3) `text-anchor:middle` anchors at box centre (`typography.ts:163,179`) ⇒ symmetric two-sided spill. (4) zero `clipPath` anywhere in renderer/legend/printFrame. Amplifier: imported `ST_FUNC` cards are 670×240 vs `CARD_VIEW_BOX` 100×60 ⇒ contentBox scales sx=6.7 while font size comes from the FontStyleSheet (`ARIS_MODEL_UNITS_PER_POINT=254/72`; Height −10 ⇒ 35.28 units, −13 ⇒ 45.86) — decoupled. Top-right reference blocks = GfxObj frame (`printFrame.ts:571`) + dX-only free-text title (`renderer.ts:1137-1164`, `<Bold/>` size 10) + 3 `ST_BUSINESS_RULE` cards; full-box free text (`renderer.ts:1182`) wraps to FULL width, zero inset. **Concrete fixture anchors** (register-owner `Model.3xqe8yXO9Z7-u-L`, the model e2e already opens): `ObjOcc.3xqe8yXO9Z7-u-L--1SxJQyyYltu-x-L-33-c` (ST_SYS_FUNC_ACT 670×210, bold 93-char English), `ObjOcc.3xqe8yXO9Z7-u-L--9kko9AQBKf-x-L-33-c` (ST_REQUIREMENT 530×349 multi-paragraph), `ObjOcc.3xqe8yXO9Z7-u-L--V4a55hZP5d-x-L-33-c` (82-char Arabic law card), free-text token `Laws/Policies/Regulations` (longest unbreakable token — the hard-break case).
-
-### Steps (TDD)
-
-- [x] Tests `typography.test.ts`: `wrapLabelLines('Laws/Policies/Regulations', 60, 12)` ⇒ >1 line, every line `measureTextWidth(line, 12) <= 60`; a 30-char Arabic token at width 50 ⇒ chunked, every chunk `<= 50`; an Arabic paragraph wraps earlier than a same-width Latin control (line count).
-- [x] Impl `wrapParagraphLines` (`typography.ts:115-137`):
-
-  ```ts
-  function wrapParagraphLines(paragraph, maxWidth, fontSize, weight) {
-    if (maxWidth === null) return Object.freeze([paragraph])
-    const width = /\p{Script=Arabic}/u.test(paragraph) ? maxWidth * 0.96 : maxWidth // 4% reserve — Arabic advance tables are estimates (textWrap.ts:258-260)
-    if (measureTextWidth(paragraph, fontSize, weight) <= width) return Object.freeze([paragraph])
-    const words = paragraph.split(/\s+/).filter(Boolean)
-    const lines = []
-    let current = ''
-    for (const word of words) {
-      const candidate = current === '' ? word : `${current} ${word}`
-      if (measureTextWidth(candidate, fontSize, weight) <= width) {
-        current = candidate
-        continue
-      }
-      if (current !== '') {
-        lines.push(current)
-        current = ''
-      }
-      if (measureTextWidth(word, fontSize, weight) <= width) {
-        current = word
-        continue
-      }
-      let chunk = ''
-      let chunkWidth = 0 // ported hard char-break (textWrap.ts:377-398)
-      for (const ch of word) {
-        const w = measureTextWidth(ch, fontSize, weight)
-        if (chunk !== '' && chunkWidth + w > width) {
-          lines.push(chunk)
-          chunk = ''
-          chunkWidth = 0
-        }
-        chunk += ch
-        chunkWidth += w
-      }
-      current = chunk
-    }
-    if (current !== '') lines.push(current)
-    return Object.freeze(lines.length === 0 ? [''] : lines)
-  }
-  ```
-
-- [x] Test then fix the five call sites to pass `labelFontWeight(font?.fontWeight)`: `renderer.ts:546` (drawCaption), `:629` (connection labels), `:656` (attribute labels), `:1131` and `:1153` (free text). Test `rendererTypography.test.ts`: the bold fixture caption's painted `tspan` count equals `wrapLabelLines(text, width, size, 'bold').length` (red first — currently equals the regular-table count).
-- [x] Test then impl full-box free-text inset: `renderer.ts:1182` → `drawCaption(text, shape.width, shape.height, font, { x: 8, y: 2, width: shape.width - 16, height: shape.height - 4 })` (leave the label-kind path :1196 untouched).
-- [x] Test then impl clip guarantee: in `drawCaption` (:530-553) wrap the text node in a `<g>` that also holds `<clipPath id="aris-caption-clip-N"><rect x=0 y=0 width=shape.width height=shape.height/></clipPath>` (module-level increasing `N`; clip rect = FULL shape bounds, not contentBox; clipPath inside the group so the PDF-export SVG clone carries it). Keep `data-aris-caption` on the `<text>` node; run `npx vitest run src/aris/canvas/directEdit.test.ts` to confirm the inline editor still finds it.
-- [x] Fixture red/green `typography.animalwf.test.ts`: for the three anchors above, every painted line (resolved weight, 0.96 Arabic factor) fits its content box width.
-- **Vertical-overflow policy:** none of shrink/ellipsis — with correct bold measurement the ARIS reference content fits by construction; the shape-bounds clip is the hard stop.
-- **Commits:** `fix(aris-typography): measure caption wrap with the resolved font weight at all five call sites` · `fix(aris-typography): hard char-break overlong tokens; reserve 4% width for Arabic runs` · `fix(aris-renderer): inset full-box free text and clip captions to shape bounds`
-
-**Verification:** `npx vitest run src/aris/canvas/typography.test.ts src/aris/canvas/rendererTypography.test.ts src/aris/canvas/typography.animalwf.test.ts src/aris/canvas/directEdit.test.ts`; `npm run test:aris:animalwf` + holdout stay green (they compare structure/text, not wrap pixels). **Screenshot protocol** (after `npm run build`, add a temporary step to the fidelity spec after register-owner is active): zoom to 2.0 (5 × `+` clicks), element-screenshot the three anchors into `test-results/fidelity/wpb-<id>.png`; repeat with the content-language toggle on Arabic; compare vs `../reference/AnimalWF/crops/orig-requirements.png` (text inside the panel on both sides).
-
----
-
-## Lane L-P8 (Wave 12) — Minimum block size on resize _(user issue 8)_
-
-**Worker:** sonnet medium. **Read first:** `src/aris/canvas/arisRules.ts:43-46`, `node_modules/diagram-js/lib/features/resize/Resize.js:57-61/118-131/228-244`, `src/aris/canvas/arisModeling.ts:211-231`, `src/aris/canvas/modules.ts:91-124`, `src/aris/canvas/authoring.ts:135/198/258`, `src/aris/canvas/commandFactory.ts:266`, `src/aris/symbols/registry.ts:206`.
-
-### Verified ground truth
-
-No minimums anywhere: `arisRules.ts:43-46` `shape.resize` returns bare `true` ⇒ diagram-js falls back to `DEFAULT_MIN_WIDTH = 10` (Resize.js:31). **[VERIFIED]** diagram-js does NOT read `minDimensions` from the rule return — `Resize.js` reads `context.minDimensions` during `resize.start` (:118-131, `computeMinResizeBox` :228-244, documented extension point :57-61). Squish mechanics: icon scale = `min(w/vbW, h/vbH)` recentred in the stretched band — a squat block (sy<sx) shrinks the icon while the band doesn't. Creation already uses `descriptor.defaultBounds` (authoring :135/:198; `paletteProvider.draftShape`); imported bounds MUST stay verbatim (import bypasses commands via `buildFromSource`).
-
-### Steps (TDD)
-
-- [x] Test `resizeBehavior.test.ts` (jsdom `bootCanvas`, `epc.function` defaultBounds 100×60): fire `resize.start` with a context for the shape ⇒ `context.minDimensions === {width:100,height:60}`; `modeling.resizeShape(shape, {x,y,width:30,height:20})` ⇒ working occurrence lands 100×60; resize to 400×300 passes through; an imported 646×150 occurrence stays 646×150 verbatim on reload; `authoring.resizeOccurrence(id,{width:20,height:20})` still stores 20×20 (programmatic path unclamped — pins the layer boundary).
-- [x] Impl `src/aris/canvas/resizeBehavior.ts`:
-
-  ```ts
-  export class ArisResizeBehavior {
-    static $inject = ['eventBus']
-    constructor(eventBus) {
-      eventBus.on('resize.start', 1500, (event) => {
-        const bo = arisBusinessObject(event.context.shape)
-        if (bo?.kind !== 'occurrence') return
-        const resolution = resolveArisSymbol({
-          modelType: bo.modelType,
-          objectType: bo.objectType,
-          symbolNum: bo.symbolNum
-        }) // catalogId first when present
-        event.context.minDimensions = { ...resolution.descriptor.defaultBounds }
-      })
-    }
-  }
-  ```
-
-  Register in `modules.ts` `__init__` (:92-99) + `arisResizeBehavior: ['type', ArisResizeBehavior]` beside `arisRules` (:115).
-
-- [x] Test then clamp the modeling seam: `arisModeling.ts:211-231 resizeShape` — before dispatching `resizeOccurrenceCommand`, floor `newBounds.width/height` at the resolved descriptor's `defaultBounds` (occurrence kind only; freeText branch untouched). NO clamp in `commandFactory`/`authoring` (document why in the module docstring: import + AI + bridge callers may need exact bounds).
-- **Commit:** `feat(aris-canvas): floor interactive resize at descriptor default bounds so icons never squish`
-
-**Verification:** `npx vitest run src/aris/canvas/resizeBehavior.test.ts src/aris/canvas/authoring.test.ts`; both animalwf suites (import geometry untouched).
-
----
-
-## Lane L-P10a (Wave 12) — friendly-name resolver _(user issue 10, part 1)_
-
-**Worker:** sonnet medium. **Read first:** `src/aris/conventions/catalog.ts` (:70 rows, :664/:669 lookups, :676 fill), `src/aris/canvas/legend.ts:115-121` (legendName), `src/aris/canvas/dmtLibrary.ts:102-107`, `src/aris/assistant/digest.ts:41-49` (humanizeTypeCode), `src/aris/conventions/connectionRules.ts`, `src/aris/conventions/attributes.ts` (schemaForObjectType), `src/i18n/dictionaries.ts` `aris.symbol.*` blocks.
-
-### Steps (TDD)
-
-- [x] Test `src/aris/conventions/displayNames.test.ts`: `arisObjectTypeName({objectType:'OT_INFO_CARR', symbolNum:<log ST from catalog row information.log>})` → `'Log'`; `{catalogId:'information.email'}` → `'Email'`; `{objectType:'OT_FUNC'}` → `'Function'`; unknown `OT_WEIRD_THING` → `'Weird Thing'`; AR via `setLang('ar')` → `'سجل'`; `arisModelTypeName('MT_EEPC')` → `'Process (EPC)'`, `'MT_VAL_ADD_CHN_DGM'` → `'Value-added chain diagram'`; `arisConnectionTypeName('CT_IS_PREDEC_OF_1')` → the registered rule label; `arisAttributeTypeName('AT_NAME')` → schema label, `AT_CUSTOM_X` → `'Custom X'`.
-- [x] Impl `src/aris/conventions/displayNames.ts`:
-
-  ```ts
-  export interface ArisTypeRef {
-    readonly objectType: string
-    readonly symbolNum?: string | null
-    readonly catalogId?: string | null
-  }
-  export function humanizeArisCode(code: string): string // 'OT_ENT_TYPE' -> 'Ent Type'; moved here from digest.ts (re-point digest to import it)
-  export function conventionRowFor(ref: ArisTypeRef): ArisConventionSymbol | null // catalogId -> (objectType,symbolNum) -> first row for objectType (lowest paletteOrder)
-  export function arisObjectTypeName(ref: ArisTypeRef): string // t(row.labelKey) -> row.accessibleLabel -> humanizeArisCode(objectType)
-  export function arisObjectBlockName(ref: ArisTypeRef): string // via 'aris.type.blockName'
-  export function arisModelTypeName(modelType: string): string // MT_EEPC -> t('aris.modelType.eepc'); MT_VAL_ADD_CHN_DGM -> t('aris.modelType.vacd'); else humanize
-  export function arisConnectionTypeName(connectionType: string): string // first ARIS_CONNECTION_RULES row's labelKey -> humanize
-  export function arisAttributeTypeName(attributeType: string, ownerObjectType?: string): string // schemaForObjectType labelKey -> humanize
-  ```
-
-  Placement in `src/aris/conventions/` is boundary-legal (precedent: dmtLibrary/legend read dictionaries). The `(objectType-only)` fallback resolves `OT_INFO_CARR` ambiguity by lowest `paletteOrder`; every caller with a symbolNum passes it so Log/Email resolve exactly. Move `humanizeTypeCode` out of `digest.ts` and re-point digest's import (one shared last resort).
-
-- **Commit:** `feat(aris): shared friendly-name resolver for object/model/connection/attribute type codes`
-
-**Verification:** `npx vitest run src/aris/conventions/displayNames.test.ts src/aris/assistant`; `npm run check:aris-runtime-boundary`.
-
----
-
-## Lane L-P10b (Wave 13) — details pane friendly values _(user issue 10, part 2)_
-
-**Worker:** sonnet medium. **Read first:** L-P10a's `displayNames.ts` API, `src/aris/details/tabs.ts:195-252` (buildGeneralTab) + :356-365 + :410-432, `src/aris/shell/ArisDetailsRail.tsx:501-507`, `src/aris/shell/ArisDetailsEditors.tsx:437`, `src/aris/shell/ArisEpcRail.tsx:105`, `src/aris/epc/validate.ts:72`, `src/aris/details/tabs.test.ts`.
-
-### Verified ground truth
-
-Raw leaks: `tabs.ts` :202-204 `def.type`, :205-208 `def.defaultSymbol`, :218 occurrence `def.type`, :219 `occ.symbol`, :232 `MT_EEPC`; :356-365 `attrOcc.attributeType`; :410-432 `relation.category` + `CT_*`; `ArisDetailsRail.tsx:501` bare `AT_` `<h4>` + :503-507 `{type}` var; `ArisDetailsEditors.tsx:437` raw fallback; EPC alternation `{objectType}` param (`validate.ts:72` → `ArisEpcRail.tsx:105`). Model row keeps its label; friendly-name infra exists (`aris.symbol.*`).
-
-### Steps (TDD)
-
-- [x] Test `tabs.test.ts`: general tab for an occurrence of Log ⇒ exactly ONE type row `{labelKey:'aris.details.general.objectType'}` valued `'Log block'` and NO row whose value matches `/^(OT_|ST_)/`; definition variant likewise; model row value `'Process (EPC)'`; occurrence-attribute row label friendly; relation `connectionType` value friendly. Update fixtures at :48-62 / :209-210.
-- [x] Impl `tabs.ts`: collapse the definition `type`+`defaultSymbol` rows into one `{ labelKey: 'aris.details.general.objectType', value: arisObjectBlockName({objectType: def.type, symbolNum: def.defaultSymbol}) }`; collapse the occurrence `type`/`symbol` rows the same way (using `occ.symbol`); model row value → `arisModelTypeName(details.model.type)`; attribute rows → `arisAttributeTypeName`; relation rows → `arisConnectionTypeName`. `ArisDetailsRail.tsx:501/:503-507` + `ArisDetailsEditors.tsx:437` → `arisAttributeTypeName`. `ArisEpcRail.tsx` finding render: map `messageParams.objectType` through `arisObjectTypeName({objectType})` before `t(...)` (keeps `src/aris/epc` UI-pure). DELETE dictionary keys `aris.details.general.type|defaultSymbol|symbol` (EN ~:2942, AR ~:5872) in THIS commit (their last uses go here) and run `src/__tests__/i18n.test.ts`.
-- **Commit:** `feat(aris): human-friendly object/model/attribute/connection names across the details rail and EPC findings`
-
-**Verification:** `npx vitest run src/aris/details/tabs.test.ts src/aris/shell src/__tests__/i18n.test.ts`; `npm run check:ui-copy`.
-
----
-
-## Lane L-P5 (Wave 13) — Gateway mark thickness vs zoom + gateways in legend _(user issue 5)_
-
-**Worker:** opus48-1m high. **Read first:** `src/aris/symbols/shapes.ts:907-965` (ruleShape) + :1069-1071, `src/aris/canvas/renderer.ts:369-460` (drawPrimitive), `src/aris/canvas/legend.ts:68-94` (LEGEND_COLUMNS) + :210-281 (paintPrimitive) + :289 (drawLegendSymbol), `src/aris/symbols/types.ts`, `src/aris/canvas/legend.test.ts:20-51`, `src/aris/canvas/exportArisPdf.test.ts`.
-
-### Verified ground truth
-
-Rule marks = stroke-width-11 primitives in a 100×100 viewBox (`shapes.ts:907-965`: XOR `line(30,30,70,70,{sw:11})`+`line(70,30,30,70,{sw:11})`; AND `path('M 33 57 L 50 39 L 67 57',{sw:11})`; OR `path('M 33 41 L 50 59 L 67 41',{sw:11})`; circle r=50; `captionPolicy:'hidden'`). `drawPrimitive` emits `vector-effect: non-scaling-stroke` in ALL FIVE branches (`renderer.ts:405/418/431/443/454`); legend `paintPrimitive` mirrors (`legend.ts:232/243/254/265/275`). Non-scaling-stroke ⇒ arms are ALWAYS 11 device px while the circle scales ⇒ ~2.5× too thick at zoom 0.4, hairline at zoom 4. Connections/arrowheads/lane bands/print-frame/legend-frame have NO vector-effect (they scale) — the asymmetry IS the bug. **[VERIFIED]** the `path` branch scales geometry via a group `transform: scale(sx,sy)`; removing vector-effect there without compensation multiplies painted width by the symbol scale (icons ~4×, VACD chevrons ~6×) — divide the emitted path width by the transform scale. **[VERIFIED]** PDF export strips the viewport transform and may downscale rasters — after the fix export strokes scale with it (determinism improvement); rect/circle/polygon/line output is numerically identical. **[VERIFIED]** the printed original legend shows the operator circles in column 1 under Event (order AND, XOR, OR); appending 3 ids to column 1 keeps `rows = max column length = 4` ⇒ NO tile narrows, no row added. Dictionary names already exist: `aris.symbol.and/or/xor` EN `'AND'/'OR'/'XOR'` (:2307/:2318/:2328), AR `'و'/'أو'/'أو حصري'` (:5279/:5290/:5300); descriptors registered `catalogId 'decision.and|xor|or'` (`shapes.ts:1069-1071`); catalog rows `catalog.ts:139/155/171`.
-
-### Steps (TDD)
-
-- [x] Test `rendererStroke.test.ts` (jsdom): draw an XOR rule occurrence ⇒ no element under its group has `vector-effect`; X `line`s carry `stroke-width="11"`; draw a 670×240 `epc.function` card ⇒ its icon `path` `stroke-width × group scale ≈ authored width` (±1e-3 — pins the compensation).
-- [x] Impl `drawPrimitive` (:370-460): delete the `'vector-effect':'non-scaling-stroke'` line from the rect/circle/polygon/line branches; path branch:
-
-  ```ts
-  const pathScale = Math.max(1e-6, (Math.abs(scale.sx) + Math.abs(scale.sy)) / 2)
-  // painted width stays `strokeWidth` user units — identical at zoom 1 to the old
-  // non-scaling-stroke behaviour, and scales with zoom like connection pens.
-  'stroke-width': round(strokeWidth / pathScale)
-  ```
-
-- [x] Mirror both edits in `legend.ts paintPrimitive` (:210-281).
-- [x] Test then impl linecap: add optional `linecap?: 'round'` to the line/path drawing-element members in `symbols/types.ts`; `shapes.ts` `line()`/`path()` helpers pass it through; `ruleShape` marks get `{ strokeWidth: 11, linecap: 'round' }` (icon lines unaffected); both painters emit `stroke-linecap` when set. Test `rendererStroke.test.ts`: XOR marks carry `stroke-linecap="round"`, an icon line does not.
-- [x] Test then impl legend tiles: `LEGEND_COLUMNS` col 1 → `Object.freeze(['epc.event','decision.and','decision.xor','decision.or'])`; update `legend.test.ts` `EXPECTED_CATALOG_IDS` (:20-40 → 22) + both 19-count assertions (:45-51 and the drawArisLegend SVG test); assert the three tiles resolve bilingual names from the existing dictionary keys; assert an existing tile's height is unchanged (rows stayed 4); update the `legend.ts:1-21` header comment 19→22.
-- [x] Enumerate + eyeball affected strokes (icon strokes 1.2–2.4 across ~25 icons; surface outlines 1.5; marks 11): zoom-1 identical by construction; palette previews (`descriptorPreview.ts`) now scale strokes — verify legibility on the screenshot pass.
-- **Commits:** `fix(aris-renderer): descriptor strokes scale with zoom — drop non-scaling-stroke, compensate path transforms` · `fix(aris-symbols): round line caps on AND/OR/XOR operator marks` · `feat(aris-legend): add AND/XOR/OR operator tiles to legend column 1 (22 presentations)`
-
-**Verification:** `npx vitest run src/aris/canvas/rendererStroke.test.ts src/aris/canvas/legend.test.ts src/aris/canvas/exportArisPdf.test.ts`; both animalwf suites. **Zoom-ladder screenshots** (after build, on register-owner): zoom 0.4 (3 × `−`), 1.0, 2.0 (5 × `+`), 4.0 — element-screenshot a gateway (`g[data-aris-operator="XOR"]`) into `wpc-zoom-*.png`; X-arm:diameter ratio must look constant ~11 %; compare zoom-4 vs `../reference/AnimalWF/crops/cmp-gate-merge.png` (rounded tips); one legend screenshot; one manual PDF export vs canvas.
-
----
-
-## Lane L-P3 (Wave 14) — VACD overview containers _(user issue 3)_
-
-**Worker:** opus48-1m high. **Read first:** `src/aris/canvas/canvasSync.ts:538-568` (syncOccurrences) + :641 (connection def map) + :843-879 (applyDrawOrder), `src/aris/canvas/elements.ts:67-86`, `src/aris/canvas/renderer.ts:1003-1090` (drawShape) + :1233-1290 (drawConnection) + :170-188 (DIRECTED_CONNECTION_TYPES), `src/aris/model/buildFromSource.ts:410`, `src/aris/source/semanticIndex.ts:819`, `src/aris/symbols/catalog.ts:117` (PI default fill), `../reference/conventions/` page 18.
-
-### Verified ground truth
-
-The VACD (`Model.-64xG-AFMIgg-u-L`, 23 ObjOccs) has **3 occurrences with `Flags="16"`** — grouping containers (`ST_VAL_ADD_CHN_SML_1` at (75,158) 3250×2884; (325,359) 2850×1432; (325,1941) 2850×1018) drawn as full opaque symbols (white surface + solid green accent wedge ≈34 % width + uniform icon at 32.5× + centered caption) ⇒ "huge overlapping blocks". All **12 `CT_IS_PRCS_ORNT_SUPER`** connection occurrences originate FROM those containers (parsed: `2y6nUbRqOA4` → `U9ZFPkRyZZ` → 7 leaves; `48bvZJ9DdZk` → 4 leaves) and render as stray arrowless lines (type absent from `DIRECTED_CONNECTION_TYPES`). **[VERIFIED]** `Flags` already reaches the working model — `buildObjectOccurrence` copies `source.rawAttributes` verbatim (`buildFromSource.ts:410`; `semanticIndex.ts:819`) ⇒ NO types/buildFromSource plumbing; derive from `occurrence.rawAttributes['Flags']`. Convention manual **p.18** is authoritative: hide the hierarchy line («فيتم إخفاء خط العلاقة»), draw the parent as a containing area. Z-order honoured but container z=59 paints after leaves z=46/48 ⇒ need a tier. The 7 EPC models have no `Flags=16` ⇒ unaffected by the scope guard. Leaf chevrons (648×242) + 9 `ST_PERFORM` tiles keep current rendering.
-
-### Steps (TDD)
-
-- [x] Test `canvasSync.containers.test.ts` (jsdom `bootCanvas`): synthetic `MT_VAL_ADD_CHN_DGM` with one `Flags="16"` occ, one flag-less occ that SOURCES a `CT_IS_PRCS_ORNT_SUPER` connection, one leaf ⇒ first two business objects carry `isContainer:true`, leaf not; an `MT_EEPC` occ with `Flags="16"` ⇒ NOT (scope guard).
-- [x] Impl detection: `elements.ts:67-86` add `readonly isContainer?: boolean` (doc: VACD grouping chevron — Flags bit 16 / hierarchy-edge source; drawn as a background frame). `canvasSync.syncOccurrences` (:538-568): build `hierarchySources` set from `model.connectionOccurrences` + the definition map (same as :641); per occ:
-
-  ```ts
-  const flagBits = Number.parseInt(occurrence.rawAttributes['Flags'] ?? '0', 10)
-  const isContainer =
-    model.type === 'MT_VAL_ADD_CHN_DGM' &&
-    occurrence.symbol === 'ST_VAL_ADD_CHN_SML_1' &&
-    ((Number.isFinite(flagBits) && (flagBits & 16) !== 0) || hierarchySources.has(occurrence.id))
-  ```
-
-  stamp `isContainer` on the frozen business object.
-
-- [x] Test then impl draw-order tier: `applyDrawOrder` (:843-879) — `tierOf(el)` (lane 0, container occurrence 1, rest 2) sorted BEFORE `zOrderOf`/labelRank/originalIndex.
-- [x] Test then impl container painter: in `drawShape`'s occurrence branch, after `resolvePaint` (:1046):
-
-  ```ts
-  if (businessObject.isContainer) {
-    group.setAttribute('data-aris-container', 'true')
-    this.drawContainerOccurrence(group, shape, businessObject, paint)
-    svgAppend(parentGfx, group)
-    return group
-  }
-  ```
-
-  New `drawContainerOccurrence` (w/h = shape size): white body rect (source pen honoured — container 1 carries Pen 666666 width 10 → 26.5 canvas units), thin accent top strip `min(40, max(16, h*0.012))`, accent left band `min(220, max(60, w*0.06))` with a white double-chevron uniform-scaled to ~55 % of the band width, caption via `drawCaption(name, w, h, font, { x: band+16, y: strip+8, width: w-band-32, height: 110 })`. NO accent wedge, NO 32.5× icon, NO centered caption. Test: container group has `data-aris-container="true"`, no silhouette-scale icon, a white body, an accent top strip + left band, caption anchored in the top region (first tspan y < 15 % of height), no polygon reaching 34 % width.
-
-- [x] Test then impl hierarchy-edge suppression: in `drawConnection` (:1233-1290) add `const HIDDEN_HIERARCHY_CONNECTION_TYPES = new Set(['CT_IS_PRCS_ORNT_SUPER'])` next to `DIRECTED_CONNECTION_TYPES` and extend the `visible` computation (:1249) with `&& !(appearance && HIDDEN_HIERARCHY_CONNECTION_TYPES.has(appearance.connectionType))` (reuses the existing hidden-line path — element kept, invisible, non-interactive). Test: a `CT_IS_PRCS_ORNT_SUPER` connection renders `visibility="hidden"`/`pointer-events="none"` while `CT_IS_PREDEC_OF_1` stays visible.
-- [x] Fixture snapshot `vacdOverview.animalwf.test.ts` (throw-at-load guard): activate the VACD ⇒ exactly 3 `data-aris-container` groups, all 3 precede every leaf in DOM order, 12 hidden `CT_IS_PRCS_ORNT_SUPER` connections, 12 leaf chevrons + 9 ST_PERFORM render normal descriptors, container captions present.
-- **Commits:** `fix(aris-canvas): detect VACD grouping chevrons and tier them behind leaves` · `fix(aris-renderer): draw VACD containers as convention-style frames; hide Is-Process-Oriented-Superior edges` · `test(aris): VACD overview fixture expectations`
-
-**Verification:** `npx vitest run src/aris/canvas/canvasSync.containers.test.ts src/aris/canvas`; both animalwf suites (EPC untouched by construction); fidelity e2e screenshot `vacd-overview-*.png` vs convention-manual p.18 style (containers as frames, no overlap, no stray lines). Containers stay selectable/movable (no rules change).
-
----
-
-## Lane L-P9→P6 (Wave 14, one lane, serial) — Process-interface geometry, then Requirements icon _(user issues 9, 6)_
-
-**Worker:** sonnet medium. **Read first:** `src/aris/symbols/shapes.ts:823-905` (processInterfaceShape) + :631-641 (requirement icon) + :626-629 (data-entity eyelet technique) + :1251-1258 (requirement wiring) + :1334 (fingerprints), `src/aris/symbols/symbols.test.ts:107-115`, `../reference/AnimalWF/crops/orig-process-interface-600.png`, `../reference/AnimalWF/crops/orig-hand-600.png`, `../reference/AnimalWF/crops/icon-board/`.
-
-### P9 — process interface (do FIRST)
-
-**Verified ground truth:** `processInterfaceShape` draws [0] rear chevron polygon (12,20)…(99,40)…(12,59) paintRole ACCENT (AnimalWF brush `cccccc` recolours it), [1] white surface ending y=38/x=96, [2] accent band, [3] flag icon ⇒ a 21-unit solid grey slab (≈35 % height) directly under the caption (contentBox centers text at y≈19); x reaches 99 vs surface 96; `hitPath` (:841) matches NEITHER polygon. The 600-dpi original: ONE grey right-pointing pentagon banner + a white inset rounded panel floating on it (thin grey margin above, wider below) + the flag icon in the grey left margin.
-
-- [x] Test `processInterface.test.ts` (509×299 — the fixture instance size): exactly one `data-aris-part="silhouette"` polygon + one `data-aris-part="surface"`; the surface is a rounded RECT strictly inside the silhouette on all four sides; caption centre inside the surface; `Brush cccccc` recolours the silhouette (accent) but not the surface.
-- [x] Impl — replace the groups:
-
-  ```ts
-  hitPath: 'M 0.75 0.75 H 86 L 99.25 30 L 86 59.25 H 0.75 Z',
-  iconBox: { x: 4, y: 14, width: 15, height: 32 },
-  contentBox: { x: 25, y: 10, width: 58, height: 32 },
-  groups: [
-    { id: 'silhouette', scale: 'stretch', paintRole: 'accent', elements: [
-      polygon([{x:0.75,y:0.75},{x:86,y:0.75},{x:99.25,y:30},{x:86,y:59.25},{x:0.75,y:59.25}], { fill: accent }) ]},   // accent = conventionDefaultFill('OT_FUNC','ST_PRCS_IF') '#c0c0c0'
-    { id: 'surface', scale: 'stretch', paintRole: 'none', elements: [
-      rect(22, 7, 66, 38, { fill: WHITE, stroke: OUTLINE, strokeWidth: 1.2, rx: 2, ry: 2 }) ]},
-    { id: 'icon', scale: 'uniform', paintRole: 'none', elements: compactFlag }   // unchanged flag art
-  ]
-  ```
-
-  (numbers measured off the 600-dpi tile: panel inset ~12 % top, ~22 % left, ~12 % right, ~25 % grey below). `defaultBounds` gains explicit `{width:100,height:60}`. ST_PRCS_IF occurs only in `Model.3hdu6F9MD0n-u-L` (NOT expectation-covered) ⇒ animalwf suites safe. Screenshots: PI occurrence `ObjOcc.3hdu6F9MD0n-u-L--7w6ZOgNqjLW-x-L-33-c` at zoom 2 before/after vs `orig-process-interface-600.png` + the legend tile.
-
-- **Commit:** `fix(aris-symbols): rebuild process-interface as grey banner + white inset panel per DMT original; align hit path`
-
-### P6 — requirements hand icon (do SECOND)
-
-**Verified ground truth:** the current icon (`shapes.ts:631-641`) is a four-finger OPEN hand — the 600-dpi crop shows a **fist with the index finger raised** (tall index finger left with a rounded tip, three folded-knuckle stubs stepping down rightward, rounded palm mass, diagonal thumb crease), filled white. One of the few icons NOT redrawn in Wave 9 P9. Band-fit: icons past x≈24 poke into the caption; the new path must stay x ∈ [2.5, 19.3].
-
-- [x] Author the replacement filled-white compound path. Starting draft (iterate against the crop — this is geometry to refine, not final art):
-
-  ```ts
-  case 'requirement':
-    // ARIS original (orig-hand-600.png): a fist with the index finger raised.
-    return [ path(
-      'M 6.2 30 L 6.2 15.6 C 6.2 13.9 8.8 13.9 8.8 15.6 L 8.8 24.5 ' +      // index finger
-      'L 10.6 24.5 L 10.6 20.8 C 10.6 19.2 13 19.2 13 20.8 L 13 24.9 ' +    // stub 1
-      'L 14.6 24.9 L 14.6 22.2 C 14.6 20.7 16.8 20.7 16.8 22.2 L 16.8 25.4 ' + // stub 2
-      'L 18.4 25.4 L 18.4 23.6 C 18.4 22.3 19.3 22.6 19.3 23.9 ' +           // stub 3 (short)
-      'L 19.3 33.5 C 19.3 40 15.5 43.5 10.5 43.5 C 7.2 43.5 5.2 41.5 5 38.5 Z',   // palm
-      { fill: WHITE, stroke: 'none', strokeWidth: 0 } ) ]
-  ```
-
-  The thumb crease is punched as a thin opposite-wound quad (same eyelet technique as `data-entity` :626-629) OR drawn as a second thin accent path. Iterate on the reused icon-board tooling `../reference/AnimalWF/crops/icon-board/{icons.html,shot.mjs}` (`node shot.mjs`) until 4× visual match with `orig-hand-600.png`. Fixed constraints: x ∈ [2.5, 19.3], filled-white.
-
-- [x] Fit test `symbols.test.ts`: parse every absolute coordinate pair of the requirement icon path ⇒ x ∈ [2.4, 19.4], y ∈ [7, 53] (guards the band-fit regression). Fingerprints test stays green (path data is not hashed; count 36 + uniqueness only).
-- [x] Screenshots: palette preview (`data-aris-catalog-id="data.requirement"`) + register-owner Requirements card at zoom 2, side-by-side vs `orig-hand-600.png`.
-- **Commit:** `fix(aris-symbols): redraw requirement hand icon to match ARIS raised-index-finger original`
-
-**Verification:** `npx vitest run src/aris/symbols src/aris/canvas/processInterface.test.ts src/aris/canvas/legend.test.ts`; both animalwf suites.
-
----
-
-## Lane L-P7 (Wave 14) — Bilingual RACI legend rows _(user issue 7)_
-
-**Worker:** sonnet medium. **Read first:** `src/aris/canvas/legend.ts:47-50` (row type) + :96-104 (RACI_ROWS) + :116-122 (legendName) + :167-174 (buildArisLegend) + :322 (rtlAttrs) + :389-408 (tile paint) + :441-453 (RACI paint), `src/aris/canvas/printFrameI18n.ts`, `src/aris/canvas/legend.test.ts:75-83`, `src/aris/canvas/printFrame.test.ts`, `src/aris/canvas/printFrame.animalwf.test.ts`. **Depends on:** L-I18N (Wave 11) having registered `aris.printFrame.*`.
-
-### Verified ground truth
-
-`aris.printFrame.*` keys are registered by L-I18N (until then `arisPrintFrameText` always fell back to English — `printFrameI18n.ts:51`; grep count was 0). Tiles are already bilingual (Arabic above/English below, `:389-408`); RACI rows (`:441-453`) are English-only with a hardcoded LTR `'${row.label} :'` separator (:449) inside the red box (`LEGEND_RACI_STROKE '#d52929'`). The printed original renders each row as bilingual «Arabic/English» end-anchored with the bold letter at the RIGHT edge.
-
-### Steps (TDD)
-
-- [x] Update `legend.test.ts` "labels the RACI rows" (:75-83): rows expose `labelEn ['Responsible','Approval','Consulted','Informed']` + `labelAr ['مسؤول عن التنفيذ','الموافقة والاعتماد','يستشار عند التنفيذ','يُعلم بالتنفيذ أو النتيجة']`; SVG: each RACI row text ends with the letter on the right (letter x > label x), the label contains `/`, Arabic rows carry `direction="rtl"`.
-- [x] Impl: `ArisLegendRaciRow` (:47-50) → `{ letter; labelEn; labelAr }`; `buildArisLegend` (:167-174) → `labelEn: en[row.labelKey] ?? arisPrintFrameText(row.labelKey)`, `labelAr: ar[row.labelKey] ?? ''` (direct dictionary reads, mirroring `legendName`); `drawArisLegend` rows (:441-453) → per row a text `${labelAr}/${labelEn}` `anchor:'end'` at `x = raci.x + raci.width - rowHeight*1.05` + the bold letter+`:` at `x = raci.x + raci.width - rowHeight*0.55`; drop the `'${row.label} :'` template. Title (:428-440) → `ar['aris.printFrame.raci.title']` (the printed title is the combined bilingual string), font `rowHeight*0.34`, fit asserted in the SVG test. `rtlAttrs` (:322) handles direction.
-- [x] Audit `printFrame.test.ts` / `printFrame.animalwf.test.ts` for `lang='ar'` cases now getting Arabic (intended change — update those assertions).
-- **Commit:** `fix(aris-legend): bilingual RTL RACI rows matching the printed legend`
-
-**Verification:** `npx vitest run src/aris/canvas/legend.test.ts src/aris/canvas/printFrame.test.ts src/__tests__/i18n.test.ts`; `npm run check:ui-copy`; both animalwf suites. Legend region screenshots in BOTH UI languages vs `../reference/AnimalWF/crops/orig-legend.png`.
-
----
-
-## Lane L-P2 (Wave 14) — Dock the tools palette into the right rail with tabs _(user issue 2)_
-
-**Worker:** codex gpt-5.6-sol xhigh. **Read first:** `src/aris/canvas/paletteProvider.ts` (whole file; :100-116 libraryEntryHtml, :189-217 subscriptions, :229-269 targets, :271-326 getPaletteEntries, :329-379 startPlacement/draftShape, :409-563 enhancePalette), `src/aris/canvas/modules.ts:116/:151`, `src/aris/canvas/dmtLibrary.ts:26-49/:102-150`, `src/aris/canvas/descriptorPreview.ts:15-56`, `src/aris/shell/arisPaletteDrag.ts`, `src/aris/shell/ArisCanvasView.tsx:37/:176/:183`, `src/aris/shell/ArisStudioTab.tsx:1194-1227` + :870, `src/aris/shell/arisRailLayout.ts`, `src/aris/shell/ArisDetailsRail.tsx:285-301/:436-597`, `src/aris/canvas/dmtLibrary.css`, `tests/e2e/{aris-authoring,aris-canvas-interaction,aris-new-model,aris-i18n-rtl,aris-details-rail}.spec.ts`, `src/aris/canvas/paletteCatalog.test.ts`. **Depends on:** L-I18N tooltip template change; must run AFTER L-P1b (shared `ArisStudioTab.tsx`).
-
-### Verified ground truth
-
-The palette is diagram-js's `Palette` populated by `ArisPaletteProvider` (registered via DI `modules.ts:116`); the ONLY `palette` service consumer is the provider itself ⇒ removing `PaletteModule` from `modules.ts:151` is safe. `targets()` (:229-269) maps `dmtLibraryItems(modelType)`; placement is click-to-arm AND dragstart → `startPlacement()` (:329-340) → `create.start(event, draft)` (diagram-js `Create`/`Dragging` listen on `document`, so a button outside the canvas container works). Floating/drag layer `arisPaletteDrag.ts` (`installPaletteDrag` called from `ArisCanvasView.tsx:176`). Right rail `ArisStudioTab.tsx:1194-1227` (`ArisDetailsRail` + `ArisEpcRail`); width `arisRailLayout.ts` (MIN 260 / MAX 560 / DEFAULT 340). Reuse tab pattern from `ArisDetailsRail.tsx:436-597` (ARIA tablist, roving tabindex, RTL `onTabKeyDown` :285-301). e2e palette selectors: `aris-authoring:216-300`, `aris-canvas-interaction:128-296`, `aris-new-model:57-143`, `aris-i18n-rtl:224-257`; soak-gate + accessibility have none.
-
-### Steps (TDD)
-
-- [x] **Task 1 (riskiest assumption, proven first).** Test `paletteCatalog.test.ts`: a `<button>` NOT under `harness.container` dispatches a click → `canvas.palette.startPlacement(event, target)` → fire `create.end` (pattern of the existing test :114-149) → occurrence commits. Add provider facades:
-
-  ```ts
-  activateHandTool(event) { this.handTool.activateHand(event) }
-  activateLassoTool(event) { this.lassoTool.activateSelection(event) }
-  createFreeText(label) { this.modeling.createFreeText(label, { x: 0, y: 0 }) }
-  ```
-
-  **Commit:** `test(aris): characterize palette placement armed from outside the canvas container; add tool facades`
-
-- [x] **Task 3 — React `ArisToolsPanel.tsx`** (+ `arisToolsPanel.css` ported from `dmtLibrary.css:28-146`, selectors rescoped to `.orbitpm-aris-tools`). Renders: utilities row (hand/lasso/free-text via facades), search input (`aris-library-search__input`, filtered by `searchDmtLibrary(query, modelType)`), collapsible `DMT_LIBRARY_GROUPS`, one `<button data-action={target.id} data-aris-catalog-id={target.catalogId} draggable title={dmtLibraryText('aris.library.item.tooltip', { name: target.title })} aria-label={dmtLibraryText('aris.library.item.aria', {…})}>` per `targets()` row containing `descriptorPreviewMarkup(target.catalogId)` + a `.aris-palette-entry__label`; click AND dragstart → `canvas.palette.startPlacement(e.nativeEvent, target)`; roving keyboard nav ported from `enhancePalette` :474-512. Export the tile grid as `ArisSymbolTiles` for L-P10c's picker. Test `arisToolsPanel.test.tsx`: one button per `dmtLibraryItems('MT_EEPC')`; `button.title === 'Entity type'` and NOT containing `OT_`; search hides non-matches (`sms`); group toggle collapses; ArrowRight/Home/End move focus; click + dragstart call `startPlacement`; hand/lasso/free-text call their facades. **Commit:** `feat(aris): React DMT tools panel with search, groups and keyboard navigation`
-- [x] **Task 4 — rail tabs** in `ArisStudioTab.tsx` (aside :1194-1227) + `useArisRailTab()` in `arisRailLayout.ts` (`ARIS_RAIL_TAB_KEY='orbitpm.aris.railTab'`). Tablist mirrors `ArisDetailsRail.tsx:450-480` (roving tabindex, RTL `getDir()` arrows), buttons `data-orbitpm-aris-rail-tab="details"|"tools"`; Details panel wraps the existing `<ArisDetailsRail/><ArisEpcRail/>` block unchanged; Tools panel renders `<ArisToolsPanel canvas={canvasRef.current} modelType={…}/>` keyed on `canvasTick`; both mounted, inactive `hidden`; default `tools`; auto-switch to Details on a transition to a NEW non-null `detailsElement` (`lastDetailsRef` identity guard — never yanks away during consecutive placements) and on `railHighlight`; never auto-back; keep width default 340 (tiles reflow). Test `arisDetailsRailLayout.test.tsx`: two tabs, Tools default, panel visible; clicking Details shows `[data-orbitpm-aris-details]`; persistence; existing width/collapse tests untouched. **Commit:** `feat(aris): dock the tools library into the right rail behind Details/Tools tabs`
-- [x] **Task 5 — remove the diagram-js palette module.** `modules.ts`: delete the `PaletteModule` import (:51) + list entry (:151). Slim `paletteProvider.ts`: drop `'palette'` from `$inject`/ctor, delete `registerProvider` (:221), `getPaletteEntries`/`libraryEntryHtml`/`utilityEntryHtml`/glyphs (:74-98, :271-326), `enhancePalette`/`syncGroupToggle`/`applySearchFilter` (:409-563), `refreshPalette` (:565-568) + its call sites, the `Palette` import, the dead `ArisPaletteEntry` interface; KEEP `targets()`, `startPlacement`, `draftShape`, `catalogIdFor`, `rememberCatalogPresentation`, `applyRememberedPresentation`, the `create.end/cancel`+`elements.changed` subscriptions (:189-217), the Task-1 facades. Update `paletteCatalog.test.ts` to `targets()`; delete its DOM-palette test. **Commit:** `refactor(aris): remove the floating diagram-js palette; provider becomes a headless placement service`
-- [x] **Task 6 — retire the drag layer.** Delete `arisPaletteDrag.ts` + `arisPaletteDrag.test.ts`; remove the import/call/cleanup in `ArisCanvasView.tsx` (:37/:176/:183); delete `.djs-palette` + `.orbitpm-palette-*` CSS in `dmtLibrary.css` (keep `.djs-context-pad` rules); delete `aris.library.dock|undock|move` keys from `dmtLibraryI18n.ts`. **Commit:** `refactor(aris): retire the floating-palette drag/dock layer`
-- [x] **Task 7 — e2e migration + new spec.** Locator swaps to `[data-orbitpm-aris-tools]` in `aris-authoring`/`aris-canvas-interaction` (drop `.orbitpm-palette-grip`); `aris-new-model` grip-drag/persistence → rail-tab persistence; `aris-i18n-rtl` palette-LTR → Tools-tab-RTL-in-Arabic (panel `direction: rtl`, Arabic tile labels); `aris-details-rail` clicks the Details tab first (or relies on auto-switch). NEW `tests/e2e/aris-rail-tools.spec.ts` — see "e2e scenario scripts" below. **Commit:** `test(e2e): migrate palette selectors to the rail tools panel; add rail-tools spec`
-
-**Risks:** out-of-container `create.start` is proven FIRST (Task 1) before anything is removed (fallback: synthetic event over the canvas); accessibility spec — copy the evidence-passing DetailsRail tablist pattern exactly (initial focus, Escape restore); RTL tabs/tiles follow `dir` in Arabic (intended `aris-i18n-rtl` change); auto-switch loop guarded by `lastDetailsRef`.
-
----
-
-## Lane L-P10c (Wave 15) — Hover tooltip + right-click change-object-type _(user issue 10, part 3)_
-
-**Worker:** codex gpt-5.6-sol xhigh. **Read first:** L-P10a `displayNames.ts`, L-P2 `ArisSymbolTiles`, `src/aris/canvas/quickPick.ts:117-197/:324-381` + `membersFor` :132-176, `src/aris/canvas/authoring.ts:313-405` (canReplaceNewObject/replaceNewObject) + :258 (resizeOccurrence), `src/aris/model/commands.ts:15-42` + :941 + :966-1005 + :1246, `src/aris/canvas/commandFactory.ts:266/:308-322`, `src/aris/canvas/contextPadProvider.ts:92-121`, `src/workspace/FolderTreeLite.tsx:1006-1120` (context-menu pattern), `node_modules/diagram-js/lib/features/interaction-events/InteractionEvents.js:137/147`, `src/aris/canvas/modules.ts:91-124`, `src/aris/canvas/renderer.ts:1020-1038`, `src/aris/canvas/vocabulary.ts:37-60` (isSupportedObjectType), `src/aris/shell/arisDerivedExport.ts:869-872/:934`.
-
-### Verified ground truth
-
-NO canvas hover tooltip exists; `element.hover/out` free; overlays pattern `quickPick.ts:189-197`. `element.contextmenu` emitted with allowAll filter (InteractionEvents.js:137/147) — unclaimed. Context-menu pattern: `FolderTreeLite.tsx:1006-1120` (fixed div, role=menu, zIndex 2000, close on click/contextmenu/resize, arrow-key nav). Type change today = delete+recreate `replaceNewObject` (authoring :346-405) gated `canReplaceNewObject` (:313-332 pristine only); NO `setDefinitionType`. **[VERIFIED]** derived export diffs `definition.type → TypeNum` and `occurrence.symbol → SymbolNum` already (`arisDerivedExport.ts:869-872/:934`) ⇒ zero writer changes; `invertCommand` default swaps before/after ⇒ payload-symmetric new command gets undo free; `canvasSync` rebuilds business objects on every change ⇒ re-render/re-colour/re-validate needs no extra wiring.
-
-### Steps (TDD)
-
-- [x] **Hover tooltip.** New `src/aris/canvas/hoverTooltip.ts` (`$inject ['eventBus','overlays','elementRegistry','selection']`), registered in `modules.ts` `__init__` + provider map. Subscribes `element.hover` (300 ms arm timer) → overlays div `[data-orbitpm-aris-type-tip]` at `{ bottom:-6, left:0 }` (context pad anchors `right:-8` — no collision) showing the name line (when non-empty) + `arisObjectBlockName(...)`; cleared on `element.out`, drag/create start, `canvas.viewbox.changed`, `elements.changed`, selection of the element, `diagram.destroy`. Only for `businessObject.kind === 'occurrence'`. Small CSS in `shell.css` (`.aris-type-tip { pointer-events: none; … }`). Test `hoverTooltip.test.ts` (fake timers): 0 ms nothing → 300 ms `[data-orbitpm-aris-type-tip]` shows `'Log block'` → `element.out` removes → drag-start suppresses → selection suppresses → destroy cleans. **Commit:** `feat(aris): hover tooltip showing the friendly object type on canvas blocks`
-- [x] **`setDefinitionType` command.** `commands.ts`: add `'setDefinitionType'` to the kind union (~:23) + applier:
-
-  ```ts
-  function applySetDefinitionType(document, command) {
-    const p = command.after // { definitionId, type, defaultSymbol }
-    const definition = assertDefined(
-      document.objectDefinitions.get(p.definitionId),
-      'object definition',
-      command
-    )
-    return {
-      ...document,
-      objectDefinitions: replaceMap(
-        document.objectDefinitions,
-        p.definitionId,
-        Object.freeze({ ...definition, type: p.type, defaultSymbol: p.defaultSymbol })
-      )
-    }
-  }
-  ```
-
-  register in the appliers map (~~:941) and the affected-ids/ownership switch (~~:966-1005, reading `p.definitionId`); `invertCommand` default (:1246) handles undo. `commandFactory.ts`: `setDefinitionTypeCommand(context, document, definitionId, {type, defaultSymbol})` modeled on `setOccurrenceSymbolCommand` (:308-322). Test `commands.test.ts`: apply updates type+defaultSymbol; invert restores; missing definition throws `missing-reference`; revision guard. **Commit:** `feat(aris): setDefinitionType command — reversible definition type/default-symbol change`
-
-- [x] **`authoring.changeObjectType`.** `authoring.ts` (after :406):
-
-  ```ts
-  changeObjectType(occurrenceId, target /* { objectType, symbolNum, catalogId? } */) {
-    const document = this.store.document
-    const occurrence = requireOccurrence(document, occurrenceId)
-    const definition = requireObjectDefinition(document, occurrence.definitionId)
-    if (definition.type === target.objectType) { if (occurrence.symbol !== target.symbolNum) this.setOccurrenceSymbol(occurrenceId, target.symbolNum); return }
-    if (!isSupportedObjectType(target.objectType)) throw new ArisCanvasCommandError('unsupported-object-type', …)
-    if (this.canReplaceNewObject(occurrenceId)) { this.replaceNewObject(occurrenceId, target); return }
-    const modelTypeOf = (id) => document.models.get(id)?.type ?? 'MT_EEPC'
-    const oldDescriptor = resolveArisSymbol({ modelType: modelTypeOf(occurrence.modelId), objectType: definition.type, symbolNum: occurrence.symbol }).descriptor
-    const newDescriptor = resolveArisSymbol({ modelType: modelTypeOf(occurrence.modelId), objectType: target.objectType, symbolNum: target.symbolNum }).descriptor
-    this.bridge.execute('change-object-type', (doc, context) => {
-      const commands = [ setDefinitionTypeCommand(context, doc, definition.id, { type: target.objectType, defaultSymbol: target.symbolNum }) ]
-      for (const model of doc.models.values()) for (const sibling of model.occurrences) {
-        if (sibling.definitionId !== definition.id) continue
-        commands.push(setOccurrenceSymbolCommand(context, doc, sibling.id, target.symbolNum))
-        const b = sibling.bounds
-        if (b.width === oldDescriptor.defaultBounds.width && b.height === oldDescriptor.defaultBounds.height) commands.push(resizeOccurrenceCommand(context, doc, sibling.id, newDescriptor.defaultBounds))
-      }
-      return transactionCommand(context, commands)
-    })
-  }
-  ```
-
-  Connections/attributes/names preserved; EPC/convention findings re-derive (a type change may make connections illegal — surfaces as findings, by design). Test `authoring.test.ts`: F→E doc with an attribute + 2 name locales + a second occurrence in another model ⇒ definition type/defaultSymbol changed; BOTH occurrence symbols updated; connection intact; attrs/names intact; default-bounds occ resized / custom-sized kept; ONE undo restores all; unsupported type throws; same-type delegates to `setOccurrenceSymbol`; pristine delegates to `replaceNewObject`. **Commit:** `feat(aris): changeObjectType authoring path preserving connections, attributes and names`
-
-- [x] **Right-click menu + picker.** New `src/aris/shell/ArisCanvasContextMenu.tsx` (portal, FolderTreeLite pattern, zIndex 2000; menu + picker dialog). Wire in `ArisStudioTab` via `canvas.eventBus.on('element.contextmenu', handler)` keyed on `canvasTick`: occurrences only, `originalEvent.preventDefault()`, open at client coords. Items: **Change object type…** (opens picker reusing `ArisSymbolTiles`, current type `aria-checked`, selecting calls `authoring.changeObjectType` + `palette.rememberCatalogPresentation` when a catalogId was chosen; `ArisCanvasCommandError` → `onToast(t('aris.changeType.failed', {error}), 'error')`), **Swap symbol…** (only when `quickPick.membersFor(id).length > 1` → `quickPick.open(id, true)`), **Delete** (`modeling.removeElements`). Escape closes + restores focus; arrow-key nav. Test `arisCanvasContextMenu.test.tsx`: items/labels; picker lists EEPC tiles grouped with current type checked; choosing a tile calls `changeObjectType` with `{objectType,symbolNum,catalogId}`; thrown error surfaces via toast; wiring test asserts `preventDefault` + portal at coords. **Commit:** `feat(aris): right-click menu on canvas blocks with change-object-type picker`
-- [x] **e2e** in `aris-rail-tools.spec.ts` (or sibling `aris-change-type.spec.ts`) — hover, details value, change-type scenarios (see below). **Commit:** `test(e2e): friendly type names, hover tooltip and right-click change-type coverage`
-
-**Verification:** `npx vitest run src/aris/model/commands.test.ts src/aris/canvas/authoring.test.ts src/aris/canvas/hoverTooltip.test.ts src/aris/shell`; `npm run test:aris:phase2`; the e2e scenario.
-
----
-
-## Lane group P11 (Waves 12–15) — Create-from-description evaluation with glm-5.2 _(user issue 11)_
-
-**Pipeline facts:** description tab → `buildArisAiPrompt` (`promptBuilder.ts:167-197`; SYSTEM_PROMPT :110-150) → default `z-ai/glm-5.2` (OpenRouter) → strict-JSON `ArisAiDraftV1` → `runArisAiGeneration` (validate + normalize + ≤3 repair turns) → `buildAmlFromArisAiDraft` (deterministic column layout) → model. Live-eval precedent: `createFromPdf.seq2.test.ts` (`OPENROUTER_API_KEY`-gated, cost ceiling, soft-target). Expected JSONs: 4 processes under `../reference/AnimalWF/expected/`.
-
-### Sub-lane P11-assets (Wave 12, sonnet + a codex Emirati lane; owns `../reference/AnimalWF/gen-tests/**` only — NOTHING is committed)
-
-- [x] Layout: `gen-tests/descriptions/<process>/<level>-<lang>.md` + `.humanized.md` + `.manifest.json`, for `process ∈ {register-owner, renew-profile, transfer-citizens, transfer-citizens-companies}` (primary) + one `medium-en` each for the other 3 EPCs (qualitative), `level ∈ {brief, medium, detailed}`, `lang ∈ {en, ar, ar-ae}`.
-- [x] Level definitions (bake into the authoring brief): **brief** = 3–6 sentences (purpose + major steps + outcome; no satellites, no decision detail); **medium** = 1–2 paragraphs (ordered steps, decision points + outcomes, main actors/systems, a few documents); **detailed** = full walkthrough (every step in order, every decision + branches, systems/screens, documents/laws, role responsibilities/RACI hints, start/end conditions).
-- [x] Authoring procedure: the writer reads the process's `expected.json` + reference PDF page and writes AS A BUSINESS PERSON WOULD (no `OT_*` codes, no modeling jargon); each description gets a **facts manifest** JSON `{"objects":[<expected ids the text mentions>],"connections":[[from,to],…]}` (powers capture-relative-to-description scoring).
-- [x] Humanize + scramble: run the installed `blader/humanizer` skill on every description, then a scramble pass (move ≥1 step out of order behind "oh, and before that…", add 1–2 irrelevant tangents, inconsistent names for the same system, hedges/colloquialisms, run-ons). FACTS MUST SURVIVE — after humanizing, re-verify the manifest still holds and update it if a fact got dropped.
-- [x] Arabic: MSA authored natively (not word-for-word translated). **Emirati (ar-ae):** a dedicated codex lane FIRST researches the dialect (شو/وش، وايد، عيل/يعني، هالـ prefix، بـ future, Gulf business colloquialisms) and writes the ar-ae variants; a SECOND codex pass reviews authenticity; both documented in the lane log.
-
-### Sub-lane P11-runner (Wave 13, sonnet; owns the scripts + comparator)
-
-- [x] `src/aris/fidelity/structureCompare.ts` (+unit tests with synthetic docs): structure-only comparator (generated layout is a deterministic column — geometry EXCLUDED). Objects matched greedily by (same objectType family) × normalized-label similarity (trigram/Dice ≥ 0.55, try both languages); connections matched through the object mapping (definition-level from→to pairs). Emit:
-
-  ```ts
-  interface StructureScore {
-    controlFlowRecall: number
-    controlFlowPrecision: number // OT_FUNC | OT_EVT | OT_RULE
-    connectionRecall: number
-    connectionPrecision: number
-    satelliteRecall: number
-    gatewayAccuracy: number
-    labelSimilarityMean: number
-    relativeRecall?: number // vs the facts-manifest subset when provided
-    misses: { objects: string[]; connections: [string, string][] } // the gap list
-  }
-  ```
-
-- [x] `scripts/aris-description-eval.ts` (vite-node): args `--desc <file> --process <key> [--model z-ai/glm-5.2] [--rounds-tag rN] [--out <json>]`; load `OPENROUTER_API_KEY` from `../reference/openrouter.env`; build the prompt with `buildArisAiPrompt` (name = process title, description = file text); Node fetch adapter to `https://openrouter.ai/api/v1/chat/completions` mirroring `browserAi` request shape; drive the REAL `runArisAiGeneration` (real repair turns); on success `buildAmlFromArisAiDraft` → `buildFromSource` → score vs `../reference/AnimalWF/expected/<process>.expected.json` with `structureCompare` (+ `relativeRecall` vs the manifest); write per-run JSON to `gen-tests/runs/<tag>/<process>-<level>-<lang>.json` + append a markdown row to the round report. Cost guard: estimate via the usage field, abort the round if cumulative > `$5` (env override).
-- [x] `scripts/aris-excel-eval.ts` (same shape for P12): `--workbook <xlsx> --process <key>` → `parseArisWorkbook` → `arisExcelCreate` → same comparator + captured validation-issue list.
-
-### Sub-lane P11-loop (Waves 14–15; repeated rounds)
-
-Each round r: (1) orchestrator runs the matrix (36 primary combos; glm-5.2 ~$0.02–0.05/run) via the runner → `gen-tests/runs/r<r>/`. (2) **fable-max judge** (read-only): reads the round reports + raw drafts, writes `runs/r<r>/diagnosis.md` — top ≤5 SYSTEMATIC failure classes with evidence quotes (draft excerpt vs expected), each classified {prompt gap | normalizer gap | repair gap | schema gap | inherent-description gap}; lists what it could NOT attribute. (3) **codex-xhigh improvement lane** (owns `src/aris/ai/*` + tests): fixes the attributable classes ONLY (prompt wording/few-shots, normalize/repair logic, EPC-semantics messages), each with a regression unit test; all existing `src/aris/ai` tests stay green; NO fixture-specific hacks (generic EPC improvements only). (4) re-run the SAME matrix, compare aggregates.
-
-- Convergence targets (per level, averaged over the 4 processes, EN; AR/ar-ae within 10 points of EN): **detailed** ≥ 0.85 controlFlowRecall ∧ ≥ 0.80 connectionRecall ∧ ≥ 0.9 gatewayAccuracy; **medium** ≥ 0.70 ∧ ≥ 0.65; **brief** = correct backbone (start+end events present, ≥ 0.6 function recall, connected chain). **relativeRecall ≥ 0.90 at every level** (whatever the writer actually mentioned must be captured — the primary "works well" bar; absolute recall on brief inputs is capped by information content, by design).
-- Stop when targets met OR 2 consecutive rounds with < 2-point aggregate gain (record the plateau openly). Minimum 3 rounds.
-- [x] Final deliverable `gen-tests/description-eval-report.md`: per-round score tables (process × level × lang), final gap-list examples, and the per-level "questions to ask the description writer" list generated from `misses` (the user's stated end-goal artifact).
-
----
-
-## Lane group P12 (Waves 12–15) — Create-from-Excel evaluation _(user issue 12)_
-
-**Facts:** templates generated in code (`templateWriter.ts:602-617`; downloadable from the panel); sheets `Models, Objects, Connections, Attributes, Assignments, Lanes, FreeText, Styles, Glossary` (`templateSchema.ts:39-49`; column specs :187-364); parser fflate-based (`xlsxReader.ts` + `workbookParser.ts:1042`); closed issue-code list (`issues.ts`); limits (`limits.ts`); creation path `arisExcelCreate.ts`; `xlsxWriter.ts` can author workbooks programmatically.
-
-### P12-assets (Wave 12, part of L-ASSETS)
-
-- [x] `scripts/aris-make-test-workbooks.ts` (or direct authoring via `xlsxWriter`) producing `gen-tests/workbooks/<process>-<fidelity>.xlsx` for the 4 primary processes at 3 fill-fidelity levels, AS A HUMAN WOULD:
-  - **minimal** — Models + Objects sheets only: names (EN) + `order`; NO connections/coords/symbol_type (tests inference/fallback; expected finding → template-improvement candidate: auto-chain by `order` when Connections is empty).
-  - **medium** — + Connections + Lanes + main satellites; `name_ar` blank (auto-translate interplay); a few wrong-but-plausible `object_type` guesses.
-  - **detailed** — everything: both languages, process codes, Attributes, Assignments, symbol_type; x/y blank (deterministic layout takes over).
-    Injected human imperfections (document in a sidecar note per workbook): mixed-case/spaced ids, one duplicated row, one connection with a typo'd endpoint id (validation UX check), stray whitespace.
-
-### P12-loop (Waves 14–15; mirrors P11-loop)
-
-Run `scripts/aris-excel-eval.ts` per workbook → score + issue-list quality review → fable-max diagnosis → codex improvement lane owning `src/aris/excel/*` (candidate improvements judged per round: template header guidance rows + column comments in `templateWriter`; auto-chain-by-order when Connections empty; forgiving id normalization (trim/case) where UNAMBIGUOUS; clearer issue guidance strings; example-sheet quality). Every change keeps `workbookParser.test.ts`, `roundtrip.test.ts`, `limits/issues/templateSchema/templateWriter` tests green (updating them for authorized template changes is in-scope). Targets: **detailed ≥ 0.95** objects+connections recall; **medium ≥ 0.85**; **minimal** = correct ordered backbone AFTER improvements (auto-chain), before/after documented. Deliverable `gen-tests/excel-eval-report.md` (same structure as P11's).
-
----
-
-## Lane L-P13 (Wave 13) — Create-from-PDF model A/B _(user issue 13; EVAL ONLY, no production changes)_
-
-**Worker:** opus48-1m high (+ fable judge). **Read first:** `src/ai/pdf.ts`, `src/ai/browserAi.ts` (buildRequest, anthropic/gemini/openrouter branches, :531/:578/:641), `src/ai/providersLite.ts:161-208`, `src/aris/ai/createFromPdf.seq2.test.ts` + `.fixture.ts`, and in `../desktop-w10`: `src/aris/ai/{regionTiling,mergeDraft,passContracts,passPrompts}.ts`, `src/aris/shell/arisAiCoarseToFine.ts:80`, `src/aris/ai/createFromPdf.seq2v2.test.ts`.
-
-**Facts:** v1 sends the PDF NATIVELY to the vision stack (`src/ai/pdf.ts` — Anthropic `document` block / Gemini `inlineData` / OpenRouter `file` part); current vision routes `google/gemini-3.5-flash-lite` + `qwen/qwen3-vl-235b-a22b-instruct` (image-only); capability gating fail-closed. The seq2 harness runs the REAL pipeline in Node (CSP/CORS irrelevant). w10 v2 (band tiling + complexity gate + pass contracts + deterministic merge + coarse-to-fine orchestrator, default OFF, image-only) has its own `seq2v2` A/B harness; `SEQ2_VISION_MODEL` override exists.
-
-### Steps
-
-- [x] New `scripts/aris-pdf-model-ab.ts` + harness-local send adapters (test/eval side ONLY — no app, no CSP, no provider-catalog changes):
-  - `anthropicSend`: reuse `makeBrowserCallLLM({ providerId:'anthropic', model:'claude-opus-4-8', apiKey: $ANTHROPIC_API_KEY })` (the anthropic `document`-block branch already exists in `browserAi.ts` and runs under Node fetch). Verify the exact current model id via a 1-token probe or `/v1/models` and record it.
-  - `openaiSend`: new adapter (OpenAI is not a LiteProviderId): POST `https://api.openai.com/v1/responses` with the PDF as `input_file` base64 + the same system/user prompts the pipeline emits; model `gpt-5.6-terra` — verify the exact id via `GET /v1/models` first; if PDF input is rejected, fall back to the PNG page image and record the limitation.
-- [x] Matrix (2 runs per cell for variance; register-owner PDF + its PNG): models {gemini-3.5-flash-lite (baseline), qwen3-vl (image baseline), gpt-5.6-terra, claude-opus-4-8} × inputs {native PDF, PNG} × pipelines {v1 single-shot (this branch); w10 v2 coarse-to-fine (image only; run inside `../desktop-w10` with `SEQ2_VISION_MODEL` + the adapter injected; `npm ci` there if needed; keep harness edits UNCOMMITTED or on ITS branch only — never merged)}.
-- [x] Scoring: the seq2 fixture's similarity metric + `structureCompare` vs `register-owner.expected.json`. Cost ceiling `$2` per model total (`SEQ2_LIVE_MAX_COST_USD` pattern); record cost + latency per cell.
-- [x] Deliverable `gen-tests/pdf-model-ab-report.md`: score table per cell, 3–5 concrete failure-mode examples per model (missed satellites, wrong operator, hallucinated nodes, layout-irrelevant), cost/latency, and a recommendation (which model for create-from-PDF; does tiling help strong models). Summarize into the ledger. **Out of scope: fixing the feature.**
-- **Commit (this branch only):** `feat(eval): PDF model A/B harness + report (gpt-5.6-terra, claude-opus-4-8 vs baselines)`
-
----
-
-## Lane L-P13-prod (post-Wave-14, user directive 2026-08-02) — Lock create-from-PDF to Claude Opus 4.8
-
-**Worker:** opus48-1m high. **Rationale:** P13 proved `claude-opus-4.8` is the only model that faithfully reads a native PDF (similarity 0.96 vs ≤0.47 for gpt-5.6-terra, ≤0.15 native-PDF for gemini, 0.0 for qwen). The user directs that create-from-PDF ship LOCKED to Opus 4.8 as its only model on `feat/aris-only-studio`. Authorized product change #9.
-
-- [x] When the Create attachment is a PDF (`application/pdf`), force model = `anthropic/claude-opus-4.8` (route via the provider that gives native-PDF document-vision; OpenRouter's `anthropic/claude-opus-4.8` is P13-verified) regardless of the user's provider/model selection. The PDF path never uses gemini/qwen/glm.
-- [x] Disable/lock the model picker on the PDF Create tab; the UI clearly shows "Create-from-PDF uses Claude Opus 4.8". Keep description/document/excel tabs' model selection unchanged.
-- [x] Capability + fail-closed checks (`src/ai/pdf.ts`, `src/ai/providersLite.ts`) still hold for the locked model; add a `pdfCreateModel()`/lock helper rather than scattering the literal.
-- [x] Tests: `providersLite.test.ts` (the pdf attachment resolves to `anthropic/claude-opus-4.8`), `ArisGenerationPanel`/create-panel tests (PDF tab locks the model + shows the lock), any test asserting a different PDF model updated (authorized). Runtime boundary + ui-copy + i18n parity stay green.
-- **Commit:** `feat(aris): lock create-from-PDF to Claude Opus 4.8 (the P13 A/B winner) as its only model`
+- [ ] **T1 — `docs/EPC_PROJECTION.md`.** Sections: (1) CanonicalProcessV1 — field-by-field reference + `buildCanonicalProcessJsonSchema` as the machine copy; (2) Expansion rules — the L-PROJECT table verbatim, incl. the draft-logicalId scheme and alternation-completion templates; (3) Validation — the full 11-rule table (9 existing + the 2 new) with severities and the "structural validation BEFORE rendering" ordering guarantee; (4) Determinism + versioning — same input + same engine version ⇒ byte-identical draft/AML/SVG/findings; the four SVG metadata attributes and when each version field increments; (5) Findings artifact — `EpcProjectionFindings` shape, bilingual messages, canonical-id anchoring.
+- [ ] **T2 — `docs/ENTERPRISE_HANDOFF.md`.** Interface-only (NO enterprise implementation): (1) Consumption — build (`npm run build:lib`), `npm pack` from `packages/epc-engine/` → tarball dependency, or git dependency pinned to a tag/SHA; registry publishing deferred (future follow-up: new workflow + both inventory updates); (2) CLI-from-Python — subprocess contract for the Azure worker (`epc-project render input.json --out artifacts/`), exit codes 0/1/2, stdout=data stderr=logs, findings.json as the failure artifact the worker persists; (3) Artifact/metadata contract — SVG primary, sidecar `metadata.json`, PNG optional via injected-deps rasterizer on the consumer side, font caveat (SVG names `Arial`/`Noto Sans Arabic` by family; rasterizing consumers must install them or accept substitution); (4) Review anchor contract — `data-epc-node`/`data-epc-edge` = canonical logicalIds; a worked ~20-line vanilla-JS embed example (inline the SVG, delegate `click` on `[data-epc-node]`, map the id into the verification package for Confirm/Correct — explicitly: no React component is exported); (5) `buildVerificationPackage` field reference; (6) What the private `epc-adapter/` should contain (thin: schema types + subprocess/import glue) and what it must NOT re-implement (projection, validation, layout, render).
+- [ ] **T3 — cross-links.** Both docs link each other + README's scope note. `check:lite-only` prose scan stays green (no banned promotion phrases; mind that banned path segments also match inside prose paths — write "backend service" descriptions without banned tokens where a real path is not being named).
+- **Commit:** `docs(epc-engine): projection reference + enterprise handoff (consumption, CLI subprocess, artifact/metadata/anchor/failure contracts)`
+
+**Verification:** `npm run format:check` → 0; `npm run check:lite-only` → 0. **Risks:** drift vs code — every table is transcribed from THIS plan's binding specs; the W23 judge cross-checks docs against shipped code.
 
 ---
 
 ## e2e scenario scripts (embed verbatim)
 
-`tests/e2e/aris-rail-tools.spec.ts` core (boot helpers copied from `aris-details-rail.spec.ts:20-54`):
+`tests/e2e/aris-headless-parity.spec.ts` core (boot/import helpers copied from `aris-sequence-1.spec.ts`'s pattern; L-PARITY adapts selectors from the current specs, never invents new ones):
 
 ```ts
-test('rail tools: docked placement, hover title, friendly details, right-click change-type', async ({
+test('headless render and browser canvas agree on anchored geometry', async ({
   page
-}) => {
+}, testInfo) => {
+  const outDir = testInfo.outputPath('parity')
+  const helper = spawnSync(
+    'npx',
+    [
+      'vite-node',
+      'tests/e2e/helpers/arisHeadlessRender.ts',
+      'tests/e2e/fixtures/epc-parity-canonical.json',
+      outDir
+    ],
+    { encoding: 'utf8', timeout: 240_000 }
+  )
+  expect(helper.status).toBe(0)
+  const lines = helper.stdout.trim().split('\n')
+  const headless = JSON.parse(lines[lines.length - 1]) as {
+    anchors: Record<string, { x: number; y: number; width: number; height: number }>
+    svgSha256: string
+    metadata: Record<string, string>
+  }
+  expect(Object.keys(headless.anchors).length).toBeGreaterThan(5)
+  expect(headless.metadata['data-epc-schema-version']).toBe('1')
+
   await gotoLanding(page)
-  await createBlankEpc(page, 'Rail tools')
-  const tools = page.locator('[data-orbitpm-aris-rail] [data-orbitpm-aris-tools]')
-  await expect(tools).toBeVisible()
-  await expect(page.locator('[data-orbitpm-aris-canvas] .djs-palette')).toHaveCount(0)
-  await tools.locator('.aris-library-search__input').fill('log')
-  await tools.locator('[data-aris-catalog-id="information.log"]').click()
-  const box = (await page.locator('[data-orbitpm-aris-canvas]').boundingBox())!
-  await page.mouse.move(box.x + box.width * 0.45, box.y + box.height * 0.6)
-  await page.mouse.down()
-  await page.mouse.up()
-  await expect(
-    page.locator('[data-aris-catalog-id="information.log"][data-aris-kind="occurrence"]')
-  ).toHaveCount(1)
-  const details = page.locator('[data-orbitpm-aris-details]') // auto-switched on selection
-  await expect(details).toContainText('Log block')
-  await expect(details).not.toContainText('OT_INFO_CARR')
-  await page.mouse.click(box.x + box.width * 0.85, box.y + box.height * 0.15) // deselect
-  await shape.hover()
-  await expect(page.locator('[data-orbitpm-aris-type-tip]')).toContainText('Log block', {
-    timeout: 2000
-  })
-  const before = await page.locator('[data-orbitpm-aris-canvas] .djs-connection').count() // place F, quick-connect E, convert E→F
-  await eventShape.click({ button: 'right' })
-  const menu = page.getByRole('menu', { name: 'Element actions' })
-  await menu.getByRole('menuitem', { name: 'Change object type…' }).click()
-  await page
-    .getByRole('dialog', { name: 'Change object type' })
-    .locator('[data-aris-catalog-id="epc.function"]')
-    .click()
-  await expect(page.locator('[data-orbitpm-aris-canvas] .djs-connection')).toHaveCount(before) // connection survived
-  await expect(details).toContainText('Function block')
-  await expect(page.locator('[data-orbitpm-aris-epc-finding="epc.alternation"]')).toContainText(
-    'Function'
-  ) // friendly, not OT_FUNC
-  await page.locator('[data-orbitpm-aris-undo]').click()
-  await expect(details).toContainText('Event')
+  await importArisFile(page, join(outDir, 'parity.aml.xml'))
+  await runCleanLayout(page) // toolbar hook, same engine the headless path ran
+  for (const [canonicalId, rect] of Object.entries(headless.anchors)) {
+    const shape = page.locator(`[data-element-id$="${canonicalId}"]`).first()
+    await expect(shape).toBeVisible()
+    const model = await shape.evaluate((el) => {
+      const m = /translate\(([-\d.]+)[ ,]([-\d.]+)\)/.exec(el.getAttribute('transform') ?? '')
+      return { tx: m ? Number(m[1]) : NaN, ty: m ? Number(m[2]) : NaN }
+    })
+    expect(Math.abs(model.tx - rect.x)).toBeLessThanOrEqual(2)
+    expect(Math.abs(model.ty - rect.y)).toBeLessThanOrEqual(2)
+  }
 })
 ```
 
-TR-auto-import / TR-auto-animalwf sketches are in L-P1b; WP-B/WP-C zoom-screenshot loops are in L-P4/L-P5 (zoom via toolbar `+`/`−`, element screenshots by `data-element-id`).
-
 ---
 
-## Campaign-wide verification (Wave 16)
+## Campaign-wide verification (Wave 23)
+
+### W23-JUDGE — cross-model adversarial review (fable max, judge only — never implements)
+
+- [ ] **J1 — schema vs master plan:** field-by-field audit of `CanonicalProcessV1` against the taxonomy (identity/events/activities/decisions+criteria+labeled outcomes/roles+units/systems/information objects/controls/exceptions/waits; 6 edge kinds; facts/evidence, unknowns, confidence, bilingual). Report gaps with quotes.
+- [ ] **J2 — projection semantics:** for `VALID_CANONICAL_FULL`, manually trace 5 expansion rows (decision, parallel, exception, handoff, alternation filler) through the emitted draft JSON; verify anchor-map completeness; verify NO random/clock call sites: `grep -rn "Math.random\|Date.now\|getRandomValues" src/aris/canonical src/aris/headless` must be empty.
+- [ ] **J3 — artifact review:** open `process.svg` from a CLI render; check anchors, metadata attrs, RTL text attrs on Arabic labels, no stray interaction furniture, viewBox sanity; check docs (L-DOCS) against shipped exports/exit codes.
+- [ ] Findings go to the orchestrator as a ranked list; accepted findings dispatch **W23-FIX** mini-lanes (`opus48 high` for engine code, `sonnet medium` for docs/CLI), each with its own test-first step and named owned files, appended to this ledger.
+
+### W23-SHIP — full gate ladder (orchestrator)
 
 ```bash
-cd /home/ahmed/Desktop/bpmn_tool/desktop
-npm run lint && npm run typecheck && npm run check:ui-copy && npm run check:aris-runtime-boundary && npm run check:no-skips && npm run check:csp
-npx vitest run
-npm run test:aris:phase2
-npm run test:aris:animalwf && npm run test:aris:animalwf:holdout
-npm run build
-npx playwright test tests/e2e/lite-mandatory-translation.spec.ts --project=chromium
-npm run test:e2e            # clean build + full playwright, chromium/firefox/webkit
-npm run build:aris          # canonical artifact refresh
+cd /home/user/bpmn-studio
+npm run typecheck && npm run lint && npm run format:check
+npm run check:actions && node scripts/check-release-workflows.mjs
+npm run check:lite-only && npm run check:no-skips && npm run check:aris-runtime-boundary && npm run check:ui-copy && npm run check:lock
+npm run test:coverage                      # overall 80% over src/** incl. canonical/ + headless/
+npx vitest run                             # full unit suite
+node --test scripts/browser-environment-evidence.test.mjs scripts/check-no-skips.test.mjs \
+  scripts/pages-evidence-chain.test.mjs scripts/release-evidence-chain.test.mjs \
+  scripts/release-reporter.test.mjs scripts/release-review-gate.test.mjs \
+  scripts/release-workflow-critical-invariants.test.mjs scripts/verify-browser-compatibility-evidence.test.mjs \
+  scripts/verify-external-release-evidence.test.mjs scripts/workflow-action-pins.test.mjs \
+  scripts/epc-engine-cli.test.mjs
+npm run clean:dist && npm run build && npm run check:size && npm run check:csp -- dist/index.html && npm run check:attribution -- dist/index.html
+npm run build:aris                         # canonical artifact refresh (byte-diff recorded)
+npm run clean:lib && npm run build:lib
+node packages/epc-engine/bin/epc-project.mjs render tests/e2e/fixtures/epc-parity-canonical.json --out /tmp/epc-a
+node packages/epc-engine/bin/epc-project.mjs render tests/e2e/fixtures/epc-parity-canonical.json --out /tmp/epc-b
+diff /tmp/epc-a/process.svg /tmp/epc-b/process.svg && diff /tmp/epc-a/metadata.json /tmp/epc-b/metadata.json   # determinism double-run
+cd packages/epc-engine && npm pack --dry-run && cd ../..   # tarball contents sanity (dist/ + bin/ + README)
+npm run test:e2e                           # clean build + full playwright, chromium/firefox/webkit (incl. aris-headless-parity)
+# environment-blocked here (run where ../reference exists): npm run test:aris:animalwf && npm run test:aris:animalwf:holdout
 ```
 
-**Verification surface (authoritative):** each of the 10 defect fixes is guarded by committed tests that assert the corrected behavior — P1 `freeTranslate`/translation e2e sweep; P2 `aris-rail-tools` + docked Details/Tools rail specs; P3 `vacdOverview.animalwf`; P4 `typography.animalwf`/`rendererTypography`; P5 `legend`(22 tiles)/`rendererStroke`/`printFrame`; P6 `symbols`; P7 `legend`(bilingual RTL); P8 `resizeBehavior`; P9 `processInterface`; P10a/b/c `displayNames`/`details.tabs`/`aris-rail-tools`(change-type). These run green across all three engines (chromium/firefox/webkit 84 each) + the unit/animalwf suites. **Visual evidence** under `test-results/fidelity/`: full-render fidelity screenshots `register-owner-*` and `renew-profile-*` (which show P1 Translate affordance, P2 docked Details/Tools tabs, P5 scale-stable XOR gateway marks, P6 hand tool, P9 process-interface + DMT org-block logo, and P10 friendly type names in context on a 94-object model); the P6 requirement-icon crop was visually compared against `orig-hand-600.png` during the L-P9→P6 lane. **Eval reports** present under `../reference/AnimalWF/gen-tests/`: `description-eval-report.md`, `excel-eval-report.md`, `pdf-model-ab-report.md`. Baseline record + Resolution evidence filled; every checkbox ticked.
+**Verification surface (authoritative):** D1 CanonicalProcessV1 is guarded by `src/aris/canonical/{contract,jsonSchema,fixtures}.test.ts` (every refinement + every invalid fixture's intended reason + schema/contract drift); D2 projection by `projectToEpc.test.ts` (every expansion row + draft validity + anchor completeness + double-run byte-identity) and `findings.test.ts` (bilingual message drift vs dictionaries + sha256), with the two NEW EPC rules guarded in the epc validate tests and their product surfacing in the rail/gap/AI-repair suites (`test:aris:phase2`); D3 headless render by `src/aris/headless/render.test.ts` (anchors, metadata, RTL, snapshot-hash byte-stability, gate-before-boot) plus `exportArisPdf.test.ts` (bounds/text-runs options leave the browser path byte-identical) and the tri-engine `aris-headless-parity.spec.ts`; D4 by `scripts/epc-engine-cli.test.mjs` (build + 3 commands + exit codes + determinism double-run — wired exactly once into quality.yml) and the L-PKG purity command list (`check:size` proves dist/ purity, `check:lock` proves the lockfile untouched, `check:lite-only` proves policy compliance); D5 by `verificationPackage.test.ts` (field extraction + logicalId keying + byte-stability); D6 by judge review J3 (docs vs shipped contracts). The pre-existing CI red is closed by L-POLICY and re-proven every time `check:actions` runs. Baseline record + Resolution evidence filled; every checkbox ticked.
 
 ---
 
-## Baseline record (Wave 11 fills this in)
+## Baseline record (Wave 17 fills this in)
 
-- HEAD SHA at campaign start: `a21c6a1` (verified; goal.md's planning-time `abe1d57` predates the plan commit `a21c6a1`, which is HEAD and adds only docs).
-- Full gate suite result at HEAD `a21c6a1` (run 2026-08-01T16:35–16:39Z), **all GREEN**:
-  - `npm run typecheck` → exit 0
-  - `npm run lint` → exit 0
-  - `npm run check:aris-runtime-boundary` → exit 0
-  - `npm run check:ui-copy` → exit 0
-  - `npm run check:no-skips` → exit 0
-  - `npm run check:csp` → exit 0
-  - `npm test` (unit) → exit 0 — **368 test files, 4611 tests passed**
-  - `npm run test:aris:animalwf` → exit 0 — **24 files, 162 tests passed**
-  - `npm run test:aris:animalwf:holdout` → exit 0 — **2 files, 2 tests passed**
-- Red-at-HEAD fixes dispatched before Wave 12: **none** (baseline clean).
-- Prep verified: `../reference/` assets staged (4 PDFs + 4 expected JSONs + AML fixture + conventions + 40 crops + icon-board + 3 generated 600-dpi crops); `../reference/openrouter.env` present with `OPENROUTER_API_KEY` (chmod 600); humanizer skill installed (`~/.claude/skills/humanizer`, SKILL.md); codex `gpt-5.6-sol` xhigh smoke → `CODEX-SMOKE-OK` (exit 0); opus48-1m Agent smoke → `OPUS48-SMOKE-OK`.
-- **External blocker recorded:** `.env` `OPENAI_API_KEY` + `ANTHROPIC_API_KEY` are EMPTY ⇒ Lane L-P13 live A/B for `gpt-5.6-terra` (direct OpenAI) + `claude-opus-4-8` (direct Anthropic) cannot run until the user supplies keys or the models are routed via OpenRouter. Codex ChatGPT-auth does NOT cover P13's direct OpenAI call. P11 (glm-5.2/OpenRouter) + P12 (deterministic) are unaffected.
+- HEAD SHA at campaign start: `________` (expect `8bbc01a`; branch `claude/bpmn-studio-implementation-plan-c13dn3`; remote default branch `main`; `feat/aris-only-studio` absent on this remote — confirmed).
+- Full gate suite result at HEAD (run \_\_\_\_): one bullet per command with exit code verbatim; expected reds: `check:actions` + `check-release-workflows.mjs` (pages-aris.yml inventory — fixed by L-POLICY).
+- Environment-blocked census: \_\_\_\_ (expected: all `*.animalwf` suites + `test:aris:{animalwf,holdout,phase16,golden,fidelity-report}` — `../reference/AnimalWF` absent in this container; unaffected: everything else).
+- Kimi dispatch smoke: k2.7 model id `________` → token `________`; k3 model id `________` → token `________`; opus48/sonnet smokes; substitutions (if any) recorded.
+- Red-at-HEAD fixes dispatched before Wave 18: L-POLICY (the two inventory scripts) — result `________`.
 
-## Resolution evidence (Wave 16 fills this in)
+## Resolution evidence (Wave 23 fills this in)
 
-- **Final commit SHA + pushed state:** final functional HEAD = `421f261` (tri-engine e2e robustness fix), pushed to `origin/feat/aris-only-studio` (in sync, 0 ahead / 0 behind at fill time). Wave commit chain, all pushed: W11 `a0223e2` → W12 `4b0ecd2` → W13 `86f174a` → W14 `92dfd40` → W15 `6cbf396` → eval+PDF-lock `6b68e92` (P12 excel) · `5b0a7e5` (PDF-lock+key) · `42a155b` (P11 comparator) · `cc75fa4` (artifact+L-P13-prod ticks) → X5-fix+push `fc5463c` → tri-engine `421f261`. This Resolution-evidence + checkbox-close commit is the campaign's closing commit.
-- **Per-lane worker + evidence command exit codes:** every lane ACCEPTED after task review; all gates exit 0 in the authoritative main tree (worktree holdout/collection reds were env-only symlink artifacts, re-verified green in main). Product lanes: L-I18N (sonnet `ad4a9ca1`); L-P1a (codex gpt-5.6-sol, 6 commits); L-P1b (codex, +opt-out fix); L-P2 dock-palette (codex, 5-pass saga — orig+manifest+headlessPalette-DI+autoswitch-reverted+fable-diagnosed-apply); L-P3 VACD (opus48-1m); L-P4 text-fit (opus48-1m); L-P5 gateway+legend (opus48-1m, +scope fix round); L-P6 hand-icon + L-P9 process-interface (sonnet `a519ebb4`); L-P7 RACI (sonnet); L-P8 resize (sonnet `a61deafc`); L-P10a friendly-names (sonnet `a41b6ded`); L-P10b details-values (sonnet `a0933e28`); L-P10c change-type+tooltip (codex `bj6fk4mdp`, 12 files). Eval lanes: P11-assets EN+MSA (sonnet `ae5f865d`, 72 files) + Emirati (codex `b0d3oen9`, 36 files) = 108 description files; P11-runner (sonnet `a4d0b62a`); P11-improve comparator (codex `b3tet8qs9`, offline-validated); P12-assets (sonnet `a81ae994`, 12 workbooks); P12-improve (codex `bqf5oy3y`, converged); L-P13 A/B (opus48-1m `a05befe2`); L-P13-prod PDF-lock (opus48-1m `a1739d80`). Diagnoses: fable-max on P2 rail-tab, P11-r1, P12-r1 (DEBUG+PLAN only). Tri-engine fix (opus48-1m `adaee51a`).
-- **Artifact path / bytes / SHA-256:** `release/OrbitPM-ARIS-Studio-Lite.html` — **2,776,817 bytes** — sha256 `18ba574bdc3f058447d08eb38eca73dcfd930ff45bc3ca4a317f6f59e39cc09d`. Single-file inlined build (`npm run build:aris`), committed and byte-identical to HEAD, CSP-clean (`check:csp` exit 0).
-- **Test counts:** unit (vitest) **4709 passed** exit 0; `test:aris:phase2` **2161 passed** exit 0; `test:aris:animalwf` **165 passed** exit 0; `test:aris:animalwf:holdout` **2/2** exit 0; Playwright e2e per engine **chromium 84 / firefox 84 / webkit 84, 0 failed** (run separately to fit the time budget); static gates `lint`·`typecheck`·`check:ui-copy`·`check:aris-runtime-boundary`·`check:no-skips`·`check:csp` all exit 0. Baseline→final unit growth 4611→4709 (+98 tests, no skips).
-- **Eval final-round score tables + P13 recommendation:**
-  - *P11 (create-from-description, glm-5.2):* round 1 measured 27/36 ok ($2.19) with aggregate cfRecall 0.12–0.64 — **diagnosed as comparator mis-measurement, not model quality** (oracle names every rule "XOR rule" so rules could never label-match though `gatewayAccuracy` proves the XOR topology is drawn; Arabic scored vs an English-only oracle; short-label/relativeRecall bugs; 8/9 "failures" were the key-cap transport error). Recalibrated comparator (rules matched by operator+topology; 83 real `nameAr` restored from the AML `AEar` locale; token-containment floor; relativeRecall N/A on empty manifests) + 2 real pipeline fixes (empty-draft now errors; harness retry/backoff). **Offline-validated: the anti-gaming perfect-copy test still scores exactly 1.0 on every metric** (proves recalibration measures the real assertion, not leniency); on a fixed draft, expected-rule misses dropped 9→7 and the Arabic satellite matched its restored name. Round-2 live aggregate DEFERRED on the OpenRouter key cap.
-  - *P12 (create-from-Excel, deterministic):* **CONVERGED in one round, 0/12 → 12/12 scorable.** detailed controlFlowRecall **1.00** everywhere / connRecall 0.93–0.98; medium cf 0.87–0.96 / conn 0.60–0.85 (lows are the intentional injected `object_type` misguesses the eval is designed to measure); minimal cf **1.00** (auto-chain backbone) / conn 0.86–0.93. Capture bar MET at every level; no oracle-coupled hacks (inherent floors preserved).
-  - *P13 (create-from-PDF A/B):* **RECOMMENDATION = `claude-opus-4.8`** — cfRecall 1.0, connections 93/93, satellites 1.0, native-PDF fidelity sim 0.96; the only model that reads native PDF (non-Anthropic models degrade native-PDF→OCR and need PNG rasterization). **Productionized per the 2026-08-02 user directive:** create-from-PDF is now locked to `anthropic/claude-opus-4.8` as the only model (`PDF_CREATE_MODEL`, derived-override picker lock, `firstLiteModelForAttachment('openrouter','pdf')→opus`), shipped on this branch and test-proven the PDF path can never select a non-Opus model.
-- **Authorized-test-change diffs (file · change · authorization):** L-P1a `freeTranslate.test` inverted to "throws when mixed" + `runSummary`/`nothingSendable`/`acceptAll` (assert NEW behavior of issue-1 fix, not weakened); L-P4 label-width fixtures 170→240 (issue-4 text-fit); L-P5 `legend.test` 19→22 tiles + `printFrame`(+animalwf) 19→22 propagation + `renderer.dmt`/`occurrenceStyle` vector-effect→null (issue-5 scale-stable gateway/legend, plan-authorized #4); L-P2 saga — `aris-{authoring,canvas-interaction,new-model,i18n-rtl,details-rail,nested-processes,validation,release-artifact}` migrated to click the Details tab, `arisPaletteDrag.test` deleted, `paletteCatalog.test` retargeted, `aris-rail-tools.spec` added + manifest-registered (issue-2 dock palette; fable-adjudicated to keep the Task-4 default-Tools contract); L-P12 `lite-mandatory-spreadsheet.spec` X5 rewritten per-scenario — recoverable imperfections accepted-with-warning + cell evidence, genuine errors still rejected (issue-12 tolerant parser); L-P11 `structureCompare` rule-topology matching + 4 `expected/*.json` +83 `nameAr` (comparator recalibration; perfect-copy 1.0 guards against gaming); tri-engine `aris-rail-tools.spec` firefox deselect-retry + `mouse.move` hover / webkit hit-center click (cross-engine interaction robustness — no assertion weakened, no skips). All changes assert the corrected/new product behavior; none disable or hollow an assertion; `check:no-skips` exit 0.
-- **Remaining external blockers (actor + action):** **OpenRouter per-key spending cap** — key `c49f7321…` in `../reference/openrouter.env` returns "Key limit exceeded (total limit)" (probed 2026-08-02; account credit was added but the per-key cap is separate). *Actor:* user. *Action:* raise/remove the limit at `openrouter.ai/workspaces/default/keys/c49f73212c5cc16d6ad1fba3`, or drop a fresh key into `../reference/openrouter.env`, then run `scratchpad/p11-matrix.sh r2`. Blocks ONLY the P11 round-2 live re-measurement (36 glm-5.2 calls, ~$2.2) — the comparator + pipeline fixes are committed and offline-verified; no shipped product feature is blocked. Secondary note (not a campaign blocker): at runtime, the shipped create-from-PDF lock requires the end user to supply a key with Opus-4.8 access at the moment of use.
+- **Final commit SHA + pushed state:** \_\_\_\_ (wave commit chain W17 `____` → W18 `____` → W19 `____` → W20 `____` → W21 `____` → W22 `____` → W23 `____`).
+- **Per-lane worker + evidence command exit codes:** \_\_\_\_ (lane → worker/model actually used → commit → gate exits verbatim; kimi model ids as dispatched).
+- **Artifact paths / bytes / SHA-256:** `release/OrbitPM-ARIS-Studio-Lite.html` \_\_\_\_; `packages/epc-engine` pack contents \_\_\_\_; determinism double-run diff result \_\_\_\_; headless SVG snapshot hash \_\_\_\_.
+- **Test counts:** unit \_\_\_\_ / phase2 \_\_\_\_ / node --test verifiers \_\_\_\_ / per-engine e2e (chromium \_\_ / firefox \_\_ / webkit \_\_) / static gates \_\_\_\_; baseline→final growth \_\_\_\_; environment-blocked suites re-run status where assets exist \_\_\_\_.
+- **Judge findings + dispositions:** \_\_\_\_ (accepted → fix lane + commit; rejected → reason).
+- **Authorized-change diffs (file · change · authorization #):** \_\_\_\_ · **Remaining external blockers (Actor + Action):** \_\_\_\_ (expected: npm registry publishing deferred — _Actor:_ user; _Action:_ future authorized follow-up adding a publish workflow + both inventory updates; nothing shipped is blocked).
