@@ -1,0 +1,47 @@
+name: Deploy ARIS Studio Lite to Pages
+
+# Simple, direct GitHub Pages deployment of the self-contained ARIS Studio Lite
+# single-file build. Replaces the old v0.4.5 deployment. This intentionally does
+# NOT go through the evidence-hardened pages.yml release pipeline.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - release/OrbitPM-ARIS-Studio-Lite.html
+      - .github/workflows/pages-aris.yml
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-aris
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Assemble Pages site from the ARIS single-file build
+        run: |
+          mkdir -p _site
+          cp release/OrbitPM-ARIS-Studio-Lite.html _site/index.html
+          ls -la _site
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
