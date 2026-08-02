@@ -7,6 +7,7 @@ const root = resolve(new URL('..', import.meta.url).pathname)
 const require = createRequire(import.meta.url)
 const workflowsDirectory = resolve(root, '.github/workflows')
 const expectedWorkflows = [
+  'pages-aris.yml',
   'pages-rollback.yml',
   'pages.yml',
   'quality.yml',
