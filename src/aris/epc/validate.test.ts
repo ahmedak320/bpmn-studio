@@ -109,8 +109,8 @@ describe('validateEpcGraph — epc.rule.splitMergeConflict (checkRuleSplitMergeC
         node('F1', 'OT_FUNC'),
         node('F2', 'OT_FUNC'),
         node('R1', 'OT_RULE', { symbolType: 'ST_OPR_XOR_1' }),
-        node('E1', 'OT_EVT'),
-        node('E2', 'OT_EVT')
+        node('E1', 'OT_EVT', { names: names('Approved') }),
+        node('E2', 'OT_EVT', { names: names('Rejected') })
       ],
       [
         edge('e1', 'E0', 'F1', 'CT_ACTIV_1'),
@@ -143,8 +143,8 @@ describe('validateEpcGraph — epc.event.decisionViolation (checkEventPrecedesDe
       ],
       [
         edge('e1', 'E1', 'R1', 'CT_IS_EVAL_BY_1'),
-        edge('e2', 'R1', 'F1', 'CT_ACTIV_1'),
-        edge('e3', 'R1', 'F2', 'CT_ACTIV_1'),
+        edge('e2', 'R1', 'F1', 'CT_ACTIV_1', { names: names('accept') }),
+        edge('e3', 'R1', 'F2', 'CT_ACTIV_1', { names: names('reject') }),
         edge('e4', 'F1', 'E2', 'CT_CRT_1'),
         edge('e5', 'F2', 'E3', 'CT_CRT_1')
       ]
@@ -293,5 +293,250 @@ describe('validateEpcGraph — epc.linkedModel.danglingReference (checkLinkedMod
       [edge('e1', 'E1', 'F1', 'CT_ACTIV_1'), edge('e2', 'F1', 'E2', 'CT_CRT_1')]
     )
     expect(validateEpcGraph(g)).toEqual([])
+  })
+})
+
+describe('validateEpcGraph — epc.rule.unlabeledDecisionBranch (checkLabeledDecisionBranches)', () => {
+  /** event -> function -> XOR/OR split, with the branch outcomes supplied by the caller. */
+  function decisionGraph(
+    ruleSymbol: string | null,
+    branchA: { edgeName?: string; targetName?: string },
+    branchB: { edgeName?: string; targetName?: string }
+  ) {
+    return graph(
+      'M1',
+      [
+        node('E0', 'OT_EVT', { names: names('Start') }),
+        node('F1', 'OT_FUNC', { names: names('Decide') }),
+        node('R1', 'OT_RULE', { symbolType: ruleSymbol }),
+        node('EA', 'OT_EVT', branchA.targetName ? { names: names(branchA.targetName) } : {}),
+        node('EB', 'OT_EVT', branchB.targetName ? { names: names(branchB.targetName) } : {})
+      ],
+      [
+        edge('e0', 'E0', 'F1', 'CT_ACTIV_1'),
+        edge('e1', 'F1', 'R1', 'CT_LEADS_TO_1'),
+        edge(
+          'eA',
+          'R1',
+          'EA',
+          'CT_LEADS_TO_2',
+          branchA.edgeName ? { names: names(branchA.edgeName) } : {}
+        ),
+        edge(
+          'eB',
+          'R1',
+          'EB',
+          'CT_LEADS_TO_2',
+          branchB.edgeName ? { names: names(branchB.edgeName) } : {}
+        )
+      ]
+    )
+  }
+
+  it('flags an XOR split branch whose edge is unnamed AND whose target event is unnamed', () => {
+    const g = decisionGraph('ST_OPR_XOR_1', { targetName: 'Approved' }, {})
+    const findings = validateEpcGraph(g)
+    expect(findings).toHaveLength(1)
+    expect(findings[0]).toMatchObject({
+      ruleId: 'epc.rule.unlabeledDecisionBranch',
+      severity: 'error',
+      messageKey: 'aris.epc.finding.unlabeledDecisionBranch',
+      nodeIds: ['R1', 'EB'],
+      edgeIds: ['eB']
+    })
+  })
+
+  it('does not flag a branch whose outgoing edge carries a name (named-edge branch)', () => {
+    const g = decisionGraph('ST_OPR_XOR_1', { edgeName: 'yes' }, { edgeName: 'no' })
+    expect(validateEpcGraph(g).map((f) => f.ruleId)).not.toContain(
+      'epc.rule.unlabeledDecisionBranch'
+    )
+  })
+
+  it('does not flag a branch whose target is a named event even when the edge is unnamed', () => {
+    const g = decisionGraph('ST_OPR_XOR_1', { targetName: 'Approved' }, { targetName: 'Rejected' })
+    expect(validateEpcGraph(g).map((f) => f.ruleId)).not.toContain(
+      'epc.rule.unlabeledDecisionBranch'
+    )
+  })
+
+  it('exempts an AND split (a parallel fork is not a decision)', () => {
+    const g = decisionGraph('ST_OPR_AND_1', {}, {})
+    expect(validateEpcGraph(g).map((f) => f.ruleId)).not.toContain(
+      'epc.rule.unlabeledDecisionBranch'
+    )
+  })
+
+  it('includes OR splits (an inclusive decision still needs labeled branches)', () => {
+    const g = decisionGraph('ST_OPR_OR_1', {}, {})
+    const findings = validateEpcGraph(g).filter(
+      (f) => f.ruleId === 'epc.rule.unlabeledDecisionBranch'
+    )
+    expect(findings).toHaveLength(2)
+    expect(findings.map((f) => f.edgeIds[0]).sort()).toEqual(['eA', 'eB'])
+    expect(findings.every((f) => f.severity === 'error')).toBe(true)
+  })
+
+  it('exempts an out-degree-1 XOR rule (a lone outgoing edge is not a split)', () => {
+    const g = graph(
+      'M1',
+      [
+        node('E0', 'OT_EVT', { names: names('Start') }),
+        node('E0b', 'OT_EVT', { names: names('Also start') }),
+        node('R1', 'OT_RULE', { symbolType: 'ST_OPR_XOR_1' }),
+        node('F1', 'OT_FUNC', { names: names('Continue') }),
+        node('E1', 'OT_EVT', { names: names('Done') })
+      ],
+      [
+        edge('e1', 'E0', 'R1', 'CT_IS_EVAL_BY_1'),
+        edge('e2', 'E0b', 'R1', 'CT_IS_EVAL_BY_1'),
+        edge('e3', 'R1', 'F1', 'CT_ACTIV_1'),
+        edge('e4', 'F1', 'E1', 'CT_CRT_1')
+      ]
+    )
+    expect(validateEpcGraph(g).map((f) => f.ruleId)).not.toContain(
+      'epc.rule.unlabeledDecisionBranch'
+    )
+  })
+
+  it('flags an unlabeled branch even when the target is a function (only named events count)', () => {
+    const g = graph(
+      'M1',
+      [
+        node('E0', 'OT_EVT', { names: names('Start') }),
+        node('F0', 'OT_FUNC', { names: names('Decide') }),
+        node('R1', 'OT_RULE', { symbolType: 'ST_OPR_XOR_1' }),
+        node('F1', 'OT_FUNC', { names: names('Accept') }),
+        node('F2', 'OT_FUNC', { names: names('Reject') }),
+        node('E1', 'OT_EVT', { names: names('Accepted') }),
+        node('E2', 'OT_EVT', { names: names('Rejected') })
+      ],
+      [
+        edge('e0', 'E0', 'F0', 'CT_ACTIV_1'),
+        edge('e1', 'F0', 'R1', 'CT_LEADS_TO_1'),
+        edge('e2', 'R1', 'F1', 'CT_ACTIV_1'),
+        edge('e3', 'R1', 'F2', 'CT_ACTIV_1'),
+        edge('e4', 'F1', 'E1', 'CT_CRT_1'),
+        edge('e5', 'F2', 'E2', 'CT_CRT_1')
+      ]
+    )
+    const findings = validateEpcGraph(g).filter(
+      (f) => f.ruleId === 'epc.rule.unlabeledDecisionBranch'
+    )
+    expect(findings.map((f) => f.edgeIds[0]).sort()).toEqual(['e2', 'e3'])
+  })
+})
+
+describe('validateEpcGraph — epc.startEnd.unreachableEnd (checkEndReachability)', () => {
+  it('does not flag a linear start -> function -> end chain', () => {
+    const g = graph(
+      'M1',
+      [
+        node('E0', 'OT_EVT', { names: names('Start') }),
+        node('F1', 'OT_FUNC', { names: names('Work') }),
+        node('E1', 'OT_EVT', { names: names('End') })
+      ],
+      [edge('e1', 'E0', 'F1', 'CT_ACTIV_1'), edge('e2', 'F1', 'E1', 'CT_CRT_1')]
+    )
+    expect(validateEpcGraph(g).map((f) => f.ruleId)).not.toContain('epc.startEnd.unreachableEnd')
+  })
+
+  it('flags a start event that can only reach a cycle, never an out-degree-0 end event', () => {
+    // A clean start->end chain (so an end event exists and the check is not skipped) plus a
+    // second start trapped in a function<->event rework loop with no exit.
+    const g = graph(
+      'M1',
+      [
+        node('Sgood', 'OT_EVT', { names: names('Good start') }),
+        node('Fg', 'OT_FUNC', { names: names('Finish') }),
+        node('Egood', 'OT_EVT', { names: names('Done') }),
+        node('Sbad', 'OT_EVT', { names: names('Trapped start') }),
+        node('Fb', 'OT_FUNC', { names: names('Loop step') }),
+        node('Eb', 'OT_EVT', { names: names('Loop event') })
+      ],
+      [
+        edge('e1', 'Sgood', 'Fg', 'CT_ACTIV_1'),
+        edge('e2', 'Fg', 'Egood', 'CT_CRT_1'),
+        edge('e3', 'Sbad', 'Fb', 'CT_ACTIV_1'),
+        edge('e4', 'Fb', 'Eb', 'CT_CRT_1'),
+        edge('e5', 'Eb', 'Fb', 'CT_ACTIV_1')
+      ]
+    )
+    const findings = validateEpcGraph(g).filter((f) => f.ruleId === 'epc.startEnd.unreachableEnd')
+    expect(findings).toHaveLength(1)
+    expect(findings[0]).toMatchObject({
+      ruleId: 'epc.startEnd.unreachableEnd',
+      severity: 'error',
+      messageKey: 'aris.epc.finding.unreachableEnd',
+      nodeIds: ['Sbad'],
+      edgeIds: []
+    })
+  })
+
+  it('emits one finding per trapped start, in sorted start-node id order (deterministic)', () => {
+    // Two trapped starts inserted out of id order feed a shared exit-less cycle; a separate
+    // clean chain supplies the end event that keeps the check active.
+    const g = graph(
+      'M1',
+      [
+        node('Sb', 'OT_EVT', { names: names('Second start') }),
+        node('Sa', 'OT_EVT', { names: names('First start') }),
+        node('Floop', 'OT_FUNC', { names: names('Loop step') }),
+        node('Eloop', 'OT_EVT', { names: names('Loop event') }),
+        node('G0', 'OT_EVT', { names: names('Good start') }),
+        node('Gf', 'OT_FUNC', { names: names('Finish') }),
+        node('Ge', 'OT_EVT', { names: names('Done') })
+      ],
+      [
+        edge('e1', 'Sb', 'Floop', 'CT_ACTIV_1'),
+        edge('e2', 'Sa', 'Floop', 'CT_ACTIV_1'),
+        edge('e3', 'Floop', 'Eloop', 'CT_CRT_1'),
+        edge('e4', 'Eloop', 'Floop', 'CT_ACTIV_1'),
+        edge('e5', 'G0', 'Gf', 'CT_ACTIV_1'),
+        edge('e6', 'Gf', 'Ge', 'CT_CRT_1')
+      ]
+    )
+    const findings = validateEpcGraph(g).filter((f) => f.ruleId === 'epc.startEnd.unreachableEnd')
+    expect(findings.map((f) => f.nodeIds)).toEqual([['Sa'], ['Sb']])
+  })
+
+  it('is skipped (no double-reporting) when the model has no end event', () => {
+    const g = graph(
+      'M1',
+      [
+        node('E0', 'OT_EVT', { names: names('Start') }),
+        node('F1', 'OT_FUNC', { names: names('Loop step') }),
+        node('E1', 'OT_EVT', { names: names('Loop event') })
+      ],
+      [
+        edge('e1', 'E0', 'F1', 'CT_ACTIV_1'),
+        edge('e2', 'F1', 'E1', 'CT_CRT_1'),
+        edge('e3', 'E1', 'F1', 'CT_ACTIV_1')
+      ]
+    )
+    const ruleIds = validateEpcGraph(g).map((f) => f.ruleId)
+    expect(ruleIds).toContain('epc.startEnd.missingEnd')
+    expect(ruleIds).not.toContain('epc.startEnd.unreachableEnd')
+  })
+
+  it('is skipped (no double-reporting) when the model has no start event', () => {
+    // E1 is fed by F1 (so no event has in-degree 0), while E2 remains a real end event —
+    // isolating the "zero start events" skip branch rather than the zero-end one.
+    const g = graph(
+      'M1',
+      [
+        node('E1', 'OT_EVT', { names: names('A') }),
+        node('F1', 'OT_FUNC', { names: names('Work') }),
+        node('E2', 'OT_EVT', { names: names('End') })
+      ],
+      [
+        edge('e1', 'E1', 'F1', 'CT_ACTIV_1'),
+        edge('e2', 'F1', 'E1', 'CT_CRT_1'),
+        edge('e3', 'F1', 'E2', 'CT_CRT_1')
+      ]
+    )
+    const ruleIds = validateEpcGraph(g).map((f) => f.ruleId)
+    expect(ruleIds).toContain('epc.startEnd.missingStart')
+    expect(ruleIds).not.toContain('epc.startEnd.unreachableEnd')
   })
 })

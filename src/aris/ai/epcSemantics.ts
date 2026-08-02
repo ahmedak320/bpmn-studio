@@ -56,10 +56,14 @@ const EPC_RULE_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
     'The model has no start event: every EPC needs at least one event with no incoming control flow.',
   'epc.startEnd.missingEnd':
     'The model has no end event: every EPC needs at least one event with no outgoing control flow.',
+  'epc.startEnd.unreachableEnd':
+    'No end event is reachable from a start event by following control flow. Connect the flow so every start can finish.',
   'epc.rule.splitMergeConflict':
     'A rule both merges several incoming branches and splits into several outgoing branches. Model the merge and the split as two separate rule objects.',
   'epc.event.decisionViolation':
     'An event feeds directly into an XOR/OR split, which makes the event decide. Put a function before the deciding rule.',
+  'epc.rule.unlabeledDecisionBranch':
+    'A decision branch out of an XOR/OR rule has no label: name the outgoing relation or the outcome event it leads to.',
   'epc.connectivity.orphanNode':
     'A control-flow object is disconnected from the rest of the model’s control flow.',
   'epc.rule.unrecognizedSymbol':

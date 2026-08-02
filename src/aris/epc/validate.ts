@@ -25,6 +25,8 @@ export interface ValidateEpcOptions {
  * | epc.rule.unrecognizedSymbol           | checkRuleSymbolRecognized              |
  * | epc.connection.missingType            | checkTypedConnections                  |
  * | epc.linkedModel.danglingReference     | checkLinkedModelAssignments            |
+ * | epc.rule.unlabeledDecisionBranch      | checkLabeledDecisionBranches           |
+ * | epc.startEnd.unreachableEnd           | checkEndReachability                   |
  */
 export function validateEpcGraph(
   graph: EpcGraph,
@@ -39,7 +41,9 @@ export function validateEpcGraph(
     ...checkConnectedComponentIntegrity(index),
     ...checkRuleSymbolRecognized(index),
     ...checkTypedConnections(index),
-    ...checkLinkedModelAssignments(index, options.knownModelIds)
+    ...checkLinkedModelAssignments(index, options.knownModelIds),
+    ...checkLabeledDecisionBranches(index),
+    ...checkEndReachability(index)
   ]
 }
 
@@ -268,4 +272,114 @@ export function checkLinkedModelAssignments(
     }
   }
   return findings
+}
+
+/** True when a locale map carries a non-empty display name in any locale. */
+function hasAnyName(names: Readonly<Record<string, string>> | undefined): boolean {
+  if (!names) return false
+  for (const value of Object.values(names)) {
+    if (value.trim().length > 0) return true
+  }
+  return false
+}
+
+/**
+ * Labeled decision branches: every outgoing branch of a *deciding* rule (an XOR or OR split
+ * with out-degree >= 2) must be labeled, so a reader can tell the alternatives apart. AND
+ * splits are exempt — a parallel fork does not choose between alternatives, so its branches
+ * need no distinguishing label; a rule with a single outgoing edge is not a split at all.
+ *
+ * A branch is "labeled" (both EPC conventions accepted) when EITHER the outgoing relation
+ * carries a non-empty name in any locale OR its target is an `OT_EVT` with a non-empty name
+ * in any locale (a named outcome event — how the deterministic projection labels outcomes).
+ * A branch whose relation is unnamed AND whose target is not a named event (an unnamed event,
+ * or a function/rule with an unnamed edge) is flagged.
+ *
+ * `classifyRuleSymbol` returns the exact tokens `'XOR' | 'AND' | 'OR' | 'unknown'`
+ * (`constants.ts`); this rule fires for `'XOR'` and `'OR'` only.
+ */
+export function checkLabeledDecisionBranches(index: FlowGraphIndex): readonly EpcFinding[] {
+  const findings: EpcFinding[] = []
+  for (const node of index.graph.nodes) {
+    if (node.objectType !== OT_RULE) continue
+    const kind = classifyRuleSymbol(node.symbolType)
+    if (kind !== 'XOR' && kind !== 'OR') continue
+    const outgoing = index.flowEdgesBySource.get(node.id) ?? []
+    if (outgoing.length < 2) continue
+    for (const edge of outgoing) {
+      const edgeLabeled = hasAnyName(edge.names)
+      const target = index.nodeById.get(edge.target)
+      const targetLabeled = target?.objectType === OT_EVT && hasAnyName(target.names)
+      if (edgeLabeled || targetLabeled) continue
+      findings.push({
+        ruleId: 'epc.rule.unlabeledDecisionBranch',
+        severity: 'error',
+        messageKey: 'aris.epc.finding.unlabeledDecisionBranch',
+        nodeIds: target ? [node.id, target.id] : [node.id],
+        edgeIds: [edge.id]
+      })
+    }
+  }
+  return findings
+}
+
+/**
+ * Reachable end outcomes: from every start event (an `OT_EVT` with no incoming flow edge),
+ * forward control flow must be able to reach an end event (an `OT_EVT` with no outgoing flow
+ * edge). A start whose forward BFS reaches no such end — for example one that only feeds a
+ * cycle — describes a process that can begin but never finish, and is flagged.
+ *
+ * Skipped entirely when the model has zero start events or zero end events: those cases are
+ * already reported by `checkStartEndCompleteness` (`epc.startEnd.missingStart` /
+ * `epc.startEnd.missingEnd`), and re-reporting them here would double-count.
+ *
+ * Deterministic: the boolean "can this start reach an end" is independent of traversal order,
+ * and findings are emitted in start-node id order (an explicit sort), so the output byte
+ * sequence is stable across runs. No clock or randomness is consulted.
+ */
+export function checkEndReachability(index: FlowGraphIndex): readonly EpcFinding[] {
+  const events = index.graph.nodes.filter((node) => node.objectType === OT_EVT)
+  const startEventIds = events
+    .filter((event) => (index.flowEdgesByTarget.get(event.id)?.length ?? 0) === 0)
+    .map((event) => event.id)
+  const endEventIds = new Set(
+    events
+      .filter((event) => (index.flowEdgesBySource.get(event.id)?.length ?? 0) === 0)
+      .map((event) => event.id)
+  )
+  if (startEventIds.length === 0 || endEventIds.size === 0) return []
+
+  const findings: EpcFinding[] = []
+  for (const startId of [...startEventIds].sort()) {
+    if (reachesEndEvent(index, startId, endEventIds)) continue
+    findings.push({
+      ruleId: 'epc.startEnd.unreachableEnd',
+      severity: 'error',
+      messageKey: 'aris.epc.finding.unreachableEnd',
+      nodeIds: [startId],
+      edgeIds: []
+    })
+  }
+  return findings
+}
+
+/** Forward BFS over flow edges from `startId`; true once any end event id is reached. */
+function reachesEndEvent(
+  index: FlowGraphIndex,
+  startId: string,
+  endEventIds: ReadonlySet<string>
+): boolean {
+  const seen = new Set<string>([startId])
+  const queue: string[] = [startId]
+  while (queue.length > 0) {
+    const current = queue.shift()!
+    if (endEventIds.has(current)) return true
+    for (const edge of index.flowEdgesBySource.get(current) ?? []) {
+      if (!seen.has(edge.target)) {
+        seen.add(edge.target)
+        queue.push(edge.target)
+      }
+    }
+  }
+  return false
 }

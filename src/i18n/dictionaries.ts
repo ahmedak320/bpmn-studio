@@ -2522,6 +2522,9 @@ export const en = {
   'aris.epc.finding.missingConnectionType': 'This connection has no connection type.',
   'aris.epc.finding.danglingLinkedModel':
     'This object links to model “{modelId}”, which does not exist in this document.',
+  'aris.epc.finding.unlabeledDecisionBranch':
+    'This decision branch has no label — name the connection or the outcome event.',
+  'aris.epc.finding.unreachableEnd': 'No end event can be reached from this start event.',
 
   // --- ARIS chat gap-scanner findings (src/aris/chat/messageKeys.ts, gapScanner.ts;
   // ARIS_CHAT_OWN_MESSAGE_KEYS is the authoritative emitted-key list — the module also
@@ -5518,6 +5521,9 @@ export const ar: Record<keyof typeof en, string> = {
   'aris.epc.finding.missingConnectionType': 'لا تحمل هذه العلاقة نوعًا محددًا.',
   'aris.epc.finding.danglingLinkedModel':
     'يرتبط هذا الكائن بالنموذج «{modelId}»، وهو غير موجود في هذا المستند.',
+  'aris.epc.finding.unlabeledDecisionBranch':
+    'هذا الفرع من القرار بلا تسمية — سمِّ الوصلة أو حدث النتيجة.',
+  'aris.epc.finding.unreachableEnd': 'لا يمكن الوصول إلى أي حدث نهاية انطلاقًا من حدث البداية هذا.',
 
   // --- نتائج ماسح الثغرات في محادثة ARIS (src/aris/chat/messageKeys.ts, gapScanner.ts؛
   // ARIS_CHAT_OWN_MESSAGE_KEYS هي قائمة المفاتيح الصادرة الرسمية — تعيد هذه الوحدة أيضًا

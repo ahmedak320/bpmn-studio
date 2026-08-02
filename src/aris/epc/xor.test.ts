@@ -10,7 +10,7 @@ import {
 } from './xor'
 import { validateEpcGraph } from './validate'
 import { buildFlowGraphIndex } from './flowGraph'
-import { edge, graph, node } from './testFixtures'
+import { edge, graph, names, node } from './testFixtures'
 
 describe('XOR / AND rule classification (section 14.2)', () => {
   it('classifies ST_OPR_XOR_1 (the real AnimalWF symbol, with trailing "_1") as XOR', () => {
@@ -104,9 +104,9 @@ describe('explicit cycle preservation (14.2 / 14.3)', () => {
     const nodes = [
       node('A', 'OT_FUNC'),
       node('R1', 'OT_RULE', { symbolType: 'ST_OPR_XOR_1' }),
-      node('B', 'OT_EVT'),
+      node('B', 'OT_EVT', { names: names('Rework requested') }),
       node('E0', 'OT_EVT'),
-      node('Eend', 'OT_EVT')
+      node('Eend', 'OT_EVT', { names: names('Completed') })
     ]
     const edges = [
       edge('e0', 'E0', 'A', 'CT_ACTIV_1'),

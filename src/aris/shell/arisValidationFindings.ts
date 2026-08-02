@@ -47,10 +47,12 @@ export interface ArisValidationFinding {
 export const EPC_RULE_GAP_KINDS: Readonly<Record<string, ArisChatGapKind>> = Object.freeze({
   'epc.startEnd.missingStart': 'missingStartOrEndEvent',
   'epc.startEnd.missingEnd': 'missingStartOrEndEvent',
+  'epc.startEnd.unreachableEnd': 'missingStartOrEndEvent',
   'epc.alternation': 'invalidSequence',
   'epc.rule.splitMergeConflict': 'invalidSequence',
   'epc.event.decisionViolation': 'invalidSequence',
   'epc.rule.unrecognizedSymbol': 'invalidSequence',
+  'epc.rule.unlabeledDecisionBranch': 'missingXorOutcomes',
   'epc.connectivity.orphanNode': 'danglingObjectOrConnection',
   'epc.connection.missingType': 'danglingObjectOrConnection',
   'epc.linkedModel.danglingReference': 'danglingObjectOrConnection'
