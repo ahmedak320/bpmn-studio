@@ -409,5 +409,7 @@ export const ARIS_SHELL_MESSAGE_KEYS: Readonly<Record<string, string>> = Object.
   'aris.details.edit.style.appliesToCanvas':
     'The style is drawn on the canvas and travels with the export. The ARIS symbol still supplies the shape.',
   'aris.create.pdf.lock':
-    'Create-from-PDF always uses Claude Opus 4.8 — the only model verified to read a PDF faithfully — so the model picker is locked while a PDF is attached. Remove the PDF to choose another model.'
+    'Create-from-PDF always uses Claude Opus 4.8 — the only model verified to read a PDF faithfully — so the model picker is locked while a PDF is attached. Remove the PDF to choose another model.',
+  'aris.create.disclaimer':
+    'AI generation can produce incomplete or inaccurate diagrams. Always review and complete the result before using it.'
 })

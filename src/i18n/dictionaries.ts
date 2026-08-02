@@ -2810,6 +2810,8 @@ export const en = {
   'aris.create.attachment.tooLarge': '{name} is too large to attach for {provider}.',
   'aris.create.pdf.lock':
     'Create-from-PDF always uses Claude Opus 4.8 — the only model verified to read a PDF faithfully — so the model picker is locked while a PDF is attached. Remove the PDF to choose another model.',
+  'aris.create.disclaimer':
+    'AI generation can produce incomplete or inaccurate diagrams. Always review and complete the result before using it.',
   'aris.create.attachment.unsupportedType':
     'Only PDF, PNG, JPEG, WebP, and GIF files can be attached.',
   'aris.create.attachments.label':
@@ -5791,6 +5793,8 @@ export const ar: Record<keyof typeof en, string> = {
   'aris.create.attachment.tooLarge': 'حجم {name} أكبر من أن يُرفَق لدى {provider}.',
   'aris.create.pdf.lock':
     'يستخدم الإنشاء من ملف PDF دائمًا Claude Opus 4.8 — النموذج الوحيد المُتحقَّق من قراءته لملف PDF بدقة — لذا يُقفَل اختيار النموذج أثناء إرفاق ملف PDF. أزِل ملف PDF لاختيار نموذج آخر.',
+  'aris.create.disclaimer':
+    'قد يُنتج الإنشاء بالذكاء الاصطناعي مخططات غير مكتملة أو غير دقيقة. راجِع النتيجة دائمًا وأكمِلها قبل استخدامها.',
   'aris.create.attachment.unsupportedType': 'يمكن إرفاق ملفات PDF وPNG وJPEG وWebP وGIF فقط.',
   'aris.create.attachments.label':
     'مرفق اختياري — يُقرأ ملف DOCX على هذا الجهاز، ويُرسَل ملف PDF إلى المزوّد',

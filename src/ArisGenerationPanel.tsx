@@ -1105,6 +1105,15 @@ export function ArisGenerationPanel({
           </button>
         </div>
 
+        {tab !== 'excel' && (
+          <div role="note" data-orbitpm-aris-create-disclaimer="" style={warnBox}>
+            {tk(
+              'aris.create.disclaimer',
+              'AI generation can produce incomplete or inaccurate diagrams. Always review and complete the result before using it.'
+            )}
+          </div>
+        )}
+
         {tab !== 'excel' && !online && (
           <div role="status" style={warnBox}>
             {t('ai.offlineWarning')}
