@@ -4,6 +4,7 @@
  */
 
 export * from './contract'
+export * from './ids'
 export * from './jsonSchema'
 export * from './projectToEpc'
 export * from './findings'

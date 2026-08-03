@@ -21,6 +21,7 @@
  */
 
 import {
+  CANONICAL_APPROVAL_STATUS_VALUES,
   CANONICAL_CONFIDENCE_VALUES,
   CANONICAL_CONTROL_KINDS,
   CANONICAL_EDGE_KINDS,
@@ -100,6 +101,21 @@ function decisionOutcomeSchema(): Record<string, unknown> {
   }
 }
 
+/** `CanonicalApprovalSchema`: explicit approval authority; authorityRoleIds + status required. */
+function approvalSchema(): Record<string, unknown> {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['authorityRoleIds', 'status'],
+    properties: {
+      authorityRoleIds: { type: 'array', items: nonEmptyString(), minItems: 1 },
+      thresholdControlIds: nodeIdArraySchema(),
+      status: { type: 'string', enum: [...CANONICAL_APPROVAL_STATUS_VALUES] },
+      factIds: nodeIdArraySchema()
+    }
+  }
+}
+
 function decisionSchema(): Record<string, unknown> {
   return {
     type: 'object',
@@ -110,6 +126,7 @@ function decisionSchema(): Record<string, unknown> {
       nodeId: nonEmptyString(),
       criteria: localizedTextSchema(),
       outcomes: { type: 'array', items: decisionOutcomeSchema(), minItems: 2 },
+      approval: approvalSchema(),
       factIds: nodeIdArraySchema(),
       confidence: confidenceSchema()
     }

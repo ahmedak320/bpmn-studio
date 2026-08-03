@@ -24,7 +24,7 @@ const sha256Hex = (input: string | Uint8Array): string =>
  * matching, intended cause is a regression, not a snapshot to blindly refresh.
  */
 const VALID_CANONICAL_FULL_SVG_SHA256 =
-  '097d2ad7521b36fb44d3c24dd3910131d714a368649668d4bb0f67233752d419'
+  '84282bf7573f8a41731559e00233b808fff25bde8cc851e0b6481d61dfcbf8f2'
 
 /** Schema-valid, but its projected EEPC has no start/end event — fails the gate. */
 const STRUCTURALLY_INVALID: CanonicalProcessV1 = {

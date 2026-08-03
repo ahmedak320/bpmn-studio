@@ -119,11 +119,18 @@ interface CanonicalDecisionOutcome {
   readonly names: CanonicalText
   readonly targetNodeId: string
 }
+interface CanonicalApproval {
+  readonly authorityRoleIds: readonly string[] // min 1; each resolves to a roles[].id
+  readonly thresholdControlIds?: readonly string[] // each resolves to a controls[].id
+  readonly status: 'proposed' | 'confirmed'
+  readonly factIds?: readonly string[]
+}
 interface CanonicalDecision {
   readonly id: string
   readonly nodeId: string // must resolve to a declared node of kind 'decision'
   readonly criteria?: CanonicalText
   readonly outcomes: readonly CanonicalDecisionOutcome[] // min 2
+  readonly approval?: CanonicalApproval // explicit, evidence-backed sign-off authority
   readonly factIds?: readonly string[]
   readonly confidence: CanonicalConfidence
 }
@@ -134,6 +141,15 @@ Every `'decision'`-kind node must be referenced by **exactly one**
 `decision-node-multiple-references` below), and a decision node's outgoing
 control flow is expressed **only** through its `decisions[].outcomes` — never
 through a plain `sequence` edge (`decision-node-sequence-edge`).
+
+`approval` makes sign-off authority **explicit**: `buildVerificationPackage`
+emits an approval assertion for exactly the decisions that declare this block
+(resolving `authorityRoleIds`/`thresholdControlIds` to names) and NEVER infers
+authority from the process owner or from a role that merely touches the deciding
+node — a modelling relationship is not a business assertion about who approves.
+Each `authorityRoleIds[*]` must resolve to a `roles[].id`
+(`dangling-approval-authority`), each `thresholdControlIds[*]` to a `controls[].id`
+(`dangling-approval-threshold`), and `factIds[*]` to a `facts[].id`.
 
 ### `CanonicalEdge`
 
@@ -183,7 +199,7 @@ must resolve to **any** declared id anywhere in the process (identity, a
 node, a decision or one of its outcomes, an edge, a role, a system, an
 information object, a control, or a fact), not only a node id.
 
-### Cross-reference integrity (12 stable issue codes)
+### Cross-reference integrity (14 stable issue codes)
 
 Beyond per-field shape, one `z.superRefine()` on `CanonicalProcessV1Schema`
 enforces cross-references. Every issue it raises (and `CanonicalText`'s own
@@ -195,7 +211,7 @@ emptiness check) carries a stable `code` via zod's custom-issue
 | `canonical-text-empty`              | A `CanonicalText` has neither `en` nor `ar`.                                                                                                                                                                                                                                                                                                                                               |
 | `duplicate-id`                      | An id is reused across the 8 top-level entity arrays (`nodes`/`decisions`/`edges`/`roles`/`systems`/`informationObjects`/`controls`/`facts`) **or** a `decisions[*].outcomes[*].id` — outcome ids share the same process-wide id namespace (they become draft object ids in the projection, `xo:<decisionId>:<outcomeId>`), so a reused outcome id is a duplicate too, not a silent merge. |
 | `dangling-node-reference`           | A node-id-shaped field does not resolve to a declared `nodes[].id`: edge endpoints, `decision.nodeId`/`outcome.targetNodeId`, `role`/`system`/`control.nodeIds[*]`, `informationObjects.*NodeIds[*]`.                                                                                                                                                                                      |
-| `dangling-fact-reference`           | A `factIds[*]` entry does not resolve to a declared `facts[].id`.                                                                                                                                                                                                                                                                                                                          |
+| `dangling-fact-reference`           | A `factIds[*]` entry (including a decision's `approval.factIds[*]`) does not resolve to a declared `facts[].id`.                                                                                                                                                                                                                                                                            |
 | `dangling-unknown-target`           | `unknowns[*].targetId` does not resolve to any declared id in the process.                                                                                                                                                                                                                                                                                                                 |
 | `edge-condition-required`           | An edge of kind `'conditional'` has no `condition`.                                                                                                                                                                                                                                                                                                                                        |
 | `edge-condition-not-allowed`        | An edge **not** of kind `'conditional'` carries a `condition`.                                                                                                                                                                                                                                                                                                                             |
@@ -204,6 +220,8 @@ emptiness check) carries a stable `code` via zod's custom-issue
 | `decision-node-multiple-references` | A node of kind `'decision'` is referenced by more than one `decisions[]` entry.                                                                                                                                                                                                                                                                                                            |
 | `decision-node-sequence-edge`       | An edge of kind `'sequence'` has a decision node as its source (a decision's outgoing control flow must be expressed only through its `decisions[]` outcomes).                                                                                                                                                                                                                             |
 | `decision-node-conditional-edge`    | An edge of kind `'conditional'` has a decision node as its source (a decision's branching must likewise be expressed only through its `decisions[]` outcomes — a conditional edge out of a decision would bypass the projected XOR and silently model a second, unlabeled split).                                                                                                          |
+| `dangling-approval-authority`       | A `decisions[*].approval.authorityRoleIds[*]` does not resolve to a declared `roles[].id`.                                                                                                                                                                                                                                                                                                 |
+| `dangling-approval-threshold`       | A `decisions[*].approval.thresholdControlIds[*]` does not resolve to a declared `controls[].id`.                                                                                                                                                                                                                                                                                           |
 
 ### Machine copy: `buildCanonicalProcessJsonSchema()`
 
@@ -263,6 +281,16 @@ review anchor contract in
 
 `<cid>` denotes a canonical id below. Every id is deterministic — no
 `Date.now`/`Math.random`/random ids anywhere in the projection:
+
+> **Safe canonical ids.** These draft ids are `:`-delimited combinations of
+> canonical ids (`xo:<decisionId>:<outcomeId>`, `re:<src>:<tgt>`, …), so a
+> canonical id that itself contained a `:` could make two different pairs collide
+> onto one draft id. Mint canonical ids over the safe alphabet `[A-Za-z0-9._-]`
+> (no `:`) — the engine exports `mintCanonicalId` / `isSafeCanonicalId` /
+> `CANONICAL_SAFE_ID_PATTERN` (`@orbitpm/epc-engine/canonical`) so an adapter can
+> mint and validate ids that keep these derived draft ids unambiguous. ULIDs,
+> UUIDs (without braces), and controlled prefixes (`node_…`, `decision_…`) are
+> all safe.
 
 - primary node — `n:<cid>`
 - decision rule — `x:<decisionId>` (cid = decision id)

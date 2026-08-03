@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { canonicalJsonText } from '../packages/canonicalJson'
+import { parseCanonicalProcess, type CanonicalProcessV1 } from './contract'
 import {
   VALID_CANONICAL_FULL,
   VALID_CANONICAL_MINIMAL,
@@ -172,19 +173,84 @@ describe('buildVerificationPackage', () => {
     })
   })
 
-  describe('approvals', () => {
-    it('VALID_CANONICAL_FULL: authority = owner role linked to the decision node, threshold = the linked policy control', () => {
+  describe('approvals — explicit authority only, never inferred', () => {
+    it('VALID_CANONICAL_FULL: emits the explicit approval block, resolved to role + control names', () => {
       const pkg = buildVerificationPackage(VALID_CANONICAL_FULL)
       expect(pkg.approvals).toEqual([
         {
           decisionId: 'd-triage',
-          authority: 'r-manager',
-          threshold: { en: 'SLA Policy', ar: 'سياسة اتفاقية مستوى الخدمة' }
+          status: 'confirmed',
+          authorities: [
+            {
+              roleId: 'r-manager',
+              names: { en: 'IT Manager', ar: 'مدير تقنية المعلومات' },
+              unit: { en: 'IT Operations', ar: 'عمليات تقنية المعلومات' }
+            }
+          ],
+          thresholds: [
+            {
+              controlId: 'c-sla-policy',
+              names: { en: 'SLA Policy', ar: 'سياسة اتفاقية مستوى الخدمة' }
+            }
+          ],
+          factIds: ['f-4']
         }
       ])
     })
 
-    it('VALID_CANONICAL_RETURN_PATH: no roles at all -> no fabricated authority, approvals is empty', () => {
+    it('a linked owner role does NOT fabricate an approval without an explicit block (the production-hardening guarantee)', () => {
+      // r-owner is the process owner AND is linked to the deciding node — exactly
+      // the shape the removed inference would have promoted into an authority.
+      const ownerLinkedNoApproval: CanonicalProcessV1 = {
+        version: 1,
+        identity: { id: 'proc-owner-linked', names: { en: 'Owner linked' }, confidence: 'high' },
+        nodes: [
+          { id: 'n-start', kind: 'event', names: { en: 'Start' }, confidence: 'high' },
+          { id: 'n-decide', kind: 'decision', names: { en: 'Decide' }, confidence: 'high' },
+          { id: 'n-yes', kind: 'event', names: { en: 'Yes' }, confidence: 'high' },
+          { id: 'n-no', kind: 'event', names: { en: 'No' }, confidence: 'high' }
+        ],
+        decisions: [
+          {
+            id: 'd-1',
+            nodeId: 'n-decide',
+            outcomes: [
+              { id: 'o-yes', names: { en: 'Yes' }, targetNodeId: 'n-yes' },
+              { id: 'o-no', names: { en: 'No' }, targetNodeId: 'n-no' }
+            ],
+            confidence: 'high'
+          }
+        ],
+        edges: [
+          {
+            id: 'e-1',
+            kind: 'sequence',
+            sourceNodeId: 'n-start',
+            targetNodeId: 'n-decide',
+            confidence: 'high'
+          }
+        ],
+        roles: [
+          {
+            id: 'r-owner',
+            names: { en: 'Owner' },
+            nodeIds: ['n-decide'],
+            owner: true,
+            confidence: 'high'
+          }
+        ],
+        systems: [],
+        informationObjects: [],
+        controls: [],
+        facts: [],
+        unknowns: []
+      }
+      // Sanity: this is a genuinely valid canonical process, not an ad-hoc shape.
+      expect(parseCanonicalProcess(ownerLinkedNoApproval).ok).toBe(true)
+      expect(buildVerificationPackage(ownerLinkedNoApproval).approvals).toEqual([])
+    })
+
+    it('VALID_CANONICAL_RETURN_PATH: decision without an approval block -> approvals empty', () => {
       const pkg = buildVerificationPackage(VALID_CANONICAL_RETURN_PATH)
       expect(pkg.approvals).toEqual([])
     })

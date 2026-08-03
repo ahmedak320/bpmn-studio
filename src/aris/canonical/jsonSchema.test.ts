@@ -8,6 +8,7 @@ import {
   CANONICAL_EDGE_KINDS,
   CANONICAL_NODE_KINDS,
   CANONICAL_UNKNOWN_KINDS,
+  CanonicalApprovalSchema,
   CanonicalControlSchema,
   CanonicalDecisionOutcomeSchema,
   CanonicalDecisionSchema,
@@ -172,6 +173,11 @@ describe('contract <-> schema structural drift guard', () => {
       name: 'decision outcome',
       shape: CanonicalDecisionOutcomeSchema.shape,
       jsonSchemaNode: items(props(decisionSchemaNode).outcomes)
+    },
+    {
+      name: 'approval',
+      shape: CanonicalApprovalSchema.shape,
+      jsonSchemaNode: asObj(props(decisionSchemaNode).approval)
     },
     { name: 'edge', shape: CanonicalEdgeSchema.shape, jsonSchemaNode: items(topProps.edges) },
     { name: 'role', shape: CanonicalRoleSchema.shape, jsonSchemaNode: items(topProps.roles) },

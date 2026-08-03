@@ -253,6 +253,15 @@ export const VALID_CANONICAL_FULL: CanonicalProcessV1 = deepFreeze({
           targetNodeId: 'n-resolved-low'
         }
       ],
+      // Explicit approval authority — asserted from evidence (f-4 states the IT
+      // Manager approves high-severity escalations), never inferred from the
+      // owner role. `c-sla-policy` sets the threshold.
+      approval: {
+        authorityRoleIds: ['r-manager'],
+        thresholdControlIds: ['c-sla-policy'],
+        status: 'confirmed',
+        factIds: ['f-4']
+      },
       factIds: ['f-4'],
       confidence: 'high'
     }

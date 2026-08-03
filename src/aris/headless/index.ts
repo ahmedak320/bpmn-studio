@@ -23,4 +23,10 @@ export {
   type HeadlessRenderValidationFailure,
   type RenderCanonicalProcessOptions
 } from './render'
+export {
+  sanitizeEpcSvg,
+  RECOMMENDED_VERIFICATION_CSP,
+  type SanitizeEpcSvgOptions,
+  type SvgSanitizerDom
+} from './sanitizeSvg'
 export { EPC_ENGINE_VERSION } from './version'

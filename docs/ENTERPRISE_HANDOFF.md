@@ -213,15 +213,26 @@ One id space, three artifacts — a portal never has to cross-reference through
 the intermediate draft/AML layer.
 
 **No React component is exported.** The engine does not ship a UI; a
-consumer wires the anchors up itself. A worked vanilla-JS embed:
+consumer wires the anchors up itself. The SVG is inlined via `innerHTML` so its
+`data-epc-*` anchors become real, clickable DOM nodes — so it MUST be sanitized
+first (see [Sanitize before embedding](#sanitize-before-embedding) below). A
+worked vanilla-JS embed:
 
 ```html
 <div id="epc-viewer"></div>
-<script>
+<script type="module">
+  import { sanitizeEpcSvg } from '@orbitpm/epc-engine'
+
   async function mountEpcViewer(svgUrl, verificationPackage) {
     const container = document.getElementById('epc-viewer')
     const svgText = await (await fetch(svgUrl)).text()
-    container.innerHTML = svgText // inline the SVG so its elements are real DOM nodes
+    // Treat the SVG as UNTRUSTED even though the engine generated it — labels
+    // originate from employees, documents, and AI output. Sanitize with the
+    // engine's SVG-aware allowlist BEFORE inlining: <script>, on* handlers,
+    // <foreignObject>, external URLs, and unsafe links are stripped; the
+    // data-epc-* anchors are preserved. (A browser supplies DOMParser/
+    // XMLSerializer natively; in Node call ensureHeadlessDom() first.)
+    container.innerHTML = sanitizeEpcSvg(svgText)
 
     container.addEventListener('click', (event) => {
       const target = event.target.closest('[data-epc-node], [data-epc-edge]')
@@ -247,6 +258,30 @@ consumer wires the anchors up itself. A worked vanilla-JS embed:
 The consumer owns `openConfirmCorrectPanel` and everything it does — the
 Confirm/Correct actions and the resulting evidence-plus-new-version write are
 enterprise-side workflow, not engine behavior.
+
+### Sanitize before embedding
+
+`sanitizeEpcSvg(markup, options?)` (exported from `@orbitpm/epc-engine`) parses
+the SVG as XML and rebuilds it against an allowlist, returning the safe string.
+It drops every element outside a fixed safe-SVG set — `<script>`,
+`<foreignObject>`, `<style>`, `<image>`, `<a>`, and any HTML element go, with
+their subtrees — strips `on*` event handlers, drops `href`/`xlink:href` that are
+not same-document `#fragment` references, and drops any attribute whose value
+carries an external `url(...)`, a `javascript:` URL, or a CSS `expression(...)`.
+The engine's own output round-trips unchanged in meaning — every `data-epc-*`
+anchor is preserved — because it emits only allowlisted elements and no external
+references. This is **defense in depth**: the engine escapes its own labels, but
+the portal must not depend on that, because labels originate from untrusted
+sources (employees, uploaded documents, AI output). A browser supplies
+`DOMParser`/`XMLSerializer` natively; a Node consumer calls `ensureHeadlessDom()`
+first (which publishes them) or injects its own via `options.dom`.
+
+Pair it with a restrictive **Content-Security-Policy** on the verification
+application (a response header or a `<meta http-equiv>`). The engine exports a
+ready default, `RECOMMENDED_VERIFICATION_CSP` — notably `script-src 'self'` with
+**no** `'unsafe-inline'`, so an injected inline handler could not execute even if
+the sanitizer were ever bypassed, and `default-src 'self'` blocks the external
+fetches an injected `url(...)`/`href` would attempt.
 
 ---
 
@@ -279,7 +314,7 @@ flow order).
 | `unknowns`           | `{targetId, kind, field?, message, factIds?}[]`                   | Sorted by `(targetId, kind, field ?? '')` — `CanonicalUnknown` has no `id` field of its own.                                                                                                                                                                                                      |
 | `evidenceSummary`    | `{factId, statement, evidenceRefs, referencedBy}[]`               | `referencedBy` is the reverse-referenced, de-duplicated, sorted set of every entity id (across all 8 `factIds`-carrying sources, plus `unknowns[].targetId`) that cites that fact.                                                                                                                |
 | `confidenceRollup`   | `{high, medium, low}`                                             | Tallies `identity.confidence` plus every entity's `confidence` across the 8 top-level arrays (`unknowns` excluded — it has none).                                                                                                                                                                 |
-| `approvals`          | `{decisionId, authority, threshold?}[]`                           | One entry per decision with a derivable authority. Priority: an owner role tied to the deciding node, else any role tied to it, else the process-wide owner role; no entry at all if none apply. `threshold` is the lowest-id `policy`/`requirement` control tied to the deciding node, when any. |
+| `approvals`          | `{decisionId, status, authorities: {roleId, names, unit?}[], thresholds: {controlId, names}[], factIds}[]` | One entry per decision that carries an **explicit** `approval` block (`CanonicalApproval`) — and **no** entry otherwise. Authority is asserted by the contract, never inferred: there is no fallback to the process owner or to a role that merely touches the deciding node (a modelling relationship is not a business assertion about who signs off). Each entry resolves `authorityRoleIds`/`thresholdControlIds` to `{roleId,names,unit?}`/`{controlId,names}`, and carries the block's `status` (`confirmed`/`proposed`) and `factIds`. |
 | `narrativeSummary`   | `CanonicalText`                                                   | The narrative's opening paragraph — `identity.purpose` verbatim when present, else a name-derived fallback sentence. The **same** function `buildProcessNarrative` uses for its own opening paragraph, so the two artifacts never drift apart.                                                    |
 
 **The narrative.** `buildProcessNarrative(process: CanonicalProcessV1):

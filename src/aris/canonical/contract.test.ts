@@ -487,6 +487,98 @@ describe('cross-reference refinement: dangling-fact-reference', () => {
     const issue = firstIssue(result, 'dangling-fact-reference')
     expect(issue?.path).toEqual(['unknowns', 0, 'factIds', 0])
   })
+
+  it('flags a dangling decisions[*].approval.factIds[*] through the same check', () => {
+    const result = parseCanonicalProcess(
+      withApprovalOnDecide({
+        authorityRoleIds: ['r-clerk'],
+        status: 'confirmed',
+        factIds: ['missing-fact']
+      })
+    )
+    expect(result.ok).toBe(false)
+    const issue = firstIssue(result, 'dangling-fact-reference')
+    expect(issue?.path).toEqual(['decisions', 0, 'approval', 'factIds', 0])
+  })
+})
+
+/**
+ * Attach an (arbitrary, possibly-invalid) `approval` block to the baseline's
+ * `d-approve` decision. Typed `unknown` in/out so the negative tests can pass
+ * malformed shapes straight through `parseCanonicalProcess`.
+ */
+function withApprovalOnDecide(approval: unknown): unknown {
+  const process = buildValidProcess()
+  return {
+    ...process,
+    decisions: process.decisions.map((decision) =>
+      decision.id === 'd-approve' ? { ...decision, approval } : decision
+    )
+  }
+}
+
+describe('explicit approval authority: shape + cross-reference', () => {
+  it('accepts a fully-referenced approval block (authority + threshold + facts)', () => {
+    const result = parseCanonicalProcess(
+      withApprovalOnDecide({
+        authorityRoleIds: ['r-clerk'],
+        thresholdControlIds: ['c-policy'],
+        status: 'confirmed',
+        factIds: ['f-1']
+      })
+    )
+    expect(result.ok).toBe(true)
+  })
+
+  it('accepts a minimal approval block (authority + status only)', () => {
+    const result = parseCanonicalProcess(
+      withApprovalOnDecide({ authorityRoleIds: ['r-clerk'], status: 'proposed' })
+    )
+    expect(result.ok).toBe(true)
+  })
+
+  it('flags dangling-approval-authority for an unknown authority role id', () => {
+    const result = parseCanonicalProcess(
+      withApprovalOnDecide({ authorityRoleIds: ['missing-role'], status: 'confirmed' })
+    )
+    expect(result.ok).toBe(false)
+    const issue = firstIssue(result, 'dangling-approval-authority')
+    expect(issue?.path).toEqual(['decisions', 0, 'approval', 'authorityRoleIds', 0])
+  })
+
+  it('flags dangling-approval-threshold for an unknown threshold control id', () => {
+    const result = parseCanonicalProcess(
+      withApprovalOnDecide({
+        authorityRoleIds: ['r-clerk'],
+        thresholdControlIds: ['missing-control'],
+        status: 'confirmed'
+      })
+    )
+    expect(result.ok).toBe(false)
+    const issue = firstIssue(result, 'dangling-approval-threshold')
+    expect(issue?.path).toEqual(['decisions', 0, 'approval', 'thresholdControlIds', 0])
+  })
+
+  it('rejects an empty authorityRoleIds array (an approval must name at least one authority)', () => {
+    const result = parseCanonicalProcess(
+      withApprovalOnDecide({ authorityRoleIds: [], status: 'confirmed' })
+    )
+    expect(result.ok).toBe(false)
+  })
+
+  it('rejects an unknown approval status', () => {
+    const result = parseCanonicalProcess(
+      withApprovalOnDecide({ authorityRoleIds: ['r-clerk'], status: 'rubber-stamped' })
+    )
+    expect(result.ok).toBe(false)
+  })
+
+  it('rejects an unknown key inside the approval block (strict object)', () => {
+    const result = parseCanonicalProcess(
+      withApprovalOnDecide({ authorityRoleIds: ['r-clerk'], status: 'confirmed', approver: 'x' })
+    )
+    expect(result.ok).toBe(false)
+  })
 })
 
 describe('cross-reference refinement: dangling-unknown-target', () => {

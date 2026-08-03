@@ -69,22 +69,18 @@
  *     field (`unknowns` excluded — `CanonicalUnknown` has none; it records
  *     uncertainty about something else, it does not itself carry a
  *     confidence rating).
- *  8. **`approvals`** — one entry per `decisions[]` entry for which an
- *     authority role can be derived; a decision with no derivable authority
- *     produces NO entry (never a fabricated id — e.g.
- *     `VALID_CANONICAL_RETURN_PATH`, whose `roles` array is empty). Priority,
- *     per decision:
- *       a. a role with `owner: true` AND `nodeIds` including the decision's
- *          `nodeId` (an owner tied directly to the deciding step);
- *       b. else, any role whose `nodeIds` includes the decision's `nodeId`
- *          (lowest id first, if more than one);
- *       c. else, the process-wide `owner: true` role (point 3), if any.
- *     `threshold` (optional) is the `names` of the lowest-id `controls[]`
- *     entry of kind `'policy'` or `'requirement'` whose `nodeIds` includes
- *     the decision's `nodeId` (master-plan Gold-Case criterion 4 names
- *     exactly "approvals (authority + threshold)"; plan line 411's
- *     parenthetical names exactly these two control kinds as the threshold
- *     source) — omitted when no such control exists.
+ *  8. **`approvals`** — one entry per `decisions[]` entry that carries an
+ *     EXPLICIT `approval` block (`CanonicalApproval`), and NO entry for any
+ *     decision without one. Authority is asserted by the contract, never
+ *     inferred here: there is deliberately no fallback to a role that merely
+ *     touches the deciding node, and none to the process-wide owner — a
+ *     modelling relationship (owner-of, works-on) is not a business assertion
+ *     about who approves a decision. Each entry resolves the block's
+ *     `authorityRoleIds` to `{roleId, names, unit?}` authorities and its
+ *     `thresholdControlIds` to `{controlId, names}` thresholds (both sorted by
+ *     their own id), and carries the block's `status` and (sorted) `factIds`.
+ *     A decision with no `approval` block — e.g. `VALID_CANONICAL_RETURN_PATH`
+ *     — produces nothing, so an unverified authority is never fabricated.
  *  9. **`roles[].owner`** — coerced to a definite `boolean` (`role.owner ===
  *     true`) rather than passed through as `boolean | undefined`, so a
  *     consumer never has to special-case "field absent" vs "false".
@@ -111,6 +107,7 @@
  */
 
 import type {
+  CanonicalApprovalStatus,
   CanonicalConfidence,
   CanonicalEdgeKind,
   CanonicalNodeKind,
@@ -195,11 +192,29 @@ export interface VerificationPackageConfidenceRollup {
   readonly low: number
 }
 
+export interface VerificationPackageApprovalAuthority {
+  readonly roleId: string
+  readonly names: CanonicalText
+  readonly unit?: CanonicalText
+}
+
+export interface VerificationPackageApprovalThreshold {
+  readonly controlId: string
+  readonly names: CanonicalText
+}
+
+/**
+ * An approval assertion — emitted ONLY for a decision that carries an explicit
+ * `approval` block (see module header, point 8). There is no inference and no
+ * fallback to the process owner: a decision without an `approval` block produces
+ * NO entry here at all.
+ */
 export interface VerificationPackageApproval {
   readonly decisionId: string
-  /** A role id — see module header, point 8, for the derivation priority. */
-  readonly authority: string
-  readonly threshold?: CanonicalText
+  readonly status: CanonicalApprovalStatus
+  readonly authorities: readonly VerificationPackageApprovalAuthority[]
+  readonly thresholds: readonly VerificationPackageApprovalThreshold[]
+  readonly factIds: readonly string[]
 }
 
 export interface VerificationPackageV1 {
@@ -422,6 +437,7 @@ export function buildVerificationPackage(process: CanonicalProcessV1): Verificat
   }
   for (const node of process.nodes) addReference(node.factIds, node.id)
   for (const decision of process.decisions) addReference(decision.factIds, decision.id)
+  for (const decision of process.decisions) addReference(decision.approval?.factIds, decision.id)
   for (const edge of process.edges) addReference(edge.factIds, edge.id)
   for (const role of process.roles) addReference(role.factIds, role.id)
   for (const system of process.systems) addReference(system.factIds, system.id)
@@ -460,31 +476,42 @@ export function buildVerificationPackage(process: CanonicalProcessV1): Verificat
     return { high, medium, low }
   })()
 
-  // --- approvals (see point 8) -------------------------------------------------
-  const globalOwnerRoleId = ownerRole?.id
+  // --- approvals: EXPLICIT authority only (see point 8) -----------------------
+  // An approval assertion is emitted for exactly the decisions that carry an
+  // explicit `approval` block. There is deliberately NO inference and NO fallback
+  // to the process owner or to a role that merely touches the deciding node — a
+  // modelling relationship is not a business assertion about who signs off.
+  const roleById = new Map(process.roles.map((role) => [role.id, role] as const))
+  const controlById = new Map(process.controls.map((control) => [control.id, control] as const))
   const approvals: VerificationPackageApproval[] = []
   for (const decision of sortedById(process.decisions)) {
-    const linkedRoles = sortedById(
-      process.roles.filter((role) => role.nodeIds.includes(decision.nodeId))
-    )
-    const linkedOwnerRole = linkedRoles.find((role) => role.owner === true)
-    const authority = linkedOwnerRole?.id ?? linkedRoles[0]?.id ?? globalOwnerRoleId
-    if (authority === undefined) continue
-    const linkedThresholdControls = sortedById(
-      process.controls.filter(
-        (control) =>
-          (control.kind === 'policy' || control.kind === 'requirement') &&
-          control.nodeIds.includes(decision.nodeId)
-      )
-    )
-    const thresholdControl = linkedThresholdControls[0]
+    const approval = decision.approval
+    if (approval === undefined) continue
+    const authorities: VerificationPackageApprovalAuthority[] = sortedStrings([
+      ...approval.authorityRoleIds
+    ]).map((roleId) => {
+      const role = roleById.get(roleId)
+      // roleId is contract-guaranteed to resolve (checkApprovalReferences); the
+      // fallback keeps the builder total for any not-yet-validated input.
+      return role
+        ? { roleId, names: role.names, ...(role.unit !== undefined ? { unit: role.unit } : {}) }
+        : { roleId, names: { en: roleId } }
+    })
+    const thresholds: VerificationPackageApprovalThreshold[] = sortedStrings([
+      ...(approval.thresholdControlIds ?? [])
+    ]).map((controlId) => {
+      const control = controlById.get(controlId)
+      return control ? { controlId, names: control.names } : { controlId, names: { en: controlId } }
+    })
+    // Iteration over sortedById(process.decisions) already yields decisionId order.
     approvals.push({
       decisionId: decision.id,
-      authority,
-      ...(thresholdControl ? { threshold: thresholdControl.names } : {})
+      status: approval.status,
+      authorities,
+      thresholds,
+      factIds: sortedStrings([...(approval.factIds ?? [])])
     })
   }
-  approvals.sort((a, b) => (a.decisionId < b.decisionId ? -1 : a.decisionId > b.decisionId ? 1 : 0))
 
   return {
     schemaVersion: VERIFICATION_PACKAGE_SCHEMA_VERSION,

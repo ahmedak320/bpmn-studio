@@ -45,7 +45,8 @@
  *                                          role/system/control.nodeIds[*],
  *                                          informationObjects.*NodeIds[*]) does not
  *                                          resolve to a declared `nodes[].id`.
- *  - `dangling-fact-reference`          — a `factIds[*]` entry does not resolve to a
+ *  - `dangling-fact-reference`          — a `factIds[*]` entry (including a decision's
+ *                                          `approval.factIds[*]`) does not resolve to a
  *                                          declared `facts[].id`.
  *  - `dangling-unknown-target`          — `unknowns[*].targetId` does not resolve to
  *                                          any declared id in the process (identity,
@@ -72,6 +73,10 @@
  *                                          through its `decisions[]` outcomes — a conditional
  *                                          edge out of a decision would bypass the projected
  *                                          XOR and silently model a second, unlabelled split.
+ *  - `dangling-approval-authority`      — a `decisions[*].approval.authorityRoleIds[*]`
+ *                                          does not resolve to a declared `roles[].id`.
+ *  - `dangling-approval-threshold`      — a `decisions[*].approval.thresholdControlIds[*]`
+ *                                          does not resolve to a declared `controls[].id`.
  *
  * `contract.test.ts` exercises every one of these codes individually.
  */
@@ -100,7 +105,9 @@ export const CANONICAL_ISSUE_CODES = [
   'decision-node-unreferenced',
   'decision-node-multiple-references',
   'decision-node-sequence-edge',
-  'decision-node-conditional-edge'
+  'decision-node-conditional-edge',
+  'dangling-approval-authority',
+  'dangling-approval-threshold'
 ] as const
 
 export type CanonicalIssueCode = (typeof CANONICAL_ISSUE_CODES)[number]
@@ -228,12 +235,57 @@ export const CanonicalDecisionOutcomeSchema = z
   })
   .strict()
 
+/**
+ * Approval status of an explicit authority assertion. `'confirmed'` — the source
+ * evidence establishes this authority; `'proposed'` — asserted but awaiting human
+ * confirmation in the verification portal.
+ */
+export type CanonicalApprovalStatus = 'proposed' | 'confirmed'
+
+export const CANONICAL_APPROVAL_STATUS_VALUES = ['proposed', 'confirmed'] as const
+
+/**
+ * Explicit approval authority for a decision (production-hardening: authority is
+ * ASSERTED, never inferred). A decision carries this ONLY when the source
+ * evidence actually establishes who signs the decision off and under what
+ * threshold. `buildVerificationPackage` emits an approval assertion for exactly
+ * the decisions that declare this block, and NEVER falls back to the general
+ * process owner or to a role that merely happens to touch the deciding node — a
+ * modelling relationship (owner-of, works-on) is not a business assertion about
+ * who approves.
+ *
+ *  - `authorityRoleIds` — the role(s) with sign-off authority; each must resolve
+ *    to a declared `roles[].id` (at least one — an approval with no named
+ *    authority is not an approval).
+ *  - `thresholdControlIds` — optional; the control(s) that set the approval
+ *    threshold, each resolving to a declared `controls[].id`.
+ *  - `status` — `'confirmed'` or `'proposed'` (see `CanonicalApprovalStatus`).
+ *  - `factIds` — optional supporting evidence, each resolving to `facts[].id`.
+ */
+export interface CanonicalApproval {
+  readonly authorityRoleIds: readonly string[]
+  readonly thresholdControlIds?: readonly string[]
+  readonly status: CanonicalApprovalStatus
+  readonly factIds?: readonly string[]
+}
+
+export const CanonicalApprovalSchema = z
+  .strictObject({
+    authorityRoleIds: z.array(z.string().min(1)).min(1),
+    thresholdControlIds: z.array(z.string().min(1)).optional(),
+    status: z.enum(CANONICAL_APPROVAL_STATUS_VALUES),
+    factIds: z.array(z.string().min(1)).optional()
+  })
+  .strict()
+
 export interface CanonicalDecision {
   readonly id: string
   /** Must resolve to a declared node of kind `'decision'`, referenced by exactly one decision. */
   readonly nodeId: string
   readonly criteria?: CanonicalText
   readonly outcomes: readonly CanonicalDecisionOutcome[]
+  /** Explicit, evidence-backed approval authority — see `CanonicalApproval`. */
+  readonly approval?: CanonicalApproval
   readonly factIds?: readonly string[]
   readonly confidence: CanonicalConfidence
 }
@@ -244,6 +296,7 @@ export const CanonicalDecisionSchema = z
     nodeId: z.string().min(1),
     criteria: CanonicalTextSchema.optional(),
     outcomes: z.array(CanonicalDecisionOutcomeSchema).min(2),
+    approval: CanonicalApprovalSchema.optional(),
     factIds: z.array(z.string().min(1)).optional(),
     confidence: CanonicalConfidenceSchema
   })
@@ -533,9 +586,13 @@ interface IdOccurrence {
  * draft logicalIds (`xo:<decisionId>:<outcomeId>`, `re:<src>:<tgt>`, …). This
  * uniqueness check treats ids as opaque strings and does NOT constrain their
  * character set, so an id that itself contains a `:` could in principle make
- * two different (decisionId, outcomeId) pairs produce the same draft id. A full
- * id-charset constraint is intentionally out of scope here; callers minting ids
- * should avoid `:` to keep the derived draft ids unambiguous.
+ * two different (decisionId, outcomeId) pairs produce the same draft id. Folding
+ * a full id-charset constraint into this contract is intentionally still out of
+ * scope (it would reject historical data minted before the rule); instead, the
+ * safety guarantee lives at the MINT site — every adapter that fabricates
+ * canonical ids should mint them with `mintCanonicalId` / validate them with
+ * `isSafeCanonicalId` (`./ids`, the `[A-Za-z0-9._-]` alphabet, no `:`) so the
+ * derived draft ids stay unambiguous.
  */
 function allIdOccurrences(process: CanonicalProcessV1Shape): readonly IdOccurrence[] {
   const entityArraysByKey: Record<EntityArrayKey, readonly { readonly id: string }[]> = {
@@ -707,6 +764,13 @@ function checkFactReferences(process: CanonicalProcessV1Shape, ctx: CanonicalRef
   )
   process.decisions.forEach((decision, index) =>
     requireFacts(['decisions', index, 'factIds'], decision.factIds, `decisions[${index}].factIds`)
+  )
+  process.decisions.forEach((decision, index) =>
+    requireFacts(
+      ['decisions', index, 'approval', 'factIds'],
+      decision.approval?.factIds,
+      `decisions[${index}].approval.factIds`
+    )
   )
   process.edges.forEach((edge, index) =>
     requireFacts(['edges', index, 'factIds'], edge.factIds, `edges[${index}].factIds`)
@@ -902,6 +966,44 @@ function checkDecisionNodeConditionalEdges(
   })
 }
 
+/**
+ * `dangling-approval-authority` / `dangling-approval-threshold`: a decision's
+ * explicit `approval` block references only declared roles/controls. (Its
+ * `approval.factIds` are validated alongside every other `factIds` by
+ * `checkFactReferences`.)
+ */
+function checkApprovalReferences(
+  process: CanonicalProcessV1Shape,
+  ctx: CanonicalRefinementCtx
+): void {
+  const roleIds = new Set(process.roles.map((role) => role.id))
+  const controlIds = new Set(process.controls.map((control) => control.id))
+  process.decisions.forEach((decision, index) => {
+    const approval = decision.approval
+    if (approval === undefined) return
+    approval.authorityRoleIds.forEach((roleId, roleIndex) => {
+      if (!roleIds.has(roleId)) {
+        addCustomIssue(
+          ctx,
+          ['decisions', index, 'approval', 'authorityRoleIds', roleIndex],
+          'dangling-approval-authority',
+          `decisions[${index}].approval.authorityRoleIds[${roleIndex}] references undeclared role id "${roleId}".`
+        )
+      }
+    })
+    approval.thresholdControlIds?.forEach((controlId, controlIndex) => {
+      if (!controlIds.has(controlId)) {
+        addCustomIssue(
+          ctx,
+          ['decisions', index, 'approval', 'thresholdControlIds', controlIndex],
+          'dangling-approval-threshold',
+          `decisions[${index}].approval.thresholdControlIds[${controlIndex}] references undeclared control id "${controlId}".`
+        )
+      }
+    })
+  })
+}
+
 export const CanonicalProcessV1Schema = CanonicalProcessV1BaseSchema.superRefine((process, ctx) => {
   checkDuplicateIds(process, ctx)
   checkNodeReferences(process, ctx)
@@ -911,6 +1013,7 @@ export const CanonicalProcessV1Schema = CanonicalProcessV1BaseSchema.superRefine
   checkDecisionNodeReferences(process, ctx)
   checkDecisionNodeSequenceEdges(process, ctx)
   checkDecisionNodeConditionalEdges(process, ctx)
+  checkApprovalReferences(process, ctx)
 })
 
 // ---------------------------------------------------------------------------
