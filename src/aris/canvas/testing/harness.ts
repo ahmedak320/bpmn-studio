@@ -1,5 +1,11 @@
 /**
- * Shared test harness for the ARIS canvas. Test support only.
+ * Shared test harness for the ARIS canvas.
+ *
+ * `bootCanvas` is the literal boot recipe (`installJsdomSvgSupport()` +
+ * `createCanvasContainer()` + `ArisCanvas.create({minimap:false})`) that the
+ * headless render entry (`src/aris/headless`) also follows; the shim it depends
+ * on (`./jsdomSvg`) is likewise shared by the canvas test suites and that
+ * headless entry. Never imported by the studio browser app (`src/main.tsx`).
  */
 
 import type { Element, Shape } from 'diagram-js/lib/model/Types'

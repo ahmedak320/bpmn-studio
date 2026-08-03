@@ -4,7 +4,7 @@
 
 import { inflateSync } from 'node:zlib'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   arisExportRasterSize,
@@ -13,6 +13,7 @@ import {
   arisSvgToPngDataUrl,
   arisTextRunsContainArabic,
   buildArisExportSvgMarkup,
+  captureArisCanvasSvg,
   createArisDiagramPdf,
   deterministicArisPdfFileId,
   findArisCanvasSvg,
@@ -313,6 +314,68 @@ describe('buildArisExportSvgMarkup', () => {
     svg.querySelector('g.viewport')!.appendChild(text)
     const markup = buildArisExportSvgMarkup(svg, { x: 0, y: 0, width: 50, height: 50 })
     expect(markup).toContain('تسجيل ملف مالك حيوان')
+  })
+})
+
+describe('captureArisCanvasSvg options (headless render seam)', () => {
+  const containerWith = (svg: SVGSVGElement): HTMLElement => {
+    const container = document.createElement('div')
+    container.appendChild(svg)
+    return container
+  }
+
+  it('uses provided bounds and skips the getBBox measurement entirely', () => {
+    const svg = fakeCanvasSvg()
+    // Prove `measureArisCanvasSvgBounds` is not consulted: if it were, this
+    // throwing `getBBox` on the viewport would surface.
+    const viewport = svg.querySelector('g.viewport') as unknown as SVGGraphicsElement
+    viewport.getBBox = () => {
+      throw new Error('getBBox must not be called when bounds are provided')
+    }
+    const capture = captureArisCanvasSvg(containerWith(svg), {
+      bounds: { x: 10, y: 20, width: 300, height: 150 },
+      includeTextRuns: false
+    })
+
+    // Exactly the viewBox `buildArisExportSvgMarkup` implies for these bounds
+    // at the default 24-unit padding, and the matching padded pixel size.
+    const parsed = new DOMParser().parseFromString(capture.markup, 'image/svg+xml')
+    expect(parsed.documentElement.getAttribute('viewBox')).toBe(
+      `${10 - 24} ${20 - 24} ${300 + 48} ${150 + 48}`
+    )
+    expect(capture.size).toEqual({ width: 300 + 48, height: 150 + 48 })
+  })
+
+  it('returns no text runs and never enters the getScreenCTM chain when includeTextRuns is false', () => {
+    const svg = fakeCanvasSvg()
+    const text = document.createElementNS(SVG_NS, 'text')
+    text.textContent = 'Register'
+    svg.querySelector('g.viewport')!.appendChild(text)
+    const viewport = svg.querySelector('g.viewport') as unknown as SVGGraphicsElement
+    const spy = vi.fn(() => null)
+    viewport.getScreenCTM = spy as unknown as SVGGraphicsElement['getScreenCTM']
+
+    const capture = captureArisCanvasSvg(containerWith(svg), {
+      bounds: { x: 0, y: 0, width: 100, height: 100 },
+      includeTextRuns: false
+    })
+
+    expect(capture.textRuns).toEqual([])
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('enters the getScreenCTM chain to collect text runs by default', () => {
+    const svg = fakeCanvasSvg()
+    const text = document.createElementNS(SVG_NS, 'text')
+    text.textContent = 'Register'
+    svg.querySelector('g.viewport')!.appendChild(text)
+    const viewport = svg.querySelector('g.viewport') as unknown as SVGGraphicsElement
+    const spy = vi.fn(() => null)
+    viewport.getScreenCTM = spy as unknown as SVGGraphicsElement['getScreenCTM']
+
+    captureArisCanvasSvg(containerWith(svg), { bounds: { x: 0, y: 0, width: 100, height: 100 } })
+
+    expect(spy).toHaveBeenCalled()
   })
 })
 

@@ -576,14 +576,49 @@ export function collectArisExportTextRuns(
 }
 
 /**
+ * Options for {@link captureArisCanvasSvg}. Both members default to the legacy
+ * browser behaviour, so the PDF export path — which passes nothing — stays
+ * byte-identical; the headless render entry (`src/aris/headless`) supplies both.
+ *
+ * The type is intentionally LOCAL to this module (it reuses
+ * {@link ArisCanvasSvgBounds}, imports nothing new) so the runtime-boundary
+ * walker that reaches this file from `src/main.tsx` is unaffected.
+ */
+export interface CaptureArisCanvasSvgOptions {
+  /**
+   * Precomputed content bounds. When given, `getBBox`-based
+   * {@link measureArisCanvasSvgBounds} is skipped entirely — the headless entry
+   * derives model-space bounds from `arisContentBounds(elementRegistry.getAll())`
+   * (`fitView.ts`), which needs no layout engine and includes label extents the
+   * jsdom `getBBox` shim misses.
+   */
+  readonly bounds?: ArisCanvasSvgBounds
+  /**
+   * When `false`, the invisible selectable-text overlay is not collected and
+   * `textRuns` is `[]` — the `getScreenCTM` chain (`collectArisExportTextRuns`)
+   * is never entered. Defaults to `true` (the PDF path needs the overlay).
+   */
+  readonly includeTextRuns?: boolean
+}
+
+/**
  * Capture the current canvas view — diagram plus print frame, in the current
  * content language — as standalone SVG markup with its export pixel size and
  * the invisible selectable-text overlay runs.
+ *
+ * With no options this is the original browser PDF capture (measure bounds via
+ * `getBBox`, collect the text-run overlay) and is byte-identical to before. The
+ * headless render entry passes `{bounds, includeTextRuns:false}` so it can run
+ * under jsdom where `getBBox` ignores `<text>` and the CTM overlay is unused.
  */
-export function captureArisCanvasSvg(container: HTMLElement): ArisCanvasSvgCapture {
+export function captureArisCanvasSvg(
+  container: HTMLElement,
+  options: CaptureArisCanvasSvgOptions = {}
+): ArisCanvasSvgCapture {
   const svgRoot = findArisCanvasSvg(container)
-  const bounds = measureArisCanvasSvgBounds(svgRoot)
-  const textRuns = collectArisExportTextRuns(svgRoot, bounds)
+  const bounds = options.bounds ?? measureArisCanvasSvgBounds(svgRoot)
+  const textRuns =
+    options.includeTextRuns === false ? [] : collectArisExportTextRuns(svgRoot, bounds)
   const markup = buildArisExportSvgMarkup(svgRoot, bounds)
   return {
     markup,

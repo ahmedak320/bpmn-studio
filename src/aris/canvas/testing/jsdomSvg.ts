@@ -1,5 +1,6 @@
 /**
- * jsdom SVG geometry shim — test support only.
+ * jsdom SVG geometry shim — shared by the canvas test suites AND the headless
+ * render entry (`src/aris/headless`).
  *
  * jsdom implements the SVG *DOM* but none of the SVG *geometry* interfaces:
  * there is no `SVGMatrix`, no `SVGTransformList`, no `getBBox`, no
@@ -12,7 +13,9 @@
  * attribute, serialized as `matrix(a,b,c,d,e,f)`, so reads and writes agree no
  * matter which API produced them.
  *
- * This file is never imported by production code.
+ * This file is never imported by the studio browser app (`src/main.tsx`); it is
+ * imported only by the canvas test suites and by the headless render entry
+ * (`src/aris/headless`), which boots the same diagram-js canvas under jsdom.
  */
 
 interface MatrixLike {
