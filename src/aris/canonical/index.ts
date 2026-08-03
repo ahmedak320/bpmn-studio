@@ -10,3 +10,7 @@ export * from './findings'
 export * from './findingMessages'
 export * from './verificationPackage'
 export * from './narrative'
+
+// The pure AML serializer for a projected draft (no jsdom): lets the CLI's
+// `project` command emit model.aml.xml without booting the canvas.
+export { buildAmlFromArisAiDraft } from '../shell/arisAiCreate'

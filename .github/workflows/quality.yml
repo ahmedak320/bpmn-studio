@@ -122,6 +122,7 @@ jobs:
           node --test
           scripts/browser-environment-evidence.test.mjs
           scripts/check-no-skips.test.mjs
+          scripts/epc-engine-cli.test.mjs
           scripts/pages-evidence-chain.test.mjs
           scripts/release-evidence-chain.test.mjs
           scripts/release-reporter.test.mjs
