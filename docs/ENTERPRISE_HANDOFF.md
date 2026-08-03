@@ -50,6 +50,8 @@ config.
 {
   "name": "@orbitpm/epc-engine",
   "version": "0.1.0",
+  "description": "OrbitPM EPC engine as a service — CanonicalProcessV1 → EPC projection, validation, headless SVG render",
+  "license": "MIT",
   "type": "module",
   "exports": { ".": "./dist/index.js", "./canonical": "./dist/canonical.js" },
   "bin": { "epc-project": "./bin/epc-project.mjs" },
@@ -158,14 +160,14 @@ headlessly. Alongside it (both `project` and `render` write `narrative.md`
 and `findings.json`; only `render` writes `metadata.json` and `process.svg`;
 only `project` writes `draft.json`/`model.aml.xml`):
 
-| File            | Written by          | Contents                                                                                                                                                                                                                                                                                                     |
-| --------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `process.svg`   | `render`            | The primary artifact — standalone anchored SVG.                                                                                                                                                                                                                                                              |
-| `narrative.md`  | `project`, `render` | `ProcessNarrativeV1`'s `en`/`ar` bilingual markdown bodies, concatenated — no LLM, deterministic by template.                                                                                                                                                                                                |
-| `metadata.json` | `render`            | The `HeadlessRenderMetadata` sidecar: `engineVersion`, `schemaVersion` (`1`), `projectionVersion` (`1`), `inputSha256`, `modelId`, and `sourceVersionId` when supplied — the same values stamped as `data-epc-*` attributes on the SVG root, so a worker can cross-check the two without re-parsing the SVG. |
-| `findings.json` | `project`, `render` | `EpcProjectionFindings` — always written, success or failure. See [`EPC_PROJECTION.md`](./EPC_PROJECTION.md#5-findings-artifact).                                                                                                                                                                            |
-| `draft.json`    | `project`           | The intermediate `ArisAiDraftV1` (`canonicalJsonText`-formatted) — debugging/round-trip only, not part of the render contract.                                                                                                                                                                               |
-| `model.aml.xml` | `project`           | The generated AML serialization of that draft — debugging/round-trip only.                                                                                                                                                                                                                                   |
+| File            | Written by          | Contents                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| --------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `process.svg`   | `render`            | The primary artifact — standalone anchored SVG.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `narrative.md`  | `project`, `render` | `ProcessNarrativeV1`'s `en`/`ar` bilingual markdown bodies, concatenated — no LLM, deterministic by template.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `metadata.json` | `render`            | The `HeadlessRenderMetadata` sidecar: `engineVersion`, `schemaVersion` (`1`), `projectionVersion` (`1`), `inputSha256`, `modelId`, and `sourceVersionId` when supplied — the same values stamped as `data-epc-*` attributes on the SVG root, so a worker can cross-check the two without re-parsing the SVG.                                                                                                                                                                                                                                                  |
+| `findings.json` | `project`, `render` | `EpcProjectionFindings` — always written, success or failure. See [`EPC_PROJECTION.md`](./EPC_PROJECTION.md#5-findings-artifact).                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `draft.json`    | `project`           | The intermediate `ArisAiDraftV1`, serialized by the CLI's `writeJson` helper as pretty-printed `JSON.stringify(draft, null, 2)` (`packages/epc-engine/bin/epc-project.mjs`) — 2-space indented, in the draft's own (insertion) key order. **Not** `canonicalJsonText`'s sorted-key compact form; still deterministic run-to-run for the same canonical input, because the draft is itself assembled in a fixed order (see [`EPC_PROJECTION.md`](./EPC_PROJECTION.md#4-determinism--versioning)) — debugging/round-trip only, not part of the render contract. |
+| `model.aml.xml` | `project`           | The generated AML serialization of that draft — debugging/round-trip only.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 **PNG is explicitly consumer-side.** The engine ships **no rasterizer** — its
 only runtime dependency is `jsdom`, by design (a hard campaign target: zero
@@ -191,9 +193,20 @@ not something the engine solves.
 ## 4. Review anchor contract
 
 Every rendered node/edge in `process.svg` carries a `data-epc-node` or
-`data-epc-edge` attribute whose value is the `CanonicalProcessV1` logicalId
-that produced it — the **same id space** as `nodes[].id`/`edges[].id` in the
-source canonical process, `EpcProjectionFinding.canonicalNodeIds`/
+`data-epc-edge` attribute whose value is the canonical id that caused the
+underlying draft object/relation (`stampAnchors` in `src/aris/headless/render.ts`,
+resolved through the projection's own anchor tables — see
+[`EPC_PROJECTION.md`](./EPC_PROJECTION.md#2-expansion-rules-canonical--epc)).
+
+This id space is **broader** than just `nodes[].id`/`edges[].id`: a
+`data-epc-node` value may equally be a `decisions[].id` (the decision rule
+and its outcome events all anchor back to the owning decision), or a
+`roles[]`/`systems[]`/`controls[]`/`informationObjects[].id` (every satellite
+object is a node-shaped anchor too); a `data-epc-edge` value on a synthesized
+relation (parallel split/merge, exception routing, decision or satellite
+relations) may likewise carry a plain **node id** rather than an
+`edges[].id`. All of it is still one flat namespace of canonical ids —
+the **same id space** as `EpcProjectionFinding.canonicalNodeIds`/
 `canonicalEdgeIds` in the findings artifact, and every `id` field in
 `buildVerificationPackage`'s output ([§5](#5-buildverificationpackage-field-reference)).
 One id space, three artifacts — a portal never has to cross-reference through
@@ -217,8 +230,10 @@ consumer wires the anchors up itself. A worked vanilla-JS embed:
       const isNode = target.hasAttribute('data-epc-node')
       const logicalId = target.getAttribute(isNode ? 'data-epc-node' : 'data-epc-edge')
 
-      // logicalId matches CanonicalProcessV1 nodes[].id/edges[].id, and every
-      // id field in `verificationPackage` (mainFlow[].id, decisions[].id, ...).
+      // logicalId is a CanonicalProcessV1 id (nodes[].id/edges[].id, but also
+      // decisions[].id, roles[].id, etc. — see the id-space note above), and
+      // matches an `id` field somewhere in `verificationPackage` (mainFlow[].id,
+      // decisions[].id, ...).
       const entry =
         verificationPackage.mainFlow.find((e) => e.id === logicalId) ??
         verificationPackage.decisions.find((d) => d.id === logicalId)
