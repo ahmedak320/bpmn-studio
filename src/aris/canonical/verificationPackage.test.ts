@@ -14,7 +14,7 @@ import {
   deriveNarrativeSummary,
   deriveOutcomeEntries,
   deriveTriggerEntries,
-  type VerificationPackageV1
+  type VerificationPackageV2
 } from './verificationPackage'
 
 function expectSortedById(items: readonly { readonly id: string }[]): void {
@@ -376,9 +376,9 @@ describe('buildVerificationPackage', () => {
   })
 
   describe('shape sanity', () => {
-    it('schemaVersion is 1 and the top-level shape matches VerificationPackageV1', () => {
-      const pkg: VerificationPackageV1 = buildVerificationPackage(VALID_CANONICAL_MINIMAL)
-      expect(pkg.schemaVersion).toBe(1)
+    it('schemaVersion is 2 and the top-level shape matches VerificationPackageV2', () => {
+      const pkg: VerificationPackageV2 = buildVerificationPackage(VALID_CANONICAL_MINIMAL)
+      expect(pkg.schemaVersion).toBe(2)
       expect(pkg.processId).toBe('proc-minimal')
       expect(pkg.names).toEqual({ en: 'Minimal Process', ar: 'عملية بسيطة' })
     })

@@ -4,7 +4,7 @@
  * amendment at plan line 26 adds `purpose`/`approvals`).
  *
  * Turns a `CanonicalProcessV1` into the flat, portal-facing
- * `VerificationPackageV1` artifact used for per-element human verification
+ * `VerificationPackageV2` artifact used for per-element human verification
  * (Confirm/Correct): trigger, outcomes, owner, main flow (via the SAME
  * depth-first spine the EPC projection uses — `canonicalFlowOrder` from
  * `./projectToEpc` is IMPORTED, never re-implemented), roles, systems,
@@ -117,7 +117,7 @@ import type {
 } from './contract'
 import { canonicalFlowOrder } from './projectToEpc'
 
-export const VERIFICATION_PACKAGE_SCHEMA_VERSION = 1 as const
+export const VERIFICATION_PACKAGE_SCHEMA_VERSION = 2 as const
 
 // ---------------------------------------------------------------------------
 // Entry shapes
@@ -217,8 +217,8 @@ export interface VerificationPackageApproval {
   readonly factIds: readonly string[]
 }
 
-export interface VerificationPackageV1 {
-  readonly schemaVersion: 1
+export interface VerificationPackageV2 {
+  readonly schemaVersion: 2
   readonly processId: string
   readonly names: CanonicalText
   readonly code?: string
@@ -344,7 +344,7 @@ export function deriveNarrativeSummary(process: CanonicalProcessV1): CanonicalTe
 // buildVerificationPackage
 // ---------------------------------------------------------------------------
 
-export function buildVerificationPackage(process: CanonicalProcessV1): VerificationPackageV1 {
+export function buildVerificationPackage(process: CanonicalProcessV1): VerificationPackageV2 {
   const nodeById = new Map(process.nodes.map((node) => [node.id, node] as const))
 
   // --- owner -----------------------------------------------------------------

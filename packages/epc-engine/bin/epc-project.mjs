@@ -127,6 +127,7 @@ async function main() {
     projectCanonicalToDraft,
     validateProjectedDraft,
     buildProcessNarrative,
+    buildVerificationPackage,
     buildAmlFromArisAiDraft
   } = await import('../dist/canonical.js')
 
@@ -155,6 +156,7 @@ async function main() {
     writeJson(join(options.out, 'draft.json'), projection.draft)
     writeFileSync(join(options.out, 'model.aml.xml'), aml.xml)
     writeJson(join(options.out, 'findings.json'), findings)
+    writeJson(join(options.out, 'verification.json'), buildVerificationPackage(canonical))
     writeFileSync(join(options.out, 'narrative.md'), narrativeMarkdown(narrative))
     console.error(`epc-project: wrote ${findings.ok ? '' : 'failure '}artifacts to ${options.out}`)
     process.exitCode = findings.ok ? EXIT_OK : EXIT_FINDINGS
@@ -185,6 +187,7 @@ async function main() {
   mkdirSync(options.out, { recursive: true })
   if (!result.ok) {
     writeJson(join(options.out, 'findings.json'), result.findings)
+    writeJson(join(options.out, 'verification.json'), buildVerificationPackage(canonical))
     writeFileSync(
       join(options.out, 'narrative.md'),
       narrativeMarkdown(buildProcessNarrative(canonical))
@@ -197,6 +200,7 @@ async function main() {
   writeFileSync(join(options.out, 'process.svg'), result.svg)
   writeJson(join(options.out, 'metadata.json'), result.metadata)
   writeJson(join(options.out, 'findings.json'), result.findings)
+  writeJson(join(options.out, 'verification.json'), buildVerificationPackage(canonical))
   writeFileSync(
     join(options.out, 'narrative.md'),
     narrativeMarkdown(buildProcessNarrative(canonical))

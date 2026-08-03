@@ -37,7 +37,7 @@ studio's own single-file `dist/index.html` build is untouched by this config.
 npm registry publishing is deferred. Consume the package one of two ways:
 
 - **Tarball:** run `npm run build:lib`, then `npm pack` inside this directory and
-  install the resulting `orbitpm-epc-engine-0.1.0.tgz` in the enterprise repo.
+  install the resulting `orbitpm-epc-engine-0.2.0.tgz` in the enterprise repo.
 - **Git dependency:** reference this repository/sub-path as a git dependency and
   run `npm run build:lib` as part of the consumer's prepare step.
 

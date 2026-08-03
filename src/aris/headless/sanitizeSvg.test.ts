@@ -11,11 +11,7 @@ import { describe, expect, it } from 'vitest'
 
 import { VALID_CANONICAL_FULL } from '../canonical/fixtures'
 import { renderCanonicalProcess } from './render'
-import {
-  RECOMMENDED_VERIFICATION_CSP,
-  sanitizeEpcSvg,
-  type SvgSanitizerDom
-} from './sanitizeSvg'
+import { RECOMMENDED_VERIFICATION_CSP, sanitizeEpcSvg, type SvgSanitizerDom } from './sanitizeSvg'
 
 // A standalone jsdom DOM so the unit cases never depend on globals or on a prior
 // render having booted the headless DOM.

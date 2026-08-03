@@ -29,7 +29,16 @@ describe('isSafeCanonicalId', () => {
   })
 
   it('rejects whitespace, slashes, other punctuation, unicode, and the empty string', () => {
-    for (const id of ['has space', 'has/slash', 'has#hash', 'has%pct', '', 'مرحبا', 'a\tb', 'a\nb']) {
+    for (const id of [
+      'has space',
+      'has/slash',
+      'has#hash',
+      'has%pct',
+      '',
+      'مرحبا',
+      'a\tb',
+      'a\nb'
+    ]) {
       expect(isSafeCanonicalId(id)).toBe(false)
     }
   })

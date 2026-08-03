@@ -23,6 +23,7 @@ import {
   CanonicalTextSchema,
   CanonicalUnknownSchema
 } from './contract'
+import { CANONICAL_SAFE_ID_PATTERN } from './ids'
 import { buildCanonicalProcessJsonSchema } from './jsonSchema'
 
 type Obj = Record<string, unknown>
@@ -146,6 +147,18 @@ describe('buildCanonicalProcessJsonSchema', () => {
   it('expresses the CanonicalText "at least one of en/ar" invariant as anyOf', () => {
     const names = asObj(props(topProps.identity).names)
     expect(names.anyOf).toEqual([{ required: ['en'] }, { required: ['ar'] }])
+  })
+
+  it('constrains declared id fields to the safe-id pattern (mirrors the zod contract)', () => {
+    const pattern = CANONICAL_SAFE_ID_PATTERN.source
+    expect((props(topProps.identity).id as Obj).pattern).toBe(pattern)
+    expect((props(items(topProps.nodes)).id as Obj).pattern).toBe(pattern)
+    expect((props(items(topProps.edges)).id as Obj).pattern).toBe(pattern)
+    expect((props(items(topProps.decisions)).id as Obj).pattern).toBe(pattern)
+    expect((props(items(topProps.facts)).id as Obj).pattern).toBe(pattern)
+    expect((props(items(topProps.nodes)).targetProcessRef as Obj).pattern).toBe(pattern)
+    // Non-id strings are NOT pattern-constrained (e.g. identity.code, evidenceRefs).
+    expect((props(topProps.identity).code as Obj).pattern).toBeUndefined()
   })
 })
 

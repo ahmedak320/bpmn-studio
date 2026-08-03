@@ -28,9 +28,20 @@ import {
   CANONICAL_NODE_KINDS,
   CANONICAL_UNKNOWN_KINDS
 } from './contract'
+import { CANONICAL_SAFE_ID_PATTERN } from './ids'
 
 function nonEmptyString(): Record<string, unknown> {
   return { type: 'string', minLength: 1 }
+}
+
+/**
+ * A declared canonical id: non-empty and matching the safe-id pattern
+ * (`CANONICAL_SAFE_ID_PATTERN`), mirroring `canonicalIdString()` in the zod
+ * contract. Used for every declaration `id` (and `targetProcessRef`); reference
+ * fields keep `nonEmptyString()`.
+ */
+function safeIdSchema(): Record<string, unknown> {
+  return { type: 'string', minLength: 1, pattern: CANONICAL_SAFE_ID_PATTERN.source }
 }
 
 function confidenceSchema(): Record<string, unknown> {
@@ -56,7 +67,7 @@ function identitySchema(): Record<string, unknown> {
     additionalProperties: false,
     required: ['id', 'names', 'confidence'],
     properties: {
-      id: nonEmptyString(),
+      id: safeIdSchema(),
       names: localizedTextSchema(),
       purpose: localizedTextSchema(),
       code: nonEmptyString(),
@@ -76,12 +87,12 @@ function nodeSchema(): Record<string, unknown> {
     additionalProperties: false,
     required: ['id', 'kind', 'names', 'confidence'],
     properties: {
-      id: nonEmptyString(),
+      id: safeIdSchema(),
       kind: { type: 'string', enum: [...CANONICAL_NODE_KINDS] },
       names: localizedTextSchema(),
       description: localizedTextSchema(),
       waitDetail: localizedTextSchema(),
-      targetProcessRef: nonEmptyString(),
+      targetProcessRef: safeIdSchema(),
       factIds: nodeIdArraySchema(),
       confidence: confidenceSchema()
     }
@@ -94,7 +105,7 @@ function decisionOutcomeSchema(): Record<string, unknown> {
     additionalProperties: false,
     required: ['id', 'names', 'targetNodeId'],
     properties: {
-      id: nonEmptyString(),
+      id: safeIdSchema(),
       names: localizedTextSchema(),
       targetNodeId: nonEmptyString()
     }
@@ -122,7 +133,7 @@ function decisionSchema(): Record<string, unknown> {
     additionalProperties: false,
     required: ['id', 'nodeId', 'outcomes', 'confidence'],
     properties: {
-      id: nonEmptyString(),
+      id: safeIdSchema(),
       nodeId: nonEmptyString(),
       criteria: localizedTextSchema(),
       outcomes: { type: 'array', items: decisionOutcomeSchema(), minItems: 2 },
@@ -139,7 +150,7 @@ function edgeSchema(): Record<string, unknown> {
     additionalProperties: false,
     required: ['id', 'kind', 'sourceNodeId', 'targetNodeId', 'confidence'],
     properties: {
-      id: nonEmptyString(),
+      id: safeIdSchema(),
       kind: { type: 'string', enum: [...CANONICAL_EDGE_KINDS] },
       sourceNodeId: nonEmptyString(),
       targetNodeId: nonEmptyString(),
@@ -156,7 +167,7 @@ function roleSchema(): Record<string, unknown> {
     additionalProperties: false,
     required: ['id', 'names', 'nodeIds', 'confidence'],
     properties: {
-      id: nonEmptyString(),
+      id: safeIdSchema(),
       names: localizedTextSchema(),
       unit: localizedTextSchema(),
       nodeIds: nodeIdArraySchema(),
@@ -173,7 +184,7 @@ function systemSchema(): Record<string, unknown> {
     additionalProperties: false,
     required: ['id', 'names', 'nodeIds', 'confidence'],
     properties: {
-      id: nonEmptyString(),
+      id: safeIdSchema(),
       names: localizedTextSchema(),
       nodeIds: nodeIdArraySchema(),
       factIds: nodeIdArraySchema(),
@@ -188,7 +199,7 @@ function informationObjectSchema(): Record<string, unknown> {
     additionalProperties: false,
     required: ['id', 'names', 'inputToNodeIds', 'outputOfNodeIds', 'confidence'],
     properties: {
-      id: nonEmptyString(),
+      id: safeIdSchema(),
       names: localizedTextSchema(),
       inputToNodeIds: nodeIdArraySchema(),
       outputOfNodeIds: nodeIdArraySchema(),
@@ -204,7 +215,7 @@ function controlSchema(): Record<string, unknown> {
     additionalProperties: false,
     required: ['id', 'names', 'kind', 'nodeIds', 'confidence'],
     properties: {
-      id: nonEmptyString(),
+      id: safeIdSchema(),
       names: localizedTextSchema(),
       kind: { type: 'string', enum: [...CANONICAL_CONTROL_KINDS] },
       nodeIds: nodeIdArraySchema(),
@@ -220,7 +231,7 @@ function factSchema(): Record<string, unknown> {
     additionalProperties: false,
     required: ['id', 'statement', 'evidenceRefs', 'confidence'],
     properties: {
-      id: nonEmptyString(),
+      id: safeIdSchema(),
       statement: localizedTextSchema(),
       evidenceRefs: nodeIdArraySchema(),
       confidence: confidenceSchema()

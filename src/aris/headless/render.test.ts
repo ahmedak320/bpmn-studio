@@ -24,7 +24,7 @@ const sha256Hex = (input: string | Uint8Array): string =>
  * matching, intended cause is a regression, not a snapshot to blindly refresh.
  */
 const VALID_CANONICAL_FULL_SVG_SHA256 =
-  '84282bf7573f8a41731559e00233b808fff25bde8cc851e0b6481d61dfcbf8f2'
+  '592daf3d4748adf68597b7f82d0b5319b4b235e9da99de916c42f30dbc7ce34c'
 
 /** Schema-valid, but its projected EEPC has no start/end event — fails the gate. */
 const STRUCTURALLY_INVALID: CanonicalProcessV1 = {
@@ -131,7 +131,7 @@ describe('renderCanonicalProcess — VALID_CANONICAL_FULL', () => {
 
     const expectedInputSha = sha256Hex(canonicalJsonBytes(VALID_CANONICAL_FULL))
 
-    expect(result.svg).toContain('data-epc-engine-version="0.1.0"')
+    expect(result.svg).toContain('data-epc-engine-version="0.2.0"')
     expect(result.svg).toContain('data-epc-schema-version="1"')
     expect(result.svg).toContain('data-epc-projection-version="1"')
     expect(result.svg).toContain(`data-epc-input-sha256="${expectedInputSha}"`)
@@ -139,7 +139,7 @@ describe('renderCanonicalProcess — VALID_CANONICAL_FULL', () => {
     expect(result.svg).not.toContain('data-epc-source-version')
 
     expect(result.metadata).toEqual({
-      engineVersion: '0.1.0',
+      engineVersion: '0.2.0',
       schemaVersion: 1,
       projectionVersion: 1,
       inputSha256: expectedInputSha,

@@ -401,6 +401,59 @@ describe('cross-reference refinement: duplicate-id', () => {
   })
 })
 
+describe('field shape: declared ids must match the safe alphabet', () => {
+  it('accepts the baseline (all declared ids already safe)', () => {
+    expect(parseCanonicalProcess(buildValidProcess()).ok).toBe(true)
+  })
+
+  it('rejects an unsafe identity.id (contains ":")', () => {
+    const process = buildValidProcess()
+    const result = parseCanonicalProcess({
+      ...process,
+      identity: { ...process.identity, id: 'proc:bad' }
+    })
+    expect(result.ok).toBe(false)
+    const issue = result.ok
+      ? undefined
+      : result.issues.find((i) => i.path.join('.') === 'identity.id')
+    expect(issue).toBeDefined()
+  })
+
+  it('rejects unsafe declared node ids (space, slash, colon, hash)', () => {
+    for (const badId of ['n bad', 'n/bad', 'n:bad', 'n#bad']) {
+      const process = buildValidProcess()
+      const mutated = {
+        ...process,
+        nodes: process.nodes.map((node) => (node.id === 'n-end' ? { ...node, id: badId } : node))
+      }
+      expect(parseCanonicalProcess(mutated).ok).toBe(false)
+    }
+  })
+
+  it('rejects an unsafe targetProcessRef (it becomes the m:<ref> draft id)', () => {
+    const process = buildValidProcess()
+    const mutated = {
+      ...process,
+      nodes: [
+        ...process.nodes,
+        {
+          id: 'n-handoff',
+          kind: 'handoff',
+          names: { en: 'Handoff' },
+          targetProcessRef: 'other:proc',
+          confidence: 'high'
+        }
+      ]
+    }
+    const result = parseCanonicalProcess(mutated)
+    expect(result.ok).toBe(false)
+    const issue = result.ok
+      ? undefined
+      : result.issues.find((i) => i.path.join('.') === 'nodes.6.targetProcessRef')
+    expect(issue).toBeDefined()
+  })
+})
+
 describe('cross-reference refinement: dangling-node-reference', () => {
   it('flags a dangling edges[*].targetNodeId', () => {
     const process = buildValidProcess()

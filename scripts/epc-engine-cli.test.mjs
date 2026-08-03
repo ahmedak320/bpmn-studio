@@ -152,7 +152,7 @@ test('validate: a schema-invalid process (unknown top-level key) exits 2 with a 
 // (c) project --out
 // ---------------------------------------------------------------------------
 
-test('project: writes draft.json + model.aml.xml + findings.json + narrative.md and exits 0 on a clean process', (context) => {
+test('project: writes draft.json + model.aml.xml + findings.json + verification.json + narrative.md and exits 0 on a clean process', (context) => {
   const directory = tempDir('project-ok')
   context.after(() => rmSync(directory, { recursive: true, force: true }))
   const inputPath = join(directory, 'input.json')
@@ -173,6 +173,9 @@ test('project: writes draft.json + model.aml.xml + findings.json + narrative.md 
   const narrative = readFileSync(join(outDir, 'narrative.md'), 'utf8')
   assert.match(narrative, /Minimal Process/)
   assert.match(narrative, /عملية بسيطة/)
+  const verification = JSON.parse(readFileSync(join(outDir, 'verification.json'), 'utf8'))
+  assert.equal(verification.schemaVersion, 2)
+  assert.equal(verification.processId, 'proc-minimal')
 })
 
 test('project: writes failure artifacts (incl. model.aml.xml) and exits 1 when the EPC structural gate fails', (context) => {
@@ -198,7 +201,7 @@ test('project: writes failure artifacts (incl. model.aml.xml) and exits 1 when t
 // (d) render --out (+ --version passthrough)
 // ---------------------------------------------------------------------------
 
-test('render: writes process.svg + metadata.json + findings.json + narrative.md, anchored + versioned', (context) => {
+test('render: writes process.svg + metadata.json + findings.json + verification.json + narrative.md, anchored + versioned', (context) => {
   const directory = tempDir('render-ok')
   context.after(() => rmSync(directory, { recursive: true, force: true }))
   const inputPath = join(directory, 'input.json')
@@ -225,9 +228,13 @@ test('render: writes process.svg + metadata.json + findings.json + narrative.md,
 
   const narrative = readFileSync(join(outDir, 'narrative.md'), 'utf8')
   assert.match(narrative, /Minimal Process/)
+
+  const verification = JSON.parse(readFileSync(join(outDir, 'verification.json'), 'utf8'))
+  assert.equal(verification.schemaVersion, 2)
+  assert.equal(verification.processId, 'proc-minimal')
 })
 
-test('render: writes only findings.json (no svg/metadata) and exits 1 when the structural gate fails', (context) => {
+test('render: writes findings.json + verification.json (no svg/metadata) and exits 1 when the structural gate fails', (context) => {
   const directory = tempDir('render-gate')
   context.after(() => rmSync(directory, { recursive: true, force: true }))
   const inputPath = join(directory, 'input.json')
@@ -241,6 +248,8 @@ test('render: writes only findings.json (no svg/metadata) and exits 1 when the s
   assert.ok(!existsSync(join(outDir, 'metadata.json')))
   const findings = JSON.parse(readFileSync(join(outDir, 'findings.json'), 'utf8'))
   assert.equal(findings.ok, false)
+  // verification.json is a parse-level artifact — written even when the structural gate fails.
+  assert.ok(existsSync(join(outDir, 'verification.json')))
 })
 
 // ---------------------------------------------------------------------------

@@ -83,6 +83,8 @@
 
 import { z } from 'zod'
 
+import { CANONICAL_SAFE_ID_PATTERN } from './ids'
+
 // ---------------------------------------------------------------------------
 // Schema version
 // ---------------------------------------------------------------------------
@@ -122,6 +124,24 @@ export type CanonicalConfidence = 'high' | 'medium' | 'low'
 export const CANONICAL_CONFIDENCE_VALUES = ['high', 'medium', 'low'] as const
 
 export const CanonicalConfidenceSchema = z.enum(CANONICAL_CONFIDENCE_VALUES)
+
+/**
+ * A DECLARED canonical id: non-empty and over the safe alphabet `[A-Za-z0-9._-]`
+ * only (`CANONICAL_SAFE_ID_PATTERN`). Enforced HERE at the field level — not only
+ * via the `mintCanonicalId` helper — so a process that declares an unsafe id (one
+ * that could collide when the projection combines ids into its `:`-delimited draft
+ * ids) is rejected at parse time. Reference fields keep the plain `z.string().min(1)`
+ * shape: an unsafe reference cannot resolve to a (now-safe) declared id, so it is
+ * caught as a dangling reference instead.
+ */
+const canonicalIdString = (): z.ZodString =>
+  z
+    .string()
+    .min(1)
+    .regex(
+      CANONICAL_SAFE_ID_PATTERN,
+      'canonical id must match ^[A-Za-z0-9._-]+$ (letters, digits, dot, underscore, hyphen; no ":" or other delimiter)'
+    )
 
 /**
  * Bilingual text carrier. Unlike `ArisAiLocalizedText` (`src/aris/ai/contract.ts`),
@@ -167,7 +187,7 @@ export interface CanonicalIdentity {
 
 export const CanonicalIdentitySchema = z
   .strictObject({
-    id: z.string().min(1),
+    id: canonicalIdString(),
     names: CanonicalTextSchema,
     purpose: CanonicalTextSchema.optional(),
     code: z.string().min(1).optional(),
@@ -206,12 +226,12 @@ export interface CanonicalNode {
 
 export const CanonicalNodeSchema = z
   .strictObject({
-    id: z.string().min(1),
+    id: canonicalIdString(),
     kind: z.enum(CANONICAL_NODE_KINDS),
     names: CanonicalTextSchema,
     description: CanonicalTextSchema.optional(),
     waitDetail: CanonicalTextSchema.optional(),
-    targetProcessRef: z.string().min(1).optional(),
+    targetProcessRef: canonicalIdString().optional(),
     factIds: z.array(z.string().min(1)).optional(),
     confidence: CanonicalConfidenceSchema
   })
@@ -229,7 +249,7 @@ export interface CanonicalDecisionOutcome {
 
 export const CanonicalDecisionOutcomeSchema = z
   .strictObject({
-    id: z.string().min(1),
+    id: canonicalIdString(),
     names: CanonicalTextSchema,
     targetNodeId: z.string().min(1)
   })
@@ -292,7 +312,7 @@ export interface CanonicalDecision {
 
 export const CanonicalDecisionSchema = z
   .strictObject({
-    id: z.string().min(1),
+    id: canonicalIdString(),
     nodeId: z.string().min(1),
     criteria: CanonicalTextSchema.optional(),
     outcomes: z.array(CanonicalDecisionOutcomeSchema).min(2),
@@ -331,7 +351,7 @@ export interface CanonicalEdge {
 
 export const CanonicalEdgeSchema = z
   .strictObject({
-    id: z.string().min(1),
+    id: canonicalIdString(),
     kind: z.enum(CANONICAL_EDGE_KINDS),
     sourceNodeId: z.string().min(1),
     targetNodeId: z.string().min(1),
@@ -357,7 +377,7 @@ export interface CanonicalRole {
 
 export const CanonicalRoleSchema = z
   .strictObject({
-    id: z.string().min(1),
+    id: canonicalIdString(),
     names: CanonicalTextSchema,
     unit: CanonicalTextSchema.optional(),
     nodeIds: z.array(z.string().min(1)),
@@ -381,7 +401,7 @@ export interface CanonicalSystem {
 
 export const CanonicalSystemSchema = z
   .strictObject({
-    id: z.string().min(1),
+    id: canonicalIdString(),
     names: CanonicalTextSchema,
     nodeIds: z.array(z.string().min(1)),
     factIds: z.array(z.string().min(1)).optional(),
@@ -404,7 +424,7 @@ export interface CanonicalInformationObject {
 
 export const CanonicalInformationObjectSchema = z
   .strictObject({
-    id: z.string().min(1),
+    id: canonicalIdString(),
     names: CanonicalTextSchema,
     inputToNodeIds: z.array(z.string().min(1)),
     outputOfNodeIds: z.array(z.string().min(1)),
@@ -432,7 +452,7 @@ export interface CanonicalControl {
 
 export const CanonicalControlSchema = z
   .strictObject({
-    id: z.string().min(1),
+    id: canonicalIdString(),
     names: CanonicalTextSchema,
     kind: z.enum(CANONICAL_CONTROL_KINDS),
     nodeIds: z.array(z.string().min(1)),
@@ -455,7 +475,7 @@ export interface CanonicalFact {
 
 export const CanonicalFactSchema = z
   .strictObject({
-    id: z.string().min(1),
+    id: canonicalIdString(),
     statement: CanonicalTextSchema,
     evidenceRefs: z.array(z.string().min(1)),
     confidence: CanonicalConfidenceSchema
@@ -583,16 +603,14 @@ interface IdOccurrence {
  * label loss. They are checked here alongside the entity ids.
  *
  * Note on `:` in ids: the projection embeds ids verbatim into `:`-delimited
- * draft logicalIds (`xo:<decisionId>:<outcomeId>`, `re:<src>:<tgt>`, …). This
- * uniqueness check treats ids as opaque strings and does NOT constrain their
- * character set, so an id that itself contains a `:` could in principle make
- * two different (decisionId, outcomeId) pairs produce the same draft id. Folding
- * a full id-charset constraint into this contract is intentionally still out of
- * scope (it would reject historical data minted before the rule); instead, the
- * safety guarantee lives at the MINT site — every adapter that fabricates
- * canonical ids should mint them with `mintCanonicalId` / validate them with
- * `isSafeCanonicalId` (`./ids`, the `[A-Za-z0-9._-]` alphabet, no `:`) so the
- * derived draft ids stay unambiguous.
+ * draft logicalIds (`xo:<decisionId>:<outcomeId>`, `re:<src>:<tgt>`, …). Every
+ * DECLARED id is now constrained at the field level to the safe alphabet
+ * `[A-Za-z0-9._-]` (no `:`) via `canonicalIdString()` above, so two different
+ * (decisionId, outcomeId) pairs can never collapse onto the same draft id and a
+ * process that declares an unsafe id is rejected at parse time — this uniqueness
+ * check therefore operates over ids already known to be delimiter-free. Adapters
+ * that fabricate ids should mint them with `mintCanonicalId` (`./ids`) so they
+ * satisfy the constraint by construction.
  */
 function allIdOccurrences(process: CanonicalProcessV1Shape): readonly IdOccurrence[] {
   const entityArraysByKey: Record<EntityArrayKey, readonly { readonly id: string }[]> = {
