@@ -366,6 +366,39 @@ describe('cross-reference refinement: duplicate-id', () => {
     const duplicateIssues = result.issues.filter((issue) => issue.code === 'duplicate-id')
     expect(duplicateIssues).toHaveLength(2)
   })
+
+  it('flags two decision outcomes that share an id (outcome ids are in the namespace)', () => {
+    const process = buildValidProcess()
+    const mutated = {
+      ...process,
+      decisions: process.decisions.map((decision) => ({
+        ...decision,
+        outcomes: decision.outcomes.map((outcome) => ({ ...outcome, id: 'o-same' }))
+      }))
+    }
+    const result = parseCanonicalProcess(mutated)
+    expect(result.ok).toBe(false)
+    const issue = firstIssue(result, 'duplicate-id')
+    // The SECOND occurrence is reported, at the outcome's own id path.
+    expect(issue?.path).toEqual(['decisions', 0, 'outcomes', 1, 'id'])
+  })
+
+  it('flags an outcome id that collides with a top-level entity id', () => {
+    const process = buildValidProcess()
+    const mutated = {
+      ...process,
+      decisions: process.decisions.map((decision) => ({
+        ...decision,
+        outcomes: decision.outcomes.map((outcome, index) =>
+          index === 0 ? { ...outcome, id: process.nodes[0].id } : outcome
+        )
+      }))
+    }
+    const result = parseCanonicalProcess(mutated)
+    expect(result.ok).toBe(false)
+    const issue = firstIssue(result, 'duplicate-id')
+    expect(issue?.path).toEqual(['decisions', 0, 'outcomes', 0, 'id'])
+  })
 })
 
 describe('cross-reference refinement: dangling-node-reference', () => {
@@ -633,6 +666,50 @@ describe('cross-reference refinement: decision-node-sequence-edge', () => {
           kind: 'data-flow',
           sourceNodeId: 'n-decide',
           targetNodeId: 'n-approved',
+          confidence: 'low'
+        }
+      ]
+    }
+    const result = parseCanonicalProcess(mutated)
+    expect(result.ok).toBe(true)
+  })
+})
+
+describe('cross-reference refinement: decision-node-conditional-edge', () => {
+  it('flags a conditional edge out of a decision node (branching must use outcomes)', () => {
+    const process = buildValidProcess()
+    const mutated: CanonicalProcessV1 = {
+      ...process,
+      edges: [
+        ...process.edges,
+        {
+          id: 'e-bad',
+          kind: 'conditional',
+          sourceNodeId: 'n-decide',
+          targetNodeId: 'n-approved',
+          condition: { en: 'if approved' },
+          confidence: 'low'
+        }
+      ]
+    }
+    const result = parseCanonicalProcess(mutated)
+    expect(result.ok).toBe(false)
+    const issue = firstIssue(result, 'decision-node-conditional-edge')
+    expect(issue?.path).toEqual(['edges', process.edges.length, 'kind'])
+  })
+
+  it('does not flag a conditional edge out of a non-decision node', () => {
+    const process = buildValidProcess()
+    const mutated: CanonicalProcessV1 = {
+      ...process,
+      edges: [
+        ...process.edges,
+        {
+          id: 'e-cond',
+          kind: 'conditional',
+          sourceNodeId: 'n-approved',
+          targetNodeId: 'n-end',
+          condition: { en: 'if ready' },
           confidence: 'low'
         }
       ]

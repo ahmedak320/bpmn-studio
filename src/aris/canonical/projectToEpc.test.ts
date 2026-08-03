@@ -6,6 +6,8 @@ import { canonicalJsonText } from '../packages/canonicalJson'
 import { buildAmlFromArisAiDraft } from '../shell/arisAiCreate'
 import type { CanonicalProcessV1 } from './contract'
 import {
+  VALID_CANONICAL_CONDITIONAL_EDGE,
+  VALID_CANONICAL_EXCEPTION_CONTINUATION,
   VALID_CANONICAL_FULL,
   VALID_CANONICAL_MINIMAL,
   VALID_CANONICAL_MISSING_ROLE,
@@ -355,6 +357,50 @@ describe('alternation completion', () => {
     expect(fillerCount(full().draft.objects)).toBe(3)
     // MINIMAL is event -> function -> event: already alternating, no filler.
     expect(fillerCount(projectCanonicalToDraft(VALID_CANONICAL_MINIMAL).draft.objects)).toBe(0)
+  })
+})
+
+describe('conditional edge (F2) — non-decision source carries its condition', () => {
+  it('carries the condition text onto the projected relation names (survives into the draft)', () => {
+    const { draft } = projectCanonicalToDraft(VALID_CANONICAL_CONDITIONAL_EDGE)
+    const condition = rel(draft.relations, 'e:e-cond')
+    expect(condition.names).toEqual({
+      en: 'If applicant is eligible',
+      ar: 'إذا كان المتقدم مؤهلاً'
+    })
+    // A handoff-kind EDGE is a plain control-flow relation (func -> event here).
+    const handoff = rel(draft.relations, 'e:e-handoff')
+    expect(handoff.sourceLogicalId).toBe('n:n-task')
+    expect(handoff.targetLogicalId).toBe('n:n-end')
+    // The projected draft is still fully valid.
+    expect(validateArisAiDraft(draft).ok).toBe(true)
+  })
+
+  it('is a byte-stable projection across two runs (determinism holds with the label)', () => {
+    const a = canonicalJsonText(projectCanonicalToDraft(VALID_CANONICAL_CONDITIONAL_EDGE).draft)
+    const b = canonicalJsonText(projectCanonicalToDraft(VALID_CANONICAL_CONDITIONAL_EDGE).draft)
+    expect(a).toBe(b)
+  })
+})
+
+describe('exception continuation (F1) — event/wait feeds it + normal branch to an activity', () => {
+  it('shields an OT_EVT (wait) feeding the exception XOR with a filler function', () => {
+    const { draft } = projectCanonicalToDraft(VALID_CANONICAL_EXCEPTION_CONTINUATION)
+    // e-3 is n-wait (OT_EVT) -> n-exc: the direct EVT->XOR relation is spliced.
+    expect(draft.relations.some((r) => r.logicalId === 'e:e-3')).toBe(false)
+    const filler = obj(draft.objects, 'ff:e-3')
+    expect(filler.objectType).toBe('OT_FUNC')
+    expect(rel(draft.relations, 're:n:n-wait:ff:e-3').sourceLogicalId).toBe('n:n-wait')
+    expect(rel(draft.relations, 're:ff:e-3:xe:n-exc').targetLogicalId).toBe('xe:n-exc')
+  })
+
+  it('labels the exception XOR normal branch (to an activity) with the target names', () => {
+    const { draft } = projectCanonicalToDraft(VALID_CANONICAL_EXCEPTION_CONTINUATION)
+    // e-4 is n-exc -> n-handle (an activity), so the branch relation carries the label.
+    const branch = rel(draft.relations, 'e:e-4')
+    expect(branch.sourceLogicalId).toBe('xe:n-exc')
+    expect(branch.targetLogicalId).toBe('n:n-handle')
+    expect(branch.names).toEqual({ en: 'Handle timeout', ar: 'معالجة انتهاء المهلة' })
   })
 })
 

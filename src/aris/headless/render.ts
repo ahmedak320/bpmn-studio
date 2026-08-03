@@ -11,7 +11,7 @@
  * versioned metadata, and captures byte-stable standalone SVG markup.
  *
  * Determinism (a first-class requirement — see Global Constraints): no
- * `Date.now`/`Math.random`; bounds are pure model-space math
+ * clock or randomness; bounds are pure model-space math
  * (`arisContentBounds`), the AML/layout/anchor steps are deterministic, and
  * `sourceVersionId` is an explicit caller input. The same process + same engine
  * version therefore yields a byte-identical `svg` string across runs (pinned by

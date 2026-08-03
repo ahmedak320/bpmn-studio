@@ -3,20 +3,27 @@ import { describe, expect, it } from 'vitest'
 import { canonicalJsonText } from '../packages/canonicalJson'
 import { parseCanonicalProcess, type CanonicalProcessV1 } from './contract'
 import {
+  INVALID_CANONICAL_CONDITIONAL_FROM_DECISION,
   INVALID_CANONICAL_CONDITIONAL_WITHOUT_CONDITION,
   INVALID_CANONICAL_DANGLING_EDGE_TARGET,
   INVALID_CANONICAL_DANGLING_FACT_ID,
   INVALID_CANONICAL_DANGLING_UNKNOWN_TARGET,
   INVALID_CANONICAL_DECISION_SINGLE_OUTCOME,
   INVALID_CANONICAL_DUPLICATE_ID,
+  INVALID_CANONICAL_DUPLICATE_OUTCOME_ID,
   INVALID_CANONICAL_EMPTY_NAMES,
   INVALID_CANONICAL_MISSING_CONFIDENCE,
   INVALID_CANONICAL_SEQUENCE_FROM_DECISION,
   INVALID_CANONICAL_UNKNOWN_KEY,
+  VALID_CANONICAL_CONDITIONAL_EDGE,
+  VALID_CANONICAL_DATA_FLOW_EDGE,
+  VALID_CANONICAL_EMPTY,
+  VALID_CANONICAL_EXCEPTION_CONTINUATION,
   VALID_CANONICAL_FULL,
   VALID_CANONICAL_MINIMAL,
   VALID_CANONICAL_MISSING_ROLE,
-  VALID_CANONICAL_RETURN_PATH
+  VALID_CANONICAL_RETURN_PATH,
+  VALID_CANONICAL_STRAY_EXCEPTION_ROUTE
 } from './fixtures'
 
 // ---------------------------------------------------------------------------
@@ -93,7 +100,18 @@ const VALID_FIXTURE_CASES: ReadonlyArray<{
   { label: 'VALID_CANONICAL_MINIMAL', fixture: VALID_CANONICAL_MINIMAL },
   { label: 'VALID_CANONICAL_FULL', fixture: VALID_CANONICAL_FULL },
   { label: 'VALID_CANONICAL_RETURN_PATH', fixture: VALID_CANONICAL_RETURN_PATH },
-  { label: 'VALID_CANONICAL_MISSING_ROLE', fixture: VALID_CANONICAL_MISSING_ROLE }
+  { label: 'VALID_CANONICAL_MISSING_ROLE', fixture: VALID_CANONICAL_MISSING_ROLE },
+  { label: 'VALID_CANONICAL_CONDITIONAL_EDGE', fixture: VALID_CANONICAL_CONDITIONAL_EDGE },
+  { label: 'VALID_CANONICAL_DATA_FLOW_EDGE', fixture: VALID_CANONICAL_DATA_FLOW_EDGE },
+  {
+    label: 'VALID_CANONICAL_STRAY_EXCEPTION_ROUTE',
+    fixture: VALID_CANONICAL_STRAY_EXCEPTION_ROUTE
+  },
+  {
+    label: 'VALID_CANONICAL_EXCEPTION_CONTINUATION',
+    fixture: VALID_CANONICAL_EXCEPTION_CONTINUATION
+  },
+  { label: 'VALID_CANONICAL_EMPTY', fixture: VALID_CANONICAL_EMPTY }
 ]
 
 describe('valid canonical fixtures parse ok', () => {
@@ -357,12 +375,24 @@ const INVALID_FIXTURE_CASES: ReadonlyArray<{
     fixture: INVALID_CANONICAL_DANGLING_UNKNOWN_TARGET,
     expectedCode: 'dangling-unknown-target',
     expectedPath: ['unknowns', 0, 'targetId']
+  },
+  {
+    label: 'INVALID_CANONICAL_CONDITIONAL_FROM_DECISION',
+    fixture: INVALID_CANONICAL_CONDITIONAL_FROM_DECISION,
+    expectedCode: 'decision-node-conditional-edge',
+    expectedPath: ['edges', 0, 'kind']
+  },
+  {
+    label: 'INVALID_CANONICAL_DUPLICATE_OUTCOME_ID',
+    fixture: INVALID_CANONICAL_DUPLICATE_OUTCOME_ID,
+    expectedCode: 'duplicate-id',
+    expectedPath: ['decisions', 0, 'outcomes', 1, 'id']
   }
 ]
 
 describe('invalid canonical fixtures fail for their one intended reason', () => {
-  it('covers exactly 10 intent-labeled invalid fixtures', () => {
-    expect(INVALID_FIXTURE_CASES).toHaveLength(10)
+  it('covers exactly 12 intent-labeled invalid fixtures', () => {
+    expect(INVALID_FIXTURE_CASES).toHaveLength(12)
   })
 
   it.each(INVALID_FIXTURE_CASES)(

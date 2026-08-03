@@ -10,7 +10,7 @@
  * `./projectToEpc` is IMPORTED, never re-implemented), roles, systems,
  * information objects, decisions, unknowns, an evidence summary with
  * reverse-references, a confidence rollup, and approvals. Pure and
- * deterministic: no `Date.now`/`Math.random`, every array explicitly sorted
+ * deterministic: no clock or randomness, every array explicitly sorted
  * (see "Ordering" below), so two builds of the same input are
  * `canonicalJsonText`-identical (see `verificationPackage.test.ts`).
  *

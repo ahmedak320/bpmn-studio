@@ -654,6 +654,341 @@ export const VALID_CANONICAL_MISSING_ROLE: CanonicalProcessV1 = deepFreeze({
 })
 
 // ---------------------------------------------------------------------------
+// VALID_CANONICAL_CONDITIONAL_EDGE — a non-decision conditional edge + a
+// handoff edge, both exercised through the projection
+// ---------------------------------------------------------------------------
+
+/**
+ * A `conditional` edge whose source is NOT a decision node (legal: only
+ * decision-sourced conditionals are rejected) — its REQUIRED `condition` text
+ * must survive onto the projected relation's `names` (draft → AML → SVG). Also
+ * carries a `handoff`-kind EDGE, so both edge kinds are projected here (no prior
+ * fixture exercised either edge kind through the projection).
+ */
+export const VALID_CANONICAL_CONDITIONAL_EDGE: CanonicalProcessV1 = deepFreeze({
+  version: 1,
+  identity: {
+    id: 'proc-conditional-edge',
+    names: { en: 'Eligibility gate', ar: 'بوابة الأهلية' },
+    confidence: 'high'
+  },
+  nodes: [
+    { id: 'n-start', kind: 'event', names: { en: 'Start', ar: 'بداية' }, confidence: 'high' },
+    {
+      id: 'n-task',
+      kind: 'activity',
+      names: { en: 'Process application', ar: 'معالجة الطلب' },
+      confidence: 'high'
+    },
+    { id: 'n-end', kind: 'event', names: { en: 'End', ar: 'نهاية' }, confidence: 'high' }
+  ],
+  decisions: [],
+  edges: [
+    {
+      id: 'e-cond',
+      kind: 'conditional',
+      sourceNodeId: 'n-start',
+      targetNodeId: 'n-task',
+      condition: { en: 'If applicant is eligible', ar: 'إذا كان المتقدم مؤهلاً' },
+      confidence: 'high'
+    },
+    {
+      id: 'e-handoff',
+      kind: 'handoff',
+      sourceNodeId: 'n-task',
+      targetNodeId: 'n-end',
+      confidence: 'medium'
+    }
+  ],
+  roles: [],
+  systems: [],
+  informationObjects: [],
+  controls: [],
+  facts: [],
+  unknowns: []
+})
+
+// ---------------------------------------------------------------------------
+// VALID_CANONICAL_DATA_FLOW_EDGE — a data-flow edge (surfaced, not dropped)
+// ---------------------------------------------------------------------------
+
+/**
+ * A schema-valid process carrying a `data-flow` EDGE (with its own `factIds`).
+ * The projection realizes information flow through `informationObjects`, not the
+ * edge, so the edge yields no draft relation — it must be SURFACED as a
+ * warning-severity projection finding, never silently dropped.
+ */
+export const VALID_CANONICAL_DATA_FLOW_EDGE: CanonicalProcessV1 = deepFreeze({
+  version: 1,
+  identity: {
+    id: 'proc-data-flow-edge',
+    names: { en: 'Data flow edge process', ar: 'عملية حافة تدفق البيانات' },
+    confidence: 'high'
+  },
+  nodes: [
+    { id: 'n-start', kind: 'event', names: { en: 'Start', ar: 'بداية' }, confidence: 'high' },
+    {
+      id: 'n-task',
+      kind: 'activity',
+      names: { en: 'Record data', ar: 'تسجيل البيانات' },
+      confidence: 'high'
+    },
+    { id: 'n-end', kind: 'event', names: { en: 'End', ar: 'نهاية' }, confidence: 'high' }
+  ],
+  decisions: [],
+  edges: [
+    {
+      id: 'e-1',
+      kind: 'sequence',
+      sourceNodeId: 'n-start',
+      targetNodeId: 'n-task',
+      confidence: 'high'
+    },
+    {
+      id: 'e-2',
+      kind: 'sequence',
+      sourceNodeId: 'n-task',
+      targetNodeId: 'n-end',
+      confidence: 'high'
+    },
+    {
+      // Not a control-flow relation in the projection; carries evidence that
+      // would otherwise vanish silently.
+      id: 'e-data',
+      kind: 'data-flow',
+      sourceNodeId: 'n-task',
+      targetNodeId: 'n-end',
+      factIds: ['f-1'],
+      confidence: 'medium'
+    }
+  ],
+  roles: [],
+  systems: [],
+  informationObjects: [],
+  controls: [],
+  facts: [
+    {
+      id: 'f-1',
+      statement: { en: 'The record is transmitted downstream.', ar: 'يُرسل السجل إلى المصب.' },
+      evidenceRefs: ['ev-1'],
+      confidence: 'medium'
+    }
+  ],
+  unknowns: []
+})
+
+// ---------------------------------------------------------------------------
+// VALID_CANONICAL_STRAY_EXCEPTION_ROUTE — exception-route from a non-exception
+// source (control flow that must not vanish silently)
+// ---------------------------------------------------------------------------
+
+/**
+ * An `exception-route` EDGE whose source is a plain `activity`, not an
+ * `exception` node. The projection only realizes exception-route edges out of
+ * exception nodes, so this one yields no draft relation — its control flow would
+ * otherwise vanish (leaving the target a mere orphan). It must be SURFACED as a
+ * warning-severity projection finding identifying the edge.
+ */
+export const VALID_CANONICAL_STRAY_EXCEPTION_ROUTE: CanonicalProcessV1 = deepFreeze({
+  version: 1,
+  identity: {
+    id: 'proc-stray-exception-route',
+    names: { en: 'Stray exception route', ar: 'مسار استثناء شارد' },
+    confidence: 'high'
+  },
+  nodes: [
+    { id: 'n-start', kind: 'event', names: { en: 'Start', ar: 'بداية' }, confidence: 'high' },
+    {
+      id: 'n-task',
+      kind: 'activity',
+      names: { en: 'Attempt operation', ar: 'محاولة العملية' },
+      confidence: 'high'
+    },
+    { id: 'n-end', kind: 'event', names: { en: 'End', ar: 'نهاية' }, confidence: 'high' },
+    {
+      id: 'n-alt',
+      kind: 'event',
+      names: { en: 'Aborted', ar: 'أُجهضت' },
+      confidence: 'medium'
+    }
+  ],
+  decisions: [],
+  edges: [
+    {
+      id: 'e-1',
+      kind: 'sequence',
+      sourceNodeId: 'n-start',
+      targetNodeId: 'n-task',
+      confidence: 'high'
+    },
+    {
+      id: 'e-2',
+      kind: 'sequence',
+      sourceNodeId: 'n-task',
+      targetNodeId: 'n-end',
+      confidence: 'high'
+    },
+    {
+      // Source n-task is an activity, NOT an exception node -> not projected.
+      id: 'e-stray',
+      kind: 'exception-route',
+      sourceNodeId: 'n-task',
+      targetNodeId: 'n-alt',
+      confidence: 'low'
+    }
+  ],
+  roles: [],
+  systems: [],
+  informationObjects: [],
+  controls: [],
+  facts: [],
+  unknowns: []
+})
+
+// ---------------------------------------------------------------------------
+// VALID_CANONICAL_EXCEPTION_CONTINUATION — exception with a normal continuation
+// to an activity, AND a wait (an OT_EVT) feeding it
+// ---------------------------------------------------------------------------
+
+/**
+ * The two F1 exception shapes in one process: (a) a `wait` node (projects to an
+ * OT_EVT) sequences straight into the exception node, so an OT_EVT would feed
+ * the exception XOR split (`epc.event.decisionViolation`) without a shielding
+ * filler function; (b) the exception's normal continuation goes to an
+ * `activity` (an OT_FUNC, not a named event), so the XOR's normal branch would
+ * be unlabelled (`epc.rule.unlabeledDecisionBranch`) without a branch label.
+ * After the F1 fixes this projects `ok:true`.
+ */
+export const VALID_CANONICAL_EXCEPTION_CONTINUATION: CanonicalProcessV1 = deepFreeze({
+  version: 1,
+  identity: {
+    id: 'proc-exception-continuation',
+    names: { en: 'Exception continuation', ar: 'استمرار الاستثناء' },
+    confidence: 'high'
+  },
+  nodes: [
+    { id: 'n-start', kind: 'event', names: { en: 'Start', ar: 'بداية' }, confidence: 'high' },
+    {
+      id: 'n-check',
+      kind: 'activity',
+      names: { en: 'Check status', ar: 'فحص الحالة' },
+      confidence: 'high'
+    },
+    {
+      id: 'n-wait',
+      kind: 'wait',
+      names: { en: 'Await response', ar: 'انتظار الرد' },
+      confidence: 'medium'
+    },
+    {
+      id: 'n-exc',
+      kind: 'exception',
+      names: { en: 'Timeout exception', ar: 'استثناء انتهاء المهلة' },
+      confidence: 'high'
+    },
+    {
+      id: 'n-handle',
+      kind: 'activity',
+      names: { en: 'Handle timeout', ar: 'معالجة انتهاء المهلة' },
+      confidence: 'high'
+    },
+    {
+      id: 'n-done',
+      kind: 'event',
+      names: { en: 'Recovered', ar: 'تم التعافي' },
+      confidence: 'high'
+    },
+    {
+      id: 'n-rejected',
+      kind: 'event',
+      names: { en: 'Escalated', ar: 'تم التصعيد' },
+      confidence: 'medium'
+    }
+  ],
+  decisions: [],
+  edges: [
+    {
+      id: 'e-1',
+      kind: 'sequence',
+      sourceNodeId: 'n-start',
+      targetNodeId: 'n-check',
+      confidence: 'high'
+    },
+    {
+      id: 'e-2',
+      kind: 'sequence',
+      sourceNodeId: 'n-check',
+      targetNodeId: 'n-wait',
+      confidence: 'high'
+    },
+    {
+      // OT_EVT (wait) -> exception XOR split: needs the F1(b) shielding filler.
+      id: 'e-3',
+      kind: 'sequence',
+      sourceNodeId: 'n-wait',
+      targetNodeId: 'n-exc',
+      confidence: 'high'
+    },
+    {
+      // exception normal branch to an activity: needs the F1(a) branch label.
+      id: 'e-4',
+      kind: 'sequence',
+      sourceNodeId: 'n-exc',
+      targetNodeId: 'n-handle',
+      confidence: 'high'
+    },
+    {
+      id: 'e-5',
+      kind: 'sequence',
+      sourceNodeId: 'n-handle',
+      targetNodeId: 'n-done',
+      confidence: 'high'
+    },
+    {
+      id: 'e-6',
+      kind: 'exception-route',
+      sourceNodeId: 'n-exc',
+      targetNodeId: 'n-rejected',
+      confidence: 'high'
+    }
+  ],
+  roles: [],
+  systems: [],
+  informationObjects: [],
+  controls: [],
+  facts: [],
+  unknowns: []
+})
+
+// ---------------------------------------------------------------------------
+// VALID_CANONICAL_EMPTY — a contract-legal but flow-less process
+// ---------------------------------------------------------------------------
+
+/**
+ * The minimal contract-legal process: a valid identity and every entity array
+ * empty. It parses `ok:true`, but its PRIMARY projected model has no start/end
+ * event, so the structural gate must report `missingStart`/`missingEnd` and be
+ * `ok:false` (rather than bypassing the gate and rendering a blank diagram).
+ */
+export const VALID_CANONICAL_EMPTY: CanonicalProcessV1 = deepFreeze({
+  version: 1,
+  identity: {
+    id: 'proc-empty',
+    names: { en: 'Empty process', ar: 'عملية فارغة' },
+    confidence: 'low'
+  },
+  nodes: [],
+  decisions: [],
+  edges: [],
+  roles: [],
+  systems: [],
+  informationObjects: [],
+  controls: [],
+  facts: [],
+  unknowns: []
+})
+
+// ---------------------------------------------------------------------------
 // INVALID_CANONICAL_* — each broken in EXACTLY one intended way
 // ---------------------------------------------------------------------------
 //
@@ -936,4 +1271,85 @@ export const INVALID_CANONICAL_DANGLING_UNKNOWN_TARGET: unknown = deepFreeze({
       message: { en: 'Refers to nothing.' }
     }
   ]
+})
+
+/** (11) `conditional` edge out of a decision node -> `decision-node-conditional-edge`. */
+export const INVALID_CANONICAL_CONDITIONAL_FROM_DECISION: unknown = deepFreeze({
+  version: 1,
+  identity: {
+    id: 'proc-invalid-conditional-from-decision',
+    names: { en: 'Conditional from decision fixture' },
+    confidence: 'high'
+  },
+  nodes: [
+    { id: 'n-decide', kind: 'decision', names: { en: 'Decide' }, confidence: 'high' },
+    { id: 'n-a', kind: 'event', names: { en: 'A' }, confidence: 'high' },
+    { id: 'n-b', kind: 'event', names: { en: 'B' }, confidence: 'high' },
+    { id: 'n-c', kind: 'event', names: { en: 'C' }, confidence: 'high' }
+  ],
+  decisions: [
+    {
+      id: 'd-1',
+      nodeId: 'n-decide',
+      outcomes: [
+        { id: 'o-a', names: { en: 'A' }, targetNodeId: 'n-a' },
+        { id: 'o-b', names: { en: 'B' }, targetNodeId: 'n-b' }
+      ],
+      confidence: 'high'
+    }
+  ],
+  edges: [
+    // The one intended defect: a `conditional` edge sourced from the decision
+    // node itself (with a valid `condition`, so edge-condition-required does not
+    // also fire), instead of routing only through decisions[].outcomes.
+    {
+      id: 'e-1',
+      kind: 'conditional',
+      sourceNodeId: 'n-decide',
+      targetNodeId: 'n-c',
+      condition: { en: 'if some side condition' },
+      confidence: 'high'
+    }
+  ],
+  roles: [],
+  systems: [],
+  informationObjects: [],
+  controls: [],
+  facts: [],
+  unknowns: []
+})
+
+/** (12) Two decision outcomes sharing an id -> `duplicate-id`. */
+export const INVALID_CANONICAL_DUPLICATE_OUTCOME_ID: unknown = deepFreeze({
+  version: 1,
+  identity: {
+    id: 'proc-invalid-duplicate-outcome-id',
+    names: { en: 'Duplicate outcome id fixture' },
+    confidence: 'high'
+  },
+  nodes: [
+    { id: 'n-decide', kind: 'decision', names: { en: 'Decide' }, confidence: 'high' },
+    { id: 'n-a', kind: 'event', names: { en: 'A' }, confidence: 'high' },
+    { id: 'n-b', kind: 'event', names: { en: 'B' }, confidence: 'high' }
+  ],
+  decisions: [
+    {
+      id: 'd-1',
+      nodeId: 'n-decide',
+      outcomes: [
+        // The one intended defect: both outcomes reuse the id "o-dup"; without
+        // the fix they parse ok and then collapse to one xo: event in projection.
+        { id: 'o-dup', names: { en: 'A' }, targetNodeId: 'n-a' },
+        { id: 'o-dup', names: { en: 'B' }, targetNodeId: 'n-b' }
+      ],
+      confidence: 'high'
+    }
+  ],
+  edges: [],
+  roles: [],
+  systems: [],
+  informationObjects: [],
+  controls: [],
+  facts: [],
+  unknowns: []
 })

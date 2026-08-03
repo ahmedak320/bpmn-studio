@@ -4,7 +4,7 @@
  *
  * `EPC_ENGINE_VERSION` is the single source of truth for the
  * `data-epc-engine-version` SVG-root attribute and `metadata.engineVersion`.
- * It is a plain constant (no `Date.now`/`Math.random`) so the same input +
+ * It is a plain constant (no clock or randomness) so the same input +
  * same engine version yields byte-identical output.
  *
  * The value tracks `packages/epc-engine/package.json`'s `version`. That

@@ -2,12 +2,21 @@ import { describe, expect, it } from 'vitest'
 
 import { canonicalJsonBytes, canonicalJsonText } from '../packages/canonicalJson'
 import { ar, en } from '../../i18n/dictionaries'
-import { VALID_CANONICAL_FULL, VALID_CANONICAL_MINIMAL } from './fixtures'
+import {
+  VALID_CANONICAL_DATA_FLOW_EDGE,
+  VALID_CANONICAL_EMPTY,
+  VALID_CANONICAL_EXCEPTION_CONTINUATION,
+  VALID_CANONICAL_FULL,
+  VALID_CANONICAL_MINIMAL,
+  VALID_CANONICAL_STRAY_EXCEPTION_ROUTE
+} from './fixtures'
 import {
   EPC_FINDING_MESSAGES_AR,
   EPC_FINDING_MESSAGES_EN,
   EPC_FINDING_MESSAGE_KEYS,
+  PROJECTION_UNPROJECTED_EDGE_KEY,
   epcFindingMessages,
+  epcProjectionMessages,
   interpolateFindingMessage
 } from './findingMessages'
 import { validateProjectedDraft, type EpcProjectionFindings } from './findings'
@@ -92,6 +101,79 @@ describe('validateProjectedDraft — happy path', () => {
     const a = await validateProjectedDraft(result, VALID_CANONICAL_MINIMAL)
     const b = await validateProjectedDraft(result, VALID_CANONICAL_MINIMAL)
     expect(canonicalJsonText(a)).toBe(canonicalJsonText(b))
+  })
+})
+
+describe('validateProjectedDraft — flow-less primary model is NOT bypassed (F4)', () => {
+  it('reports missingStart/missingEnd and ok:false for a contract-legal empty process', async () => {
+    const result = projectCanonicalToDraft(VALID_CANONICAL_EMPTY)
+    const findings = await validateProjectedDraft(result, VALID_CANONICAL_EMPTY)
+    expect(findings.ok).toBe(false)
+    const ruleIds = findings.findings.map((finding) => finding.ruleId)
+    expect(ruleIds).toContain('epc.startEnd.missingStart')
+    expect(ruleIds).toContain('epc.startEnd.missingEnd')
+  })
+})
+
+describe('validateProjectedDraft — no canonical edge is silently dropped (F3)', () => {
+  it('surfaces a data-flow edge as a warning identifying the canonical edge', async () => {
+    const result = projectCanonicalToDraft(VALID_CANONICAL_DATA_FLOW_EDGE)
+    const findings = await validateProjectedDraft(result, VALID_CANONICAL_DATA_FLOW_EDGE)
+    // Warning-only: control flow is valid, so the artifact stays ok:true.
+    expect(findings.ok).toBe(true)
+    const dropped = findings.findings.find(
+      (finding) => finding.messageKey === PROJECTION_UNPROJECTED_EDGE_KEY
+    )
+    expect(dropped).toBeDefined()
+    expect(dropped?.severity).toBe('warning')
+    expect(dropped?.canonicalEdgeIds).toEqual(['e-data'])
+    expect(dropped?.messageEn.length).toBeGreaterThan(0)
+    expect(dropped?.messageAr.length).toBeGreaterThan(0)
+  })
+
+  it('surfaces an exception-route from a non-exception source as a warning', async () => {
+    const result = projectCanonicalToDraft(VALID_CANONICAL_STRAY_EXCEPTION_ROUTE)
+    const findings = await validateProjectedDraft(result, VALID_CANONICAL_STRAY_EXCEPTION_ROUTE)
+    const dropped = findings.findings.find(
+      (finding) =>
+        finding.messageKey === PROJECTION_UNPROJECTED_EDGE_KEY &&
+        finding.canonicalEdgeIds.includes('e-stray')
+    )
+    expect(dropped).toBeDefined()
+    expect(dropped?.severity).toBe('warning')
+  })
+
+  it('emits no unprojected-edge finding when every edge projects (FULL)', async () => {
+    const result = projectCanonicalToDraft(VALID_CANONICAL_FULL)
+    const findings = await validateProjectedDraft(result, VALID_CANONICAL_FULL)
+    expect(
+      findings.findings.some((finding) => finding.messageKey === PROJECTION_UNPROJECTED_EDGE_KEY)
+    ).toBe(false)
+  })
+})
+
+describe('validateProjectedDraft — exception continuation (F1) projects ok:true', () => {
+  it('has no decisionViolation and no unlabeledDecisionBranch after the F1 fixes', async () => {
+    const result = projectCanonicalToDraft(VALID_CANONICAL_EXCEPTION_CONTINUATION)
+    const findings = await validateProjectedDraft(result, VALID_CANONICAL_EXCEPTION_CONTINUATION)
+    expect(findings.ok).toBe(true)
+    const ruleIds = findings.findings.map((finding) => finding.ruleId)
+    expect(ruleIds).not.toContain('epc.event.decisionViolation')
+    expect(ruleIds).not.toContain('epc.rule.unlabeledDecisionBranch')
+  })
+})
+
+describe('epcProjectionMessages — projection-level key resolution', () => {
+  it('resolves the unprojected-edge key to interpolated EN + AR', () => {
+    const messages = epcProjectionMessages(PROJECTION_UNPROJECTED_EDGE_KEY, {
+      edgeId: 'e-data',
+      edgeKind: 'data-flow'
+    })
+    expect(messages.en).toContain('e-data')
+    expect(messages.en).toContain('data-flow')
+    expect(messages.ar).toContain('e-data')
+    // An unknown projection key degrades to the key itself in both locales.
+    expect(epcProjectionMessages('aris.projection.nope').en).toBe('aris.projection.nope')
   })
 })
 

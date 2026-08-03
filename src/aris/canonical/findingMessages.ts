@@ -91,3 +91,46 @@ export function epcFindingMessages(
     ar: ar !== undefined ? interpolateFindingMessage(ar, params) : messageKey
   }
 }
+
+// ---------------------------------------------------------------------------
+// Projection-level findings (`aris.projection.*`)
+// ---------------------------------------------------------------------------
+//
+// These are NOT `validateEpcGraph` rule findings, so they are deliberately kept
+// out of the `EPC_FINDING_MESSAGES_*` tables above (which `findings.test.ts`
+// drift-tests to be EXACTLY the `validateEpcGraph` key set, in both this module
+// and `src/i18n/dictionaries.ts`). Like the existing `aris.projection.draftInvalid`
+// guard key, a projection-level key is engine-internal and self-contained in the
+// findings artifact (read outside the studio i18n runtime), so it lives only
+// here and is NOT registered in `src/i18n/dictionaries.ts`.
+
+/** messageKey for a canonical edge that yielded no draft control-flow relation. */
+export const PROJECTION_UNPROJECTED_EDGE_KEY = 'aris.projection.unprojectedEdge'
+
+const PROJECTION_FINDING_MESSAGES_EN: Readonly<Record<string, string>> = Object.freeze({
+  [PROJECTION_UNPROJECTED_EDGE_KEY]:
+    'Canonical edge “{edgeId}” (kind “{edgeKind}”) produced no control-flow relation in the projected EPC; its declared data is not represented in the diagram.'
+})
+
+const PROJECTION_FINDING_MESSAGES_AR: Readonly<Record<string, string>> = Object.freeze({
+  [PROJECTION_UNPROJECTED_EDGE_KEY]:
+    'لم تُنتج الحافة القانونية «{edgeId}» (من النوع «{edgeKind}») أي علاقة تدفّق تحكّم في مخطط EPC المُسقَط؛ لذا لا تظهر بياناتها المُعلَنة في المخطط.'
+})
+
+/**
+ * Resolve a projection-level (`aris.projection.*`) messageKey to its
+ * interpolated EN + AR strings, using the same `{param}` convention as
+ * `epcFindingMessages`. An unknown key degrades to the key itself in both
+ * locales (never throws, never empty).
+ */
+export function epcProjectionMessages(
+  messageKey: string,
+  params?: Readonly<Record<string, string>>
+): { readonly en: string; readonly ar: string } {
+  const en = PROJECTION_FINDING_MESSAGES_EN[messageKey]
+  const ar = PROJECTION_FINDING_MESSAGES_AR[messageKey]
+  return {
+    en: en !== undefined ? interpolateFindingMessage(en, params) : messageKey,
+    ar: ar !== undefined ? interpolateFindingMessage(ar, params) : messageKey
+  }
+}

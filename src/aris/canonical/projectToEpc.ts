@@ -12,7 +12,7 @@
  * anchors on.
  *
  * Determinism (a first-class requirement — see Global Constraints): every id
- * derives only from canonical ids (never `Date.now`/`Math.random`/random ids),
+ * derives only from canonical ids (no clock or randomness, never a random id),
  * every array is assembled in a fixed order, and `suggestedOrder` is set
  * explicitly from a depth-first spine — so the same input yields a
  * `canonicalJsonText`-identical draft and a byte-identical AML across runs.
@@ -637,21 +637,41 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
 
   // === Phase B: control-flow relations ====================================
   for (const edge of process.edges) {
-    // parallel / exception-route / data-flow are realized elsewhere (or not at
-    // all, for data-flow — carried by informationObjects, not the edge).
+    // parallel is realized as an AND split/merge below; exception-route is the
+    // XOR exception branch handled in the exception pass; data-flow is not a
+    // control-flow relation at all. Every canonical edge that yields no draft
+    // relation is surfaced (never silently dropped) by `validateProjectedDraft`
+    // — see the unprojected-edge finding in `findings.ts`.
     if (edge.kind === 'parallel' || edge.kind === 'exception-route' || edge.kind === 'data-flow') {
       continue
     }
-    // `CanonicalEdge` has no `names` field and `condition` is forbidden on a
-    // `handoff` edge, so there is no name to carry onto the relation (the
-    // expansion table's "handoff edges carry names from the canonical edge if
-    // present" has no source in the contract as it stands).
+    // Carry a branch label onto the relation wherever the contract supplies one,
+    // so it survives into the draft/AML/SVG and labels any XOR split it leaves:
+    //  - a `conditional` edge's REQUIRED `condition` text becomes the relation
+    //    name (otherwise the condition is silently dropped — nothing else reads
+    //    `edge.condition`);
+    //  - a normal branch OUT of an exception node (whose source projects to the
+    //    XOR `xe:`) is labelled with its target's names so it never trips
+    //    `epc.rule.unlabeledDecisionBranch`, mirroring the decision
+    //    belt-and-braces. Applied only when the target does not itself supply
+    //    the label (an `event`/`wait` projects to a NAMED OT_EVT), so an
+    //    already-labelled event branch is left byte-for-byte unchanged.
+    let names: ArisAiLocalizedText | undefined
+    if (edge.kind === 'conditional') {
+      names = localizedText(edge.condition)
+    } else if (exceptionNodeIds.has(edge.sourceNodeId)) {
+      const targetNode = nodeById.get(edge.targetNodeId)
+      if (targetNode !== undefined && targetNode.kind !== 'event' && targetNode.kind !== 'wait') {
+        names = localizedText(targetNode.names)
+      }
+    }
     addFlowRelation({
       logicalId: `e:${edge.id}`,
       cause: edge.id,
       source: representativeObjectId(edge.sourceNodeId),
       target: representativeObjectId(edge.targetNodeId),
-      confidence: edge.confidence
+      confidence: edge.confidence,
+      ...(names && (names.en !== undefined || names.ar !== undefined) ? { names } : {})
     })
   }
 
@@ -995,6 +1015,28 @@ function applyAlternationCompletion(ctx: AlternationContext): void {
     ctx.flowRelations.push(relation)
   }
 
+  // An OT_EVT feeding a *splitting* XOR rule directly (out-degree >= 2) trips
+  // `epc.event.decisionViolation` ("only a rule may decide, never an event") —
+  // it happens when an `event`/`wait` sequences straight into an exception node
+  // (source EVT -> the `xe:` XOR split). Shield it with a filler function: the
+  // EVT->splitting-XOR analogue of the FUNC<->FUNC / EVT<->EVT splices below.
+  // Out-degree is taken over the pre-splice relation set; a splice only ever
+  // rewrites the inbound (source) side of an edge, never a rule's outgoing
+  // count, so the single-pass property still holds.
+  const ruleOutDegree = new Map<string, number>()
+  for (const relation of original) {
+    if (ctx.objectTypeById.get(relation.sourceLogicalId) === OT_RULE) {
+      ruleOutDegree.set(
+        relation.sourceLogicalId,
+        (ruleOutDegree.get(relation.sourceLogicalId) ?? 0) + 1
+      )
+    }
+  }
+  // A splitting XOR is the only decision-making split the projection emits (AND
+  // forks are exempt from the event-decision rule, and OR is never produced).
+  const isSplittingXor = (id: string): boolean =>
+    (ruleOutDegree.get(id) ?? 0) >= 2 && ctx.objectById.get(id)?.symbolType === ST_OPR_XOR_1
+
   for (const relation of original) {
     const sourceType = ctx.objectTypeById.get(relation.sourceLogicalId) ?? ''
     const targetType = ctx.objectTypeById.get(relation.targetLogicalId) ?? ''
@@ -1034,6 +1076,25 @@ function applyAlternationCompletion(ctx: AlternationContext): void {
       continue
     }
 
+    if (
+      sourceType === OT_EVT &&
+      targetType === OT_RULE &&
+      isSplittingXor(relation.targetLogicalId)
+    ) {
+      const fillerId = `ff:${fillerSuffix(relation.logicalId)}`
+      const sourceNames = ctx.objectById.get(relation.sourceLogicalId)?.names ?? {}
+      ctx.addObject({
+        logicalId: fillerId,
+        cause,
+        objectType: OT_FUNC,
+        symbolType: ST_FUNC,
+        names: handleFillerNames(sourceNames),
+        confidence: 'high'
+      })
+      spliceRelation(ctx, relation, fillerId, cause, pushRelation)
+      continue
+    }
+
     pushRelation(relation)
   }
 }
@@ -1067,9 +1128,13 @@ function spliceRelation(
     connectionType: flowConnectionType(fillerType, targetType),
     confidence: relation.confidence
   }
-  // Only unnamed flow relations are ever spliced: the sole named flow relations
-  // the projection emits are the decision rule->outcome edges (RULE->EVT), which
-  // alternation completion never touches — so there is no label to carry here.
+  // Preserve any label the spliced relation carried onto the first segment, so a
+  // `conditional` edge whose endpoints happen to be same-typed (FUNC->FUNC /
+  // EVT->EVT) keeps its `condition` text in the draft rather than losing it to
+  // the splice. Most spliced relations are unnamed (the decision rule->outcome
+  // edges, which are the only other named flow relations, are RULE->EVT and are
+  // never spliced), so this is a no-op for them.
+  if (relation.names !== undefined) first.names = relation.names
 
   ctx.edgeByDraftId[firstId] = cause
   ctx.edgeByDraftId[secondId] = cause

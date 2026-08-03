@@ -35,7 +35,11 @@
  *  - `canonical-text-empty`             — a `CanonicalText` has neither `en` nor `ar`.
  *  - `duplicate-id`                     — an id is reused across the entity arrays
  *                                          (nodes/decisions/edges/roles/systems/
- *                                          informationObjects/controls/facts).
+ *                                          informationObjects/controls/facts) OR across
+ *                                          `decisions[*].outcomes[*].id` — outcome ids share
+ *                                          the same process-wide declared-id namespace (see
+ *                                          `allDeclaredIds`), so two outcomes with the same id
+ *                                          are a duplicate, not a silent merge in projection.
  *  - `dangling-node-reference`          — a node-id-shaped field (edge endpoints,
  *                                          decision.nodeId/outcome.targetNodeId,
  *                                          role/system/control.nodeIds[*],
@@ -62,6 +66,12 @@
  *                                          node as its source (a decision's outgoing
  *                                          control flow must be expressed only
  *                                          through its `decisions[]` outcomes).
+ *  - `decision-node-conditional-edge`   — an edge of kind `'conditional'` has a decision
+ *                                          node as its source. Like the sequence case above,
+ *                                          a decision's branching must be expressed only
+ *                                          through its `decisions[]` outcomes — a conditional
+ *                                          edge out of a decision would bypass the projected
+ *                                          XOR and silently model a second, unlabelled split.
  *
  * `contract.test.ts` exercises every one of these codes individually.
  */
@@ -89,7 +99,8 @@ export const CANONICAL_ISSUE_CODES = [
   'decision-node-kind-mismatch',
   'decision-node-unreferenced',
   'decision-node-multiple-references',
-  'decision-node-sequence-edge'
+  'decision-node-sequence-edge',
+  'decision-node-conditional-edge'
 ] as const
 
 export type CanonicalIssueCode = (typeof CANONICAL_ISSUE_CODES)[number]
@@ -502,13 +513,31 @@ function addCustomIssue(
   })
 }
 
-interface EntityIdOccurrence {
-  readonly key: EntityArrayKey
-  readonly index: number
+interface IdOccurrence {
+  /** The path zod should report the (duplicate) occurrence at. */
+  readonly path: readonly (string | number)[]
+  /** Human-readable location of the occurrence, for the message text. */
+  readonly describe: string
   readonly id: string
 }
 
-function allEntityIdOccurrences(process: CanonicalProcessV1Shape): readonly EntityIdOccurrence[] {
+/**
+ * Every id that participates in the process-wide id-uniqueness namespace: the 8
+ * top-level entity arrays PLUS `decisions[*].outcomes[*].id`. Outcome ids are
+ * in the declared-id universe (`allDeclaredIds`) and become draft object ids in
+ * the projection (`xo:<decisionId>:<outcomeId>`), so a reused outcome id would
+ * otherwise collapse two distinct outcomes onto one draft event — a silent
+ * label loss. They are checked here alongside the entity ids.
+ *
+ * Note on `:` in ids: the projection embeds ids verbatim into `:`-delimited
+ * draft logicalIds (`xo:<decisionId>:<outcomeId>`, `re:<src>:<tgt>`, …). This
+ * uniqueness check treats ids as opaque strings and does NOT constrain their
+ * character set, so an id that itself contains a `:` could in principle make
+ * two different (decisionId, outcomeId) pairs produce the same draft id. A full
+ * id-charset constraint is intentionally out of scope here; callers minting ids
+ * should avoid `:` to keep the derived draft ids unambiguous.
+ */
+function allIdOccurrences(process: CanonicalProcessV1Shape): readonly IdOccurrence[] {
   const entityArraysByKey: Record<EntityArrayKey, readonly { readonly id: string }[]> = {
     nodes: process.nodes,
     decisions: process.decisions,
@@ -519,19 +548,31 @@ function allEntityIdOccurrences(process: CanonicalProcessV1Shape): readonly Enti
     controls: process.controls,
     facts: process.facts
   }
-  const occurrences: EntityIdOccurrence[] = []
+  const occurrences: IdOccurrence[] = []
   for (const key of ENTITY_ARRAY_KEYS) {
     entityArraysByKey[key].forEach((entity, index) =>
-      occurrences.push({ key, index, id: entity.id })
+      occurrences.push({ path: [key, index, 'id'], describe: `${key}[${index}]`, id: entity.id })
     )
   }
+  process.decisions.forEach((decision, decisionIndex) => {
+    decision.outcomes.forEach((outcome, outcomeIndex) => {
+      occurrences.push({
+        path: ['decisions', decisionIndex, 'outcomes', outcomeIndex, 'id'],
+        describe: `decisions[${decisionIndex}].outcomes[${outcomeIndex}]`,
+        id: outcome.id
+      })
+    })
+  })
   return occurrences
 }
 
-/** `duplicate-id`: an id reused across the 8 top-level entity arrays. */
+/**
+ * `duplicate-id`: an id reused across the 8 top-level entity arrays and/or the
+ * decision outcome ids (all one process-wide namespace).
+ */
 function checkDuplicateIds(process: CanonicalProcessV1Shape, ctx: CanonicalRefinementCtx): void {
-  const byId = new Map<string, EntityIdOccurrence[]>()
-  for (const occurrence of allEntityIdOccurrences(process)) {
+  const byId = new Map<string, IdOccurrence[]>()
+  for (const occurrence of allIdOccurrences(process)) {
     const bucket = byId.get(occurrence.id)
     if (bucket) {
       bucket.push(occurrence)
@@ -546,9 +587,9 @@ function checkDuplicateIds(process: CanonicalProcessV1Shape, ctx: CanonicalRefin
       const duplicate = bucket[i]
       addCustomIssue(
         ctx,
-        [duplicate.key, duplicate.index, 'id'],
+        duplicate.path,
         'duplicate-id',
-        `Id "${duplicate.id}" is already used by ${first.key}[${first.index}]; ids must be unique across the whole canonical process.`
+        `Id "${duplicate.id}" is already used by ${first.describe}; ids must be unique across the whole canonical process.`
       )
     }
   }
@@ -833,6 +874,34 @@ function checkDecisionNodeSequenceEdges(
   })
 }
 
+/**
+ * `decision-node-conditional-edge`: a decision node's branching is expressed
+ * ONLY through its `decisions[]` outcomes — no `'conditional'` edge may
+ * originate from it either. (A `'conditional'` edge out of a decision would be
+ * projected as a plain relation that bypasses the decision's XOR, silently
+ * introducing a second, unlabelled branch; the guard belongs on the outcomes.)
+ * This is the `'conditional'`-kind companion to `decision-node-sequence-edge`;
+ * other edge kinds out of a decision (e.g. `data-flow`) remain allowed.
+ */
+function checkDecisionNodeConditionalEdges(
+  process: CanonicalProcessV1Shape,
+  ctx: CanonicalRefinementCtx
+): void {
+  const decisionNodeIds = new Set(
+    process.nodes.filter((node) => node.kind === 'decision').map((node) => node.id)
+  )
+  process.edges.forEach((edge, index) => {
+    if (edge.kind === 'conditional' && decisionNodeIds.has(edge.sourceNodeId)) {
+      addCustomIssue(
+        ctx,
+        ['edges', index, 'kind'],
+        'decision-node-conditional-edge',
+        `edges[${index}] is a "conditional" edge out of decision node "${edge.sourceNodeId}"; a decision node's branching must be expressed only through its decisions[] outcomes, not a conditional edge.`
+      )
+    }
+  })
+}
+
 export const CanonicalProcessV1Schema = CanonicalProcessV1BaseSchema.superRefine((process, ctx) => {
   checkDuplicateIds(process, ctx)
   checkNodeReferences(process, ctx)
@@ -841,6 +910,7 @@ export const CanonicalProcessV1Schema = CanonicalProcessV1BaseSchema.superRefine
   checkConditionalEdgeConditions(process, ctx)
   checkDecisionNodeReferences(process, ctx)
   checkDecisionNodeSequenceEdges(process, ctx)
+  checkDecisionNodeConditionalEdges(process, ctx)
 })
 
 // ---------------------------------------------------------------------------

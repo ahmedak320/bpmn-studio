@@ -33,7 +33,11 @@ import {
 } from '../epc'
 import { canonicalJsonBytes } from '../packages/canonicalJson'
 import type { CanonicalProcessV1 } from './contract'
-import { epcFindingMessages } from './findingMessages'
+import {
+  PROJECTION_UNPROJECTED_EDGE_KEY,
+  epcFindingMessages,
+  epcProjectionMessages
+} from './findingMessages'
 import {
   PROJECTION_VERSION,
   type CanonicalProjectionAnchors,
@@ -228,16 +232,52 @@ export async function validateProjectedDraft(
   }
 
   const knownModelIds = new Set(draft.models.map((model) => model.logicalId))
+  // The PRIMARY model (`m:<identity.id>`, always `draft.models[0]`) is ALWAYS
+  // validated — even when it carries no flow objects — so a contract-legal but
+  // empty process surfaces `missingStart`/`missingEnd` and is `ok:false` rather
+  // than bypassing the gate and rendering a blank diagram at exit 0. The
+  // `hasFlowNode` skip applies ONLY to linked placeholder models (a handoff's
+  // empty child model), which legitimately hold no flow objects of their own.
+  const primaryModelId = draft.models.length > 0 ? draft.models[0].logicalId : undefined
   for (const model of draft.models) {
+    const isPrimary = model.logicalId === primaryModelId
     const hasFlowNode = draft.objects.some(
       (object) =>
         object.modelLogicalId === model.logicalId && FLOW_NODE_TYPES.has(object.objectType)
     )
-    if (!hasFlowNode) continue
+    if (!isPrimary && !hasFlowNode) continue
     const graph = toEpcGraph(adapterModelFor(draft, model.logicalId))
     for (const epcFinding of validateEpcGraph(graph, { knownModelIds })) {
       findings.push(mapEpcFinding(epcFinding, result.anchors))
     }
+  }
+
+  // Surface every canonical edge that produced NO draft relation as a
+  // warning-severity finding — never a silent drop. This catches `data-flow`
+  // edges (whose factIds/confidence are otherwise lost) and any `exception-route`
+  // whose source is not an exception node (control flow that would otherwise
+  // vanish), plus any future unhandled edge kind. A projected edge records its
+  // own id as the `cause` of the relation(s) it yields, so a canonical edge id
+  // absent from the anchor table's values was dropped. Emitted in canonical
+  // edge-array order for determinism.
+  const causedEdgeIds = new Set(Object.values(result.anchors.edgeByDraftId))
+  for (const edge of canonical.edges) {
+    if (causedEdgeIds.has(edge.id)) continue
+    const messages = epcProjectionMessages(PROJECTION_UNPROJECTED_EDGE_KEY, {
+      edgeId: edge.id,
+      edgeKind: edge.kind
+    })
+    findings.push({
+      ruleId: PROJECTION_UNPROJECTED_EDGE_KEY,
+      severity: 'warning',
+      messageKey: PROJECTION_UNPROJECTED_EDGE_KEY,
+      messageEn: messages.en,
+      messageAr: messages.ar,
+      canonicalNodeIds: dedupe([edge.sourceNodeId, edge.targetNodeId]),
+      canonicalEdgeIds: [edge.id],
+      draftNodeIds: [],
+      draftEdgeIds: []
+    })
   }
 
   const ok = findings.every((finding) => finding.severity !== 'error')
