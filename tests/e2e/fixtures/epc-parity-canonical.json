@@ -1,0 +1,172 @@
+{
+  "version": 1,
+  "identity": {
+    "id": "proc-parity",
+    "names": { "en": "Service Request Handling", "ar": "معالجة طلب الخدمة" },
+    "purpose": {
+      "en": "Handle an incoming service request through to an approval or a rejection.",
+      "ar": "معالجة طلب خدمة وارد وصولاً إلى الموافقة أو الرفض."
+    },
+    "code": "SRV-REQ",
+    "processVersion": "v001",
+    "confidence": "high"
+  },
+  "nodes": [
+    {
+      "id": "n-start",
+      "kind": "event",
+      "names": { "en": "Request received", "ar": "تم استلام الطلب" },
+      "confidence": "high"
+    },
+    {
+      "id": "n-intake",
+      "kind": "activity",
+      "names": { "en": "Register request", "ar": "تسجيل الطلب" },
+      "factIds": ["f-sla"],
+      "confidence": "high"
+    },
+    {
+      "id": "n-check",
+      "kind": "decision",
+      "names": { "en": "Eligibility check", "ar": "التحقق من الأهلية" },
+      "confidence": "high"
+    },
+    {
+      "id": "n-approve",
+      "kind": "activity",
+      "names": { "en": "Approve request", "ar": "الموافقة على الطلب" },
+      "confidence": "medium"
+    },
+    {
+      "id": "n-notify",
+      "kind": "activity",
+      "names": { "en": "Notify requester", "ar": "إخطار مقدم الطلب" },
+      "confidence": "medium"
+    },
+    {
+      "id": "n-archive",
+      "kind": "activity",
+      "names": { "en": "Archive record", "ar": "أرشفة السجل" },
+      "confidence": "medium"
+    },
+    {
+      "id": "n-approved",
+      "kind": "event",
+      "names": { "en": "Request approved", "ar": "تمت الموافقة على الطلب" },
+      "confidence": "high"
+    },
+    {
+      "id": "n-rejected",
+      "kind": "event",
+      "names": { "en": "Request rejected", "ar": "تم رفض الطلب" },
+      "confidence": "high"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "d-check",
+      "nodeId": "n-check",
+      "criteria": { "en": "Eligibility policy", "ar": "سياسة الأهلية" },
+      "outcomes": [
+        {
+          "id": "o-eligible",
+          "names": { "en": "Eligible", "ar": "مؤهل" },
+          "targetNodeId": "n-approve"
+        },
+        {
+          "id": "o-ineligible",
+          "names": { "en": "Not eligible", "ar": "غير مؤهل" },
+          "targetNodeId": "n-rejected"
+        }
+      ],
+      "confidence": "high"
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-start-intake",
+      "kind": "sequence",
+      "sourceNodeId": "n-start",
+      "targetNodeId": "n-intake",
+      "confidence": "high"
+    },
+    {
+      "id": "e-intake-check",
+      "kind": "sequence",
+      "sourceNodeId": "n-intake",
+      "targetNodeId": "n-check",
+      "confidence": "high"
+    },
+    {
+      "id": "e-approve-notify",
+      "kind": "parallel",
+      "sourceNodeId": "n-approve",
+      "targetNodeId": "n-notify",
+      "confidence": "medium"
+    },
+    {
+      "id": "e-approve-archive",
+      "kind": "parallel",
+      "sourceNodeId": "n-approve",
+      "targetNodeId": "n-archive",
+      "confidence": "medium"
+    },
+    {
+      "id": "e-notify-approved",
+      "kind": "parallel",
+      "sourceNodeId": "n-notify",
+      "targetNodeId": "n-approved",
+      "confidence": "medium"
+    },
+    {
+      "id": "e-archive-approved",
+      "kind": "parallel",
+      "sourceNodeId": "n-archive",
+      "targetNodeId": "n-approved",
+      "confidence": "medium"
+    }
+  ],
+  "roles": [
+    {
+      "id": "r-officer",
+      "names": { "en": "Service Officer", "ar": "موظف الخدمة" },
+      "unit": { "en": "Customer Service", "ar": "خدمة العملاء" },
+      "nodeIds": ["n-intake", "n-approve"],
+      "owner": true,
+      "factIds": ["f-sla"],
+      "confidence": "high"
+    }
+  ],
+  "systems": [
+    {
+      "id": "s-crm",
+      "names": { "en": "CRM System", "ar": "نظام إدارة علاقات العملاء" },
+      "nodeIds": ["n-intake", "n-check"],
+      "confidence": "high"
+    }
+  ],
+  "informationObjects": [],
+  "controls": [],
+  "facts": [
+    {
+      "id": "f-sla",
+      "statement": {
+        "en": "Requests must be registered within one business day.",
+        "ar": "يجب تسجيل الطلبات خلال يوم عمل واحد."
+      },
+      "evidenceRefs": ["ev-parity-1"],
+      "confidence": "high"
+    }
+  ],
+  "unknowns": [
+    {
+      "targetId": "n-notify",
+      "kind": "missing-field",
+      "field": "role",
+      "message": {
+        "en": "The role responsible for notifying the requester is not documented.",
+        "ar": "الدور المسؤول عن إخطار مقدم الطلب غير موثق."
+      }
+    }
+  ]
+}
