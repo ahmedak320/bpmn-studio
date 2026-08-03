@@ -2,7 +2,10 @@
 
 OrbitPM Process Studio Lite is the only active product in this repository.
 Changes must not add a native shell, installer, updater, server, bridge, or
-alternate executable application.
+alternate executable application. The one permitted executable addition is
+the headless Node CLI for this same engine under packages/epc-engine/bin/ —
+a batch projection/render tool with no server, bridge, desktop shell,
+installer, or updater.
 
 ## Before opening a pull request
 

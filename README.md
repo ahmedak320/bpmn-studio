@@ -131,6 +131,19 @@ for every product-code change; the tracked copy must match the build.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution rules and
 [SECURITY.md](SECURITY.md) for the security policy and reporting process.
 
+## EPC engine as a service
+
+The interactive studio described above is unchanged. Separately,
+`packages/epc-engine/` packages the same `src/aris` engine — canonical
+schema → EPC projection → validation → headless SVG — as a standalone Node
+package, so it can be consumed by a private enterprise repository via
+`npm pack` or a git dependency instead of copying source. No studio UI,
+browser AI, or workspace code ships with it; only the projection,
+validation, and rendering pipeline is exposed. See
+[docs/EPC_PROJECTION.md](docs/EPC_PROJECTION.md) for the projection pipeline
+and [docs/ENTERPRISE_HANDOFF.md](docs/ENTERPRISE_HANDOFF.md) for how the
+enterprise repository consumes and versions it.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Component attribution is summarised in
