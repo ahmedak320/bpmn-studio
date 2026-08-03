@@ -1,6 +1,8 @@
 node_modules/
 dist/
 packages/epc-engine/dist/
+packages/epc-engine/*.tgz
+packages/epc-engine/*.tgz.sha256
 *.local
 .DS_Store
 *.log
