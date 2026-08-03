@@ -11,6 +11,7 @@ export default tseslint.config(
     ignores: [
       'node_modules/**',
       'dist/**',
+      'packages/epc-engine/dist/**',
       'release/**',
       'coverage/**',
       'test-results/**',
@@ -20,7 +21,7 @@ export default tseslint.config(
   },
   {
     ...js.configs.recommended,
-    files: ['scripts/**/*.mjs', '*.config.js'],
+    files: ['scripts/**/*.mjs', 'packages/epc-engine/bin/**/*.mjs', '*.config.js'],
     languageOptions: {
       ecmaVersion: 'latest',
       sourceType: 'module',

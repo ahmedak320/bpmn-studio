@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
-const allowedTargets = new Set(['dist'])
+const allowedTargets = new Set(['dist', 'packages/epc-engine/dist'])
 const requested = process.argv[2]
 
 if (!requested || !allowedTargets.has(requested)) {
