@@ -3,22 +3,37 @@
  * that metadata never expands the core flow grid.
  *
  * Satellites are placed **after** the control flow is completely fixed and
- * only ever outside it, beyond the return channels, on the far side of the
- * flow axis. Nothing in this module can move a control-flow node, change a
+ * only ever outside it, beyond the return channels. Every satellite is placed
+ * in a small local cluster next to the control-flow node it attaches to (its
+ * "owner"), matching the classic ARIS convention where a function's satellites
+ * sit next to that function rather than being pooled in a single shared column
+ * far away. Nothing in this module can move a control-flow node, change a
  * rank band, or change the spacing that was derived from the control-flow
  * sizes alone — so the same process laid out with 0 and with 50 satellites has
- * a byte-identical backbone.
+ * a byte-identical backbone. Concretely, no satellite (and no satellite route)
+ * ever reaches an along coordinate above its owner's top edge, so the layout's
+ * `base.y` — and therefore the shift applied to every control-flow node — is
+ * decided by the control flow alone.
  *
  * Geometry
  * --------
  * ```text
- *  core flow  | return   | trunk corridors | satellite column
- *             | channels | (one per group) | (one shared column)
+ *  core flow  | return   | owner_0 col | owner_1 col | ... | orphan col
+ *             | channels | + corridor  | + corridor  |     |
  * ```
- * Every route leaves the core inside a rank gap (no shapes there), crosses the
- * empty corridor band, turns once in its own corridor, and enters its
- * satellite from the near side of the column. No segment can therefore pass
- * through a shape it does not belong to.
+ * Each owner (a control-flow node that attaches at least one satellite) gets
+ * its own dedicated column beyond the reserved routing area. The owner's
+ * satellites are stacked in that column, starting at the owner's top edge and
+ * running downward one satellite per row. Every route leaves the owner at its
+ * near-side (bottom in top-to-bottom, right in left-to-right), turns once in
+ * the rank gap immediately after the owner's rank, turns again into the
+ * owner's own satellite-corridor (a thin channel just left of the column),
+ * turns again into the satellite's own along-row, and enters the satellite
+ * from its near-side. Routes for different owners live in different corridors,
+ * so long horizontal cross-page connectors — the visual clutter of the
+ * shared-column layout — are eliminated by construction. Orphan satellites
+ * (no owner in the control flow) keep the shared-column fallback: they are
+ * stacked in the last column at the far side of the canvas.
  */
 
 import type { ArisLayoutEdgeInput, ArisLayoutNodeInput } from './types'
@@ -42,45 +57,6 @@ export interface SatellitePlacement {
   readonly crossMax: number
 }
 
-interface EndpointAnchor {
-  /** Where the route leaves/enters the shape. */
-  readonly point: FlowPoint
-  /** Where the route must be when it reaches the corridor band. */
-  readonly corridorAlong: number
-  /** Intermediate point between the shape and the corridor band, if any. */
-  readonly relay: FlowPoint | null
-}
-
-/**
- * Greedy interval partitioning: two routes may share a trunk corridor only
- * when the along ranges they occupy are disjoint. The result is the minimum
- * number of corridors and is fully determined by the input order.
- */
-function assignCorridors(ranges: readonly { min: number; max: number }[]): number[] {
-  const order = ranges
-    .map((range, index) => ({ range, index }))
-    .sort((left, right) => left.range.min - right.range.min || left.index - right.index)
-  const lastEnd: number[] = []
-  const assigned = new Array<number>(ranges.length).fill(0)
-  for (const entry of order) {
-    let corridor = -1
-    for (let index = 0; index < lastEnd.length; index += 1) {
-      if ((lastEnd[index] as number) < entry.range.min) {
-        corridor = index
-        break
-      }
-    }
-    if (corridor === -1) {
-      corridor = lastEnd.length
-      lastEnd.push(entry.range.max)
-    } else {
-      lastEnd[corridor] = entry.range.max
-    }
-    assigned[entry.index] = corridor
-  }
-  return assigned
-}
-
 export function placeSatellites(
   satelliteNodes: readonly ArisLayoutNodeInput[],
   satelliteEdges: readonly ArisLayoutEdgeInput[],
@@ -98,10 +74,19 @@ export function placeSatellites(
   const satelliteIndexOf = new Map<string, number>()
   satelliteNodes.forEach((node, index) => satelliteIndexOf.set(node.id, index))
 
+  const alongOf = new Array<number>(satelliteNodes.length).fill(0)
+  const crossOf = new Array<number>(satelliteNodes.length).fill(0)
+  let crossMax = reservedCrossMax
+
+  if (satelliteNodes.length === 0) {
+    return { alongOf, crossOf, boxes, routes: [], crossMax }
+  }
+
   // --- group satellites by the first control-flow node they attach to ------
+  // A satellite whose only connections are to other satellites has no owner
+  // and falls through to the shared orphan column below.
   const ownerOf = new Array<number>(satelliteNodes.length).fill(-1)
   const membersOf = new Map<number, number[]>()
-  const orphans: number[] = []
   for (const edge of satelliteEdges) {
     const sourceControl = controlIndexOf.get(edge.source)
     const targetControl = controlIndexOf.get(edge.target)
@@ -123,140 +108,155 @@ export function placeSatellites(
     if (list) list.push(satellite)
     else membersOf.set(owner, [satellite])
   }
+  const orphans: number[] = []
   satelliteNodes.forEach((_node, index) => {
     if (ownerOf[index] === -1) orphans.push(index)
   })
 
-  // --- stack one along band per owner, aligned to the owner where possible -
-  const groups = [...membersOf.keys()].sort(
+  // --- assign a dedicated column to each owner, in a deterministic order ---
+  const owners = [...membersOf.keys()].sort(
     (left, right) =>
       (placement.rankOf[left] as number) - (placement.rankOf[right] as number) ||
       (placement.crossOf[left] as number) - (placement.crossOf[right] as number) ||
       left - right
   )
+
+  const baseCross = reservedCrossMax + spacing.crossGap
+  const maxSatCross = boxes.reduce((highest, box) => Math.max(highest, box.cross), 0)
+  // Each column reserves the widest satellite plus one crossGap of clearance,
+  // so the corridor of the *next* column has room to breathe without touching
+  // the previous column's satellites.
+  const columnStride = Math.max(maxSatCross + spacing.crossGap, spacing.crossGap * 2)
+  const columnStartOf = new Map<number, number>()
+  const corridorCrossOf = new Map<number, number>()
+  owners.forEach((owner, ordinal) => {
+    const columnStart = baseCross + ordinal * columnStride
+    columnStartOf.set(owner, columnStart)
+    // Corridor sits half a crossGap left of the column, comfortably clear of
+    // both the previous column's satellites and this column's satellites.
+    corridorCrossOf.set(owner, columnStart - spacing.crossGap / 2)
+  })
+
+  // --- place each owner's satellites in its column, stacked at owner's top -
+  // Stacking downward from `owner.alongTop` (never above it) is what keeps
+  // `base.y` — and therefore every control-flow node's shifted `rect.y` —
+  // decided by the control flow alone. Extending past the owner's bottom is
+  // fine; only the *upper* extent participates in the shift.
   const satelliteGap = Math.max(spacing.labelGap * 2, Math.round(spacing.crossGap * 0.25))
-  const alongOf = new Array<number>(satelliteNodes.length).fill(0)
-  let bandCursor = Number.NEGATIVE_INFINITY
-  const layoutBand = (members: readonly number[], preferredStart: number): void => {
-    let height = 0
-    members.forEach((member, position) => {
-      height += (boxes[member] as OccupiedBox).along
-      if (position > 0) height += satelliteGap
-    })
-    const start = Math.max(preferredStart, bandCursor + satelliteGap)
-    let cursor = start
-    for (const member of members) {
-      alongOf[member] = cursor + (boxes[member] as OccupiedBox).along / 2
-      cursor += (boxes[member] as OccupiedBox).along + satelliteGap
-    }
-    bandCursor = start + height
-  }
-  for (const owner of groups) {
+  for (const owner of owners) {
     const members = (membersOf.get(owner) as number[]).slice().sort((left, right) => left - right)
-    const preferred =
-      (placement.alongOf[owner] as number) - (placement.boxes[owner] as OccupiedBox).along / 2
-    layoutBand(members, preferred)
+    const columnStart = columnStartOf.get(owner) as number
+    const ownerBox = placement.boxes[owner] as OccupiedBox
+    const ownerAlongTop = (placement.alongOf[owner] as number) - ownerBox.along / 2
+    let cursor = ownerAlongTop
+    for (const member of members) {
+      const box = boxes[member] as OccupiedBox
+      crossOf[member] = columnStart + box.cross / 2
+      alongOf[member] = cursor + box.along / 2
+      cursor += box.along + satelliteGap
+      crossMax = Math.max(crossMax, columnStart + box.cross)
+    }
   }
+
+  // --- orphans stacked in a final shared column at the far side -----------
   if (orphans.length > 0) {
-    layoutBand(orphans, bandCursor === Number.NEGATIVE_INFINITY ? spacing.margin : bandCursor)
+    const orphanColumnStart = baseCross + owners.length * columnStride
+    // Start orphans at the control-flow's first band, not `spacing.margin`,
+    // so an orphan-only satellite set never lowers `base.y` below the
+    // control-flow's top and shifts the whole backbone (§13.2).
+    const orphanTop =
+      (placement.bandStart[0] as number | undefined) ?? spacing.margin + spacing.rankGap
+    let cursor = orphanTop
+    for (const orphan of orphans.slice().sort((left, right) => left - right)) {
+      const box = boxes[orphan] as OccupiedBox
+      alongOf[orphan] = cursor + box.along / 2
+      crossOf[orphan] = orphanColumnStart + box.cross / 2
+      cursor += box.along + satelliteGap
+      crossMax = Math.max(crossMax, orphanColumnStart + box.cross)
+    }
   }
 
-  // --- one shared column, one corridor band in front of it ----------------
-  const corridorBase = reservedCrossMax + spacing.crossGap
+  // --- routes: one owner-local L-shape per satellite edge -----------------
   const slots = new GapSlotAllocator(placement.gapStart, placement.gapEnd)
-
-  const anchorFor = (
-    endpointId: string,
-    counterKey: Map<number, number>
-  ): EndpointAnchor | null => {
-    const control = controlIndexOf.get(endpointId)
-    if (control !== undefined) {
-      const used = counterKey.get(control) ?? 0
-      counterKey.set(control, used + 1)
-      const width = geometry.shapeCross[control] as number
-      const spread = width * (0.05 + (0.4 * (used % 5)) / 5)
-      const exitCross = (geometry.nodeCross[control] as number) + spread
-      const gapAlong = slots.next((placement.rankOf[control] as number) + 1)
-      return {
-        point: { along: shapeAlongMax(geometry, control), cross: exitCross },
-        relay: { along: gapAlong, cross: exitCross },
-        corridorAlong: gapAlong
-      }
-    }
-    const satellite = satelliteIndexOf.get(endpointId)
-    if (satellite === undefined) return null
-    // A route must attach to the *shape*, not to the occupied box, so the
-    // caption reservation is skipped here. The cross coordinate is only known
-    // once the shared column has been placed, so `resolve` fills it in below.
-    const shapeAlongCenter =
-      (alongOf[satellite] as number) + (boxes[satellite] as OccupiedBox).nodeAlongOffset
-    return {
-      point: { along: shapeAlongCenter, cross: 0 },
-      relay: null,
-      corridorAlong: shapeAlongCenter
-    }
-  }
-
   const exitCounters = new Map<number, number>()
-  const anchors: { source: EndpointAnchor | null; target: EndpointAnchor | null }[] = []
-  for (const edge of satelliteEdges) {
-    anchors.push({
-      source: anchorFor(edge.source, exitCounters),
-      target: anchorFor(edge.target, exitCounters)
-    })
-  }
 
-  const ranges = anchors.map((anchor) => {
-    const from = anchor.source?.corridorAlong ?? 0
-    const to = anchor.target?.corridorAlong ?? 0
-    return { min: Math.min(from, to), max: Math.max(from, to) }
-  })
-  const corridorOf = assignCorridors(ranges)
-  const corridorCount = corridorOf.reduce((highest, value) => Math.max(highest, value + 1), 0)
-  const columnCross = corridorBase + (corridorCount + 1) * spacing.corridorGap + spacing.crossGap
-
-  const crossOf = new Array<number>(satelliteNodes.length).fill(0)
-  let crossMax = columnCross
-  satelliteNodes.forEach((_node, index) => {
-    crossOf[index] = columnCross + (boxes[index] as OccupiedBox).cross / 2
-    crossMax = Math.max(crossMax, columnCross + (boxes[index] as OccupiedBox).cross)
-  })
-
-  const satelliteNearCross = (index: number): number =>
+  const shapeLeftCrossOf = (index: number): number =>
     (crossOf[index] as number) +
     (boxes[index] as OccupiedBox).nodeCrossOffset -
     (shapeCrossOf[index] as number) / 2
 
-  const routes: FlowPoint[][] = satelliteEdges.map((edge, edgeIndex) => {
-    const anchor = anchors[edgeIndex] as {
-      source: EndpointAnchor | null
-      target: EndpointAnchor | null
+  const shapeAlongCentreOf = (index: number): number =>
+    (alongOf[index] as number) + (boxes[index] as OccupiedBox).nodeAlongOffset
+
+  const routeForOwnerSatellite = (owner: number, satellite: number): FlowPoint[] => {
+    const columnStart = columnStartOf.get(owner) ?? baseCross
+    const corridorCross = corridorCrossOf.get(owner) ?? columnStart - spacing.crossGap / 2
+
+    // Stagger exits along the owner's near-side (bottom edge in TTB), so two
+    // routes leaving the same owner do not sit on top of each other.
+    const used = exitCounters.get(owner) ?? 0
+    exitCounters.set(owner, used + 1)
+    const ownerShapeCross = geometry.shapeCross[owner] as number
+    const ownerNodeCross = geometry.nodeCross[owner] as number
+    const spread = ownerShapeCross * (0.05 + (0.4 * (used % 5)) / 5)
+    const exitCross = ownerNodeCross + spread
+    const exitAlong = shapeAlongMax(geometry, owner)
+
+    const gapAlong = slots.next((placement.rankOf[owner] as number) + 1)
+    const satAlong = shapeAlongCentreOf(satellite)
+    const satLeftCross = shapeLeftCrossOf(satellite)
+
+    return simplifyFlowPolyline([
+      { along: exitAlong, cross: exitCross },
+      { along: gapAlong, cross: exitCross },
+      { along: gapAlong, cross: corridorCross },
+      { along: satAlong, cross: corridorCross },
+      { along: satAlong, cross: satLeftCross }
+    ])
+  }
+
+  const routeForSatelliteSatellite = (source: number, target: number): FlowPoint[] => {
+    // A satellite-to-satellite edge has no owner corridor to share; route it
+    // through a corridor left of both endpoints so it can never overlap a
+    // satellite of the same or a different owner.
+    const sourceAlong = shapeAlongCentreOf(source)
+    const targetAlong = shapeAlongCentreOf(target)
+    const sourceLeft = shapeLeftCrossOf(source)
+    const targetLeft = shapeLeftCrossOf(target)
+    const corridorCross = Math.min(sourceLeft, targetLeft) - spacing.crossGap / 2
+    return simplifyFlowPolyline([
+      { along: sourceAlong, cross: sourceLeft },
+      { along: sourceAlong, cross: corridorCross },
+      { along: targetAlong, cross: corridorCross },
+      { along: targetAlong, cross: targetLeft }
+    ])
+  }
+
+  const routes: FlowPoint[][] = satelliteEdges.map((edge) => {
+    const sourceControl = controlIndexOf.get(edge.source)
+    const targetControl = controlIndexOf.get(edge.target)
+    const sourceSatellite = satelliteIndexOf.get(edge.source)
+    const targetSatellite = satelliteIndexOf.get(edge.target)
+
+    if (sourceControl !== undefined && targetSatellite !== undefined) {
+      const points = routeForOwnerSatellite(sourceControl, targetSatellite)
+      // The polyline was authored owner -> satellite; the edge asks the same
+      // direction, so leave it alone.
+      return points
     }
-    if (!anchor.source || !anchor.target) return []
-    const corridorCross =
-      corridorBase + ((corridorOf[edgeIndex] as number) + 1) * spacing.corridorGap
-    const resolve = (
-      endpointId: string,
-      value: EndpointAnchor
-    ): { shape: FlowPoint; relay: FlowPoint | null } => {
-      const satellite = satelliteIndexOf.get(endpointId)
-      if (satellite !== undefined && controlIndexOf.get(endpointId) === undefined) {
-        return {
-          shape: { along: value.corridorAlong, cross: satelliteNearCross(satellite) },
-          relay: null
-        }
-      }
-      return { shape: value.point, relay: value.relay }
+    if (targetControl !== undefined && sourceSatellite !== undefined) {
+      // Author the geometry owner -> satellite for determinism, then reverse
+      // it so `points[0]` sits on the *source* shape as the metric contract
+      // requires.
+      const points = routeForOwnerSatellite(targetControl, sourceSatellite).slice().reverse()
+      return points
     }
-    const from = resolve(edge.source, anchor.source)
-    const to = resolve(edge.target, anchor.target)
-    const points: FlowPoint[] = [from.shape]
-    if (from.relay) points.push(from.relay)
-    points.push({ along: anchor.source.corridorAlong, cross: corridorCross })
-    points.push({ along: anchor.target.corridorAlong, cross: corridorCross })
-    if (to.relay) points.push(to.relay)
-    points.push(to.shape)
-    return simplifyFlowPolyline(points)
+    if (sourceSatellite !== undefined && targetSatellite !== undefined) {
+      return routeForSatelliteSatellite(sourceSatellite, targetSatellite)
+    }
+    // An edge referencing an id that separateGraphs already filtered out
+    // (dangling) cannot happen here, but return an empty polyline defensively.
+    return []
   })
 
   return { alongOf, crossOf, boxes, routes, crossMax }

@@ -28,9 +28,14 @@ const sha256Hex = (input: string | Uint8Array): string =>
 // ST_{BUSINESS_POLICY,BUSINESS_RULE,REQUIREMENT}) intentionally changes the
 // AML SymbolNum values, which changes the SVG bytes. Re-updated same day
 // after bumping EPC_ENGINE_VERSION 0.2.0 -> 0.3.0 (the stamped root
-// attribute changes 3 bytes in the SVG string).
+// attribute changes 3 bytes in the SVG string). Re-updated same day after
+// switching `placeSatellites` from a single shared-column policy to a
+// per-owner-column policy: each owner now gets its own satellite column and
+// corridor immediately outside the control-flow bounding box, so satellite
+// coordinates (and every satellite route's bends) move — the SVG bytes
+// shift accordingly. Layout-only change; EPC_ENGINE_VERSION stays at 0.3.0.
 const VALID_CANONICAL_FULL_SVG_SHA256 =
-  'dbed6d953f1cc689cfab6bbae2c1d590ffc62f2e00406b72220bf718cffd569b'
+  'ff330a0c46d41e228128acb584551f13ebe0c10bb00bdb54779be375d565c483'
 
 /** Schema-valid, but its projected EEPC has no start/end event — fails the gate. */
 const STRUCTURALLY_INVALID: CanonicalProcessV1 = {
