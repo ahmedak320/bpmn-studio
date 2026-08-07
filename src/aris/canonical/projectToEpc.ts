@@ -120,6 +120,16 @@ const ST_FUNC = 'ST_FUNC'
 const ST_PRCS_IF = 'ST_PRCS_IF'
 const ST_OPR_XOR_1 = 'ST_OPR_XOR_1'
 const ST_OPR_AND_1 = 'ST_OPR_AND_1'
+// Satellite symbol constants — added 2026-08-07 to fix the missing-symbolType
+// bug where every satellite (role/system/info/control) got rendered as
+// orbitpm:unknown-symbol. Registered in src/aris/symbols/shapes.ts; the writer
+// (arisAiCreate.ts) now propagates any symbolType we set here into the AML.
+const ST_EMPL_TYPE = 'ST_EMPL_TYPE'
+const ST_APPL_SYS = 'ST_APPL_SYS'
+const ST_INFO_CARR_EDOC = 'ST_INFO_CARR_EDOC'
+const ST_REQUIREMENT = 'ST_REQUIREMENT'
+const ST_BUSINESS_POLICY = 'ST_BUSINESS_POLICY'
+const ST_BUSINESS_RULE = 'ST_BUSINESS_RULE'
 
 const CT_ACTIV_1 = 'CT_ACTIV_1'
 const CT_CRT_1 = 'CT_CRT_1'
@@ -596,6 +606,11 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
       cause: role.id,
       representativeFor: role.id,
       objectType: OT_PERS_TYPE,
+      // Without symbolType, arisAiCreate.ts's DEFAULT_SYMBOLS table (which
+      // only knows OT_FUNC/OT_EVT/OT_RULE) fell through to 'ST_FUNC' and the
+      // renderer stamped orbitpm:unknown-symbol on the group. See fix note
+      // near constants above.
+      symbolType: ST_EMPL_TYPE,
       names: localizedText(role.names),
       confidence: role.confidence,
       evidence: evidenceFor(role.factIds)
@@ -607,6 +622,7 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
       cause: system.id,
       representativeFor: system.id,
       objectType: OT_APPL_SYS,
+      symbolType: ST_APPL_SYS,
       names: localizedText(system.names),
       confidence: system.confidence,
       evidence: evidenceFor(system.factIds)
@@ -618,6 +634,7 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
       cause: info.id,
       representativeFor: info.id,
       objectType: OT_INFO_CARR,
+      symbolType: ST_INFO_CARR_EDOC,
       names: localizedText(info.names),
       confidence: info.confidence,
       evidence: evidenceFor(info.factIds)
@@ -629,6 +646,7 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
       cause: control.id,
       representativeFor: control.id,
       objectType: controlObjectType(control),
+      symbolType: controlSymbolType(control),
       names: localizedText(control.names),
       confidence: control.confidence,
       evidence: evidenceFor(control.factIds)
@@ -955,6 +973,20 @@ function controlObjectType(control: CanonicalControl): string {
       return OT_BUSINESS_RULE
     case 'requirement':
       return OT_REQUIREMENT
+  }
+}
+
+/** ARIS symbol type for a control — matches the OT_ classification above so
+ * the renderer's registry hits the exact-triple lookup (MT_EEPC:OT_X:ST_X)
+ * instead of falling back to orbitpm:unknown-symbol. */
+function controlSymbolType(control: CanonicalControl): string {
+  switch (control.kind) {
+    case 'policy':
+      return ST_BUSINESS_POLICY
+    case 'business-rule':
+      return ST_BUSINESS_RULE
+    case 'requirement':
+      return ST_REQUIREMENT
   }
 }
 

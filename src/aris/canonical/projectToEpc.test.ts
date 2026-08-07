@@ -231,9 +231,11 @@ describe('expansion table — one assertion per row (VALID_CANONICAL_FULL)', () 
     expect(rel(draft.relations, 'e:e-9').connectionType).toBe('CT_LEADS_TO_2')
   })
 
-  it('data-flow via informationObjects -> OT_INFO_CARR with CT_IS_INP_FOR / CT_HAS_OUT', () => {
+  it('data-flow via informationObjects -> OT_INFO_CARR + ST_INFO_CARR_EDOC with CT_IS_INP_FOR / CT_HAS_OUT', () => {
     const { draft } = full()
-    expect(obj(draft.objects, 'io:io-ticket').objectType).toBe('OT_INFO_CARR')
+    const info = obj(draft.objects, 'io:io-ticket')
+    expect(info.objectType).toBe('OT_INFO_CARR')
+    expect(info.symbolType).toBe('ST_INFO_CARR_EDOC')
     // io-ticket is output-of n-log: function -> info, CT_HAS_OUT
     const out = rel(draft.relations, 're:n:n-log:io:io-ticket')
     expect(out.connectionType).toBe('CT_HAS_OUT')
@@ -242,9 +244,13 @@ describe('expansion table — one assertion per row (VALID_CANONICAL_FULL)', () 
     expect(inp.connectionType).toBe('CT_IS_INP_FOR')
   })
 
-  it('roles -> OT_PERS_TYPE + CT_EXEC_1 per node, owner emits an AT_PERS_RESP model attribute', () => {
+  it('roles -> OT_PERS_TYPE + ST_EMPL_TYPE + CT_EXEC_1 per node, owner emits an AT_PERS_RESP model attribute', () => {
     const { draft } = full()
-    expect(obj(draft.objects, 'r:r-agent').objectType).toBe('OT_PERS_TYPE')
+    const role = obj(draft.objects, 'r:r-agent')
+    expect(role.objectType).toBe('OT_PERS_TYPE')
+    // symbolType: without it, arisAiCreate.ts fell through to 'ST_FUNC' and the
+    // renderer stamped orbitpm:unknown-symbol (2026-08-07 fix).
+    expect(role.symbolType).toBe('ST_EMPL_TYPE')
     expect(rel(draft.relations, 're:r:r-agent:n:n-log').connectionType).toBe('CT_EXEC_1')
     expect(rel(draft.relations, 're:r:r-agent:n:n-investigate').connectionType).toBe('CT_EXEC_1')
     const ownerAttr = draft.attributes.find(
@@ -255,18 +261,24 @@ describe('expansion table — one assertion per row (VALID_CANONICAL_FULL)', () 
     expect(ownerAttr?.values).toEqual({ en: 'IT Manager', ar: 'مدير تقنية المعلومات' })
   })
 
-  it('systems -> OT_APPL_SYS + CT_SUPP_3 per node', () => {
+  it('systems -> OT_APPL_SYS + ST_APPL_SYS + CT_SUPP_3 per node', () => {
     const { draft } = full()
-    expect(obj(draft.objects, 's:s-itsm').objectType).toBe('OT_APPL_SYS')
+    const system = obj(draft.objects, 's:s-itsm')
+    expect(system.objectType).toBe('OT_APPL_SYS')
+    expect(system.symbolType).toBe('ST_APPL_SYS')
     expect(rel(draft.relations, 're:s:s-itsm:n:n-log').connectionType).toBe('CT_SUPP_3')
     expect(rel(draft.relations, 're:s:s-itsm:n:n-triage').connectionType).toBe('CT_SUPP_3')
   })
 
-  it('controls -> OT_POLICY/CT_AFFECTS and OT_BUSINESS_RULE/CT_IS_EVAL_BY_1', () => {
+  it('controls -> OT_POLICY/ST_BUSINESS_POLICY/CT_AFFECTS and OT_BUSINESS_RULE/ST_BUSINESS_RULE/CT_IS_EVAL_BY_1', () => {
     const { draft } = full()
-    expect(obj(draft.objects, 'c:c-sla-policy').objectType).toBe('OT_POLICY')
+    const policy = obj(draft.objects, 'c:c-sla-policy')
+    expect(policy.objectType).toBe('OT_POLICY')
+    expect(policy.symbolType).toBe('ST_BUSINESS_POLICY')
     expect(rel(draft.relations, 're:c:c-sla-policy:n:n-triage').connectionType).toBe('CT_AFFECTS')
-    expect(obj(draft.objects, 'c:c-escalation-rule').objectType).toBe('OT_BUSINESS_RULE')
+    const rule = obj(draft.objects, 'c:c-escalation-rule')
+    expect(rule.objectType).toBe('OT_BUSINESS_RULE')
+    expect(rule.symbolType).toBe('ST_BUSINESS_RULE')
     expect(rel(draft.relations, 're:c:c-escalation-rule:xe:n-exception').connectionType).toBe(
       'CT_IS_EVAL_BY_1'
     )
@@ -304,7 +316,9 @@ describe('expansion table — one assertion per row (VALID_CANONICAL_FULL)', () 
     }
     const { draft } = projectCanonicalToDraft(withRequirement)
     expect(validateArisAiDraft(draft).ok).toBe(true)
-    expect(obj(draft.objects, 'c:req-1').objectType).toBe('OT_REQUIREMENT')
+    const req = obj(draft.objects, 'c:req-1')
+    expect(req.objectType).toBe('OT_REQUIREMENT')
+    expect(req.symbolType).toBe('ST_REQUIREMENT')
     expect(rel(draft.relations, 're:c:req-1:n:b').connectionType).toBe('CT_REFS_TO_2')
   })
 

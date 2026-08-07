@@ -39,10 +39,27 @@ const COLUMN_X = 240
 const ROW_STEP = 160
 const FIRST_Y = 120
 
+// Defensive default table — extended 2026-08-07. Was previously only three
+// entries (OT_FUNC/OT_EVT/OT_RULE); every satellite kind (systems, roles,
+// info-objects, controls) hit the trailing `?? 'ST_FUNC'` fallback which meant
+// the renderer's registry couldn't find a real symbol descriptor and stamped
+// every satellite with `orbitpm:unknown-symbol`. Sourced from
+// ARIS_OBJECT_TYPE_DEFAULT_SYMBOL in src/aris/symbols/shapes.ts.
 const DEFAULT_SYMBOLS: Readonly<Record<string, string>> = Object.freeze({
   OT_FUNC: 'ST_FUNC',
   OT_EVT: 'ST_EV',
-  OT_RULE: 'ST_OPR_XOR_1'
+  OT_RULE: 'ST_OPR_XOR_1',
+  OT_APPL_SYS: 'ST_APPL_SYS',
+  OT_PERS: 'ST_PERS_EXT',
+  OT_PERS_TYPE: 'ST_EMPL_TYPE',
+  OT_ENT_TYPE: 'ST_ENT_TYPE',
+  OT_INFO_CARR: 'ST_INFO_CARR_EDOC',
+  OT_REQUIREMENT: 'ST_REQUIREMENT',
+  OT_POLICY: 'ST_BUSINESS_POLICY',
+  OT_BUSINESS_RULE: 'ST_BUSINESS_RULE',
+  OT_ORG_UNIT: 'ST_ORG_UNIT_1',
+  OT_POS: 'ST_POS',
+  OT_GRP: 'ST_GRP_1'
 })
 
 /** Logical id → deterministic, collision-free ARIS-shaped source id. */
