@@ -28,8 +28,10 @@
  *  - exception rule (XOR) .... `xe:<exceptionNodeId>`
  *  - exception event ......... `xev:<exceptionNodeId>`
  *  - alternation filler event  `fe:<edge>` / filler function `ff:<edge>`
- *  - role satellite .......... `r:<roleId>`  · system `s:<systemId>`
- *  - info object ............. `io:<infoId>` · control `c:<controlId>`
+ *  - role satellite .......... `r:<roleId>@<ownerNodeId>` (owned) or `r:<roleId>` (orphan)
+ *  - system satellite ........ `s:<systemId>@<ownerNodeId>` (owned) or `s:<systemId>` (orphan)
+ *  - info object satellite ... `io:<infoId>@<ownerNodeId>` (owned) or `io:<infoId>` (orphan)
+ *  - control satellite ....... `c:<controlId>@<ownerNodeId>` (owned) or `c:<controlId>` (orphan)
  *  - placeholder model ....... `m:<targetProcessRef>` (primary model `m:<processId>`)
  *  - primary edge relation ... `e:<edgeId>`
  *  - synthesized relation .... `re:<sourceDraftId>:<targetDraftId>`
@@ -44,6 +46,25 @@
  * => CT_CRT_1; FUNC->RULE => CT_LEADS_TO_1; RULE->EVT => CT_LEADS_TO_2;
  * EVT->RULE => CT_IS_EVAL_BY_1. FUNC->FUNC / EVT->EVT never survive — they are
  * spliced by alternation completion (choice 5 below).
+ *
+ * ## Satellite duplication (added 2026-08-07, no PROJECTION_VERSION bump)
+ *
+ * ARIS satellite objects (roles / systems / information objects / controls) are
+ * projected **once per (satellite, owner) pair** rather than once per canonical
+ * satellite, so each function gets its OWN local copy of every satellite it
+ * uses. Previously a single satellite object shared across N functions produced
+ * N long connectors converging on it, cluttering the diagram; per-owner
+ * duplication lets `src/aris/layout/satellites.ts` place each copy in its
+ * owner's column with a short, local tether.
+ *
+ * `representativeFor` (the satellite's canonical-id back-reference used by the
+ * uncertainty resolver `draftByCanonicalId`) is set ONLY on the ORPHAN case
+ * (satellite with no owners → one dangling object). For a duplicated satellite,
+ * `draftByCanonicalId.get(satelliteId)` returns `undefined` on purpose, and an
+ * `unknowns[]` entry targeting the satellite id falls back to `primaryModelId`
+ * — the uncertainty becomes a model-level note (still visible) rather than
+ * being pinned arbitrarily to one duplicate. `representativeObjectId(nodeId)`
+ * — used ONLY for control-flow node lookup — is unaffected.
  *
  * ## Recorded table/source choices (see the lane brief's "hard constraints")
  *
@@ -600,57 +621,144 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
     }
   }
 
+  // Satellite objects (roles / systems / info / controls): emit ONE object per
+  // (satellite, owner) pair so each function gets its OWN local copy of every
+  // satellite it uses. See the "Satellite duplication" note at the top for the
+  // uncertainty-resolution rationale. A satellite with an empty owner list
+  // (orphan) still emits a single dangling object with `representativeFor` so
+  // its behaviour is preserved verbatim; its unknowns still resolve to the
+  // object rather than the fallback model.
+  //
+  // symbolType note: without it, arisAiCreate.ts's DEFAULT_SYMBOLS table (which
+  // only knows OT_FUNC/OT_EVT/OT_RULE at first) fell through to 'ST_FUNC' and
+  // the renderer stamped orbitpm:unknown-symbol on the group. See fix note near
+  // the constants above.
+  // For a DUPLICATED satellite we want `draftByCanonicalId.get(satelliteId)` to
+  // return `primaryModelId` so an `unknowns[]` entry targeting the satellite
+  // becomes a model-level note (see the "Satellite duplication" doc block).
+  // We pin the map BEFORE Phase D so the addSatelliteRelation calls' own
+  // rememberRepresentative(satelliteId, relationId) become no-ops.
+  const pinDuplicatedSatellite = (canonicalId: string): void => {
+    rememberRepresentative(canonicalId, primaryModelId)
+  }
   for (const role of process.roles) {
-    addObject({
-      logicalId: `r:${role.id}`,
-      cause: role.id,
-      representativeFor: role.id,
-      objectType: OT_PERS_TYPE,
-      // Without symbolType, arisAiCreate.ts's DEFAULT_SYMBOLS table (which
-      // only knows OT_FUNC/OT_EVT/OT_RULE) fell through to 'ST_FUNC' and the
-      // renderer stamped orbitpm:unknown-symbol on the group. See fix note
-      // near constants above.
-      symbolType: ST_EMPL_TYPE,
-      names: localizedText(role.names),
-      confidence: role.confidence,
-      evidence: evidenceFor(role.factIds)
-    })
+    if (role.nodeIds.length === 0) {
+      addObject({
+        logicalId: `r:${role.id}`,
+        cause: role.id,
+        representativeFor: role.id,
+        objectType: OT_PERS_TYPE,
+        symbolType: ST_EMPL_TYPE,
+        names: localizedText(role.names),
+        confidence: role.confidence,
+        evidence: evidenceFor(role.factIds)
+      })
+    } else {
+      pinDuplicatedSatellite(role.id)
+      for (const nodeId of role.nodeIds) {
+        addObject({
+          logicalId: `r:${role.id}@${nodeId}`,
+          cause: role.id,
+          objectType: OT_PERS_TYPE,
+          symbolType: ST_EMPL_TYPE,
+          names: localizedText(role.names),
+          confidence: role.confidence,
+          evidence: evidenceFor(role.factIds)
+        })
+      }
+    }
   }
   for (const system of process.systems) {
-    addObject({
-      logicalId: `s:${system.id}`,
-      cause: system.id,
-      representativeFor: system.id,
-      objectType: OT_APPL_SYS,
-      symbolType: ST_APPL_SYS,
-      names: localizedText(system.names),
-      confidence: system.confidence,
-      evidence: evidenceFor(system.factIds)
-    })
+    if (system.nodeIds.length === 0) {
+      addObject({
+        logicalId: `s:${system.id}`,
+        cause: system.id,
+        representativeFor: system.id,
+        objectType: OT_APPL_SYS,
+        symbolType: ST_APPL_SYS,
+        names: localizedText(system.names),
+        confidence: system.confidence,
+        evidence: evidenceFor(system.factIds)
+      })
+    } else {
+      pinDuplicatedSatellite(system.id)
+      for (const nodeId of system.nodeIds) {
+        addObject({
+          logicalId: `s:${system.id}@${nodeId}`,
+          cause: system.id,
+          objectType: OT_APPL_SYS,
+          symbolType: ST_APPL_SYS,
+          names: localizedText(system.names),
+          confidence: system.confidence,
+          evidence: evidenceFor(system.factIds)
+        })
+      }
+    }
   }
   for (const info of process.informationObjects) {
-    addObject({
-      logicalId: `io:${info.id}`,
-      cause: info.id,
-      representativeFor: info.id,
-      objectType: OT_INFO_CARR,
-      symbolType: ST_INFO_CARR_EDOC,
-      names: localizedText(info.names),
-      confidence: info.confidence,
-      evidence: evidenceFor(info.factIds)
-    })
+    // A single node can appear on BOTH inputToNodeIds and outputOfNodeIds (both
+    // produces and consumes the same info object). In that case we want ONE
+    // shared duplicate carrying both relations, so we dedupe the owner set
+    // here; the two satellite relations in Phase D then both target/source it.
+    const ownerNodeIds: string[] = []
+    const seen = new Set<string>()
+    for (const nodeId of [...info.inputToNodeIds, ...info.outputOfNodeIds]) {
+      if (seen.has(nodeId)) continue
+      seen.add(nodeId)
+      ownerNodeIds.push(nodeId)
+    }
+    if (ownerNodeIds.length === 0) {
+      addObject({
+        logicalId: `io:${info.id}`,
+        cause: info.id,
+        representativeFor: info.id,
+        objectType: OT_INFO_CARR,
+        symbolType: ST_INFO_CARR_EDOC,
+        names: localizedText(info.names),
+        confidence: info.confidence,
+        evidence: evidenceFor(info.factIds)
+      })
+    } else {
+      pinDuplicatedSatellite(info.id)
+      for (const nodeId of ownerNodeIds) {
+        addObject({
+          logicalId: `io:${info.id}@${nodeId}`,
+          cause: info.id,
+          objectType: OT_INFO_CARR,
+          symbolType: ST_INFO_CARR_EDOC,
+          names: localizedText(info.names),
+          confidence: info.confidence,
+          evidence: evidenceFor(info.factIds)
+        })
+      }
+    }
   }
   for (const control of process.controls) {
-    addObject({
-      logicalId: `c:${control.id}`,
-      cause: control.id,
-      representativeFor: control.id,
-      objectType: controlObjectType(control),
-      symbolType: controlSymbolType(control),
-      names: localizedText(control.names),
-      confidence: control.confidence,
-      evidence: evidenceFor(control.factIds)
-    })
+    if (control.nodeIds.length === 0) {
+      addObject({
+        logicalId: `c:${control.id}`,
+        cause: control.id,
+        representativeFor: control.id,
+        objectType: controlObjectType(control),
+        symbolType: controlSymbolType(control),
+        names: localizedText(control.names),
+        confidence: control.confidence,
+        evidence: evidenceFor(control.factIds)
+      })
+    } else {
+      pinDuplicatedSatellite(control.id)
+      for (const nodeId of control.nodeIds) {
+        addObject({
+          logicalId: `c:${control.id}@${nodeId}`,
+          cause: control.id,
+          objectType: controlObjectType(control),
+          symbolType: controlSymbolType(control),
+          names: localizedText(control.names),
+          confidence: control.confidence,
+          evidence: evidenceFor(control.factIds)
+        })
+      }
+    }
   }
 
   // === Phase B: control-flow relations ====================================
@@ -804,13 +912,19 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
   })
 
   // === Phase D: satellite relations =======================================
+  // With satellite duplication (Phase A), each duplicate has exactly ONE owner,
+  // so each satellite relation points from/to that owner's LOCAL copy — never
+  // across the diagram to a shared satellite. An info object that both
+  // produces AND consumes the same node has a SINGLE deduped duplicate carrying
+  // BOTH relations (input-to + output-of) to that owner.
   for (const role of process.roles) {
     for (const nodeId of role.nodeIds) {
       const target = representativeObjectId(nodeId)
+      const source = `r:${role.id}@${nodeId}`
       addSatelliteRelation({
-        logicalId: synthRelId(`r:${role.id}`, target),
+        logicalId: synthRelId(source, target),
         cause: role.id,
-        source: `r:${role.id}`,
+        source,
         target,
         connectionType: CT_EXEC_1,
         confidence: role.confidence
@@ -820,10 +934,11 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
   for (const system of process.systems) {
     for (const nodeId of system.nodeIds) {
       const target = representativeObjectId(nodeId)
+      const source = `s:${system.id}@${nodeId}`
       addSatelliteRelation({
-        logicalId: synthRelId(`s:${system.id}`, target),
+        logicalId: synthRelId(source, target),
         cause: system.id,
-        source: `s:${system.id}`,
+        source,
         target,
         connectionType: CT_SUPP_3,
         confidence: system.confidence
@@ -833,10 +948,11 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
   for (const info of process.informationObjects) {
     for (const nodeId of info.inputToNodeIds) {
       const target = representativeObjectId(nodeId)
+      const source = `io:${info.id}@${nodeId}`
       addSatelliteRelation({
-        logicalId: synthRelId(`io:${info.id}`, target),
+        logicalId: synthRelId(source, target),
         cause: info.id,
-        source: `io:${info.id}`,
+        source,
         target,
         connectionType: CT_IS_INP_FOR,
         confidence: info.confidence
@@ -844,11 +960,12 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
     }
     for (const nodeId of info.outputOfNodeIds) {
       const source = representativeObjectId(nodeId)
+      const target = `io:${info.id}@${nodeId}`
       addSatelliteRelation({
-        logicalId: synthRelId(source, `io:${info.id}`),
+        logicalId: synthRelId(source, target),
         cause: info.id,
         source,
-        target: `io:${info.id}`,
+        target,
         connectionType: CT_HAS_OUT,
         confidence: info.confidence
       })
@@ -857,10 +974,11 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
   for (const control of process.controls) {
     for (const nodeId of control.nodeIds) {
       const target = representativeObjectId(nodeId)
+      const source = `c:${control.id}@${nodeId}`
       addSatelliteRelation({
-        logicalId: synthRelId(`c:${control.id}`, target),
+        logicalId: synthRelId(source, target),
         cause: control.id,
-        source: `c:${control.id}`,
+        source,
         target,
         connectionType: controlConnectionType(control),
         confidence: control.confidence

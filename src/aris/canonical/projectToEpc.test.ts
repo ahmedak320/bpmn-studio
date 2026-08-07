@@ -75,7 +75,17 @@ describe('projectCanonicalToDraft — top-level shape (VALID_CANONICAL_FULL)', (
     const { draft } = full()
     expect(draft.version).toBe(1)
     expect(draft.models).toHaveLength(2)
-    expect(draft.objects).toHaveLength(28)
+    // 20 control-flow objects + 11 per-owner satellite duplicates:
+    //   r-agent  {n-log, n-investigate}       → 2
+    //   r-manager{n-triage, n-exception}      → 2
+    //   s-itsm   {n-log, n-triage}            → 2
+    //   s-monitor{n-investigate}              → 1
+    //   io-ticket{n-log (out)}                → 1
+    //   io-report{n-notify (in)}              → 1
+    //   c-sla-policy{n-triage}                → 1
+    //   c-escalation-rule{n-exception}        → 1
+    // See the "Satellite duplication" doc block in projectToEpc.ts.
+    expect(draft.objects).toHaveLength(31)
     expect(draft.relations).toHaveLength(31)
     expect(draft.attributes).toHaveLength(1)
     expect(draft.assignments).toHaveLength(1)
@@ -87,8 +97,11 @@ describe('projectCanonicalToDraft — top-level shape (VALID_CANONICAL_FULL)', (
     expect(typeCount(draft.objects, 'OT_EVT')).toBe(9)
     expect(typeCount(draft.objects, 'OT_FUNC')).toBe(7)
     expect(typeCount(draft.objects, 'OT_RULE')).toBe(4)
-    expect(typeCount(draft.objects, 'OT_PERS_TYPE')).toBe(2)
-    expect(typeCount(draft.objects, 'OT_APPL_SYS')).toBe(2)
+    // OT_PERS_TYPE / OT_APPL_SYS counts reflect per-owner satellite duplication:
+    // 2 roles × 2 owners each = 4 role duplicates; 2 systems (2 + 1 owners) = 3
+    // system duplicates. Info & controls stay at 2 (each satellite has 1 owner).
+    expect(typeCount(draft.objects, 'OT_PERS_TYPE')).toBe(4)
+    expect(typeCount(draft.objects, 'OT_APPL_SYS')).toBe(3)
     expect(typeCount(draft.objects, 'OT_INFO_CARR')).toBe(2)
     expect(typeCount(draft.objects, 'OT_POLICY')).toBe(1)
     expect(typeCount(draft.objects, 'OT_BUSINESS_RULE')).toBe(1)
@@ -233,29 +246,39 @@ describe('expansion table — one assertion per row (VALID_CANONICAL_FULL)', () 
 
   it('data-flow via informationObjects -> OT_INFO_CARR + ST_INFO_CARR_EDOC with CT_IS_INP_FOR / CT_HAS_OUT', () => {
     const { draft } = full()
-    const info = obj(draft.objects, 'io:io-ticket')
+    // Per-owner satellite duplication: each info object gets one copy per owner.
+    const info = obj(draft.objects, 'io:io-ticket@n-log')
     expect(info.objectType).toBe('OT_INFO_CARR')
     expect(info.symbolType).toBe('ST_INFO_CARR_EDOC')
-    // io-ticket is output-of n-log: function -> info, CT_HAS_OUT
-    const out = rel(draft.relations, 're:n:n-log:io:io-ticket')
+    // io-ticket is output-of n-log: function -> info duplicate, CT_HAS_OUT
+    const out = rel(draft.relations, 're:n:n-log:io:io-ticket@n-log')
     expect(out.connectionType).toBe('CT_HAS_OUT')
-    // io-report is input-to n-notify: info -> function, CT_IS_INP_FOR
-    const inp = rel(draft.relations, 're:io:io-report:n:n-notify')
+    // io-report is input-to n-notify: info duplicate -> function, CT_IS_INP_FOR
+    const inp = rel(draft.relations, 're:io:io-report@n-notify:n:n-notify')
     expect(inp.connectionType).toBe('CT_IS_INP_FOR')
   })
 
   it('roles -> OT_PERS_TYPE + ST_EMPL_TYPE + CT_EXEC_1 per node, owner emits an AT_PERS_RESP model attribute', () => {
     const { draft } = full()
-    const role = obj(draft.objects, 'r:r-agent')
-    expect(role.objectType).toBe('OT_PERS_TYPE')
+    // Per-owner satellite duplication (2026-08-07): each (role, owner) pair
+    // emits its own OT_PERS_TYPE duplicate so each function carries a LOCAL
+    // copy of the role satellite rather than sharing one across the diagram.
+    const roleAtLog = obj(draft.objects, 'r:r-agent@n-log')
+    expect(roleAtLog.objectType).toBe('OT_PERS_TYPE')
     // symbolType: without it, arisAiCreate.ts fell through to 'ST_FUNC' and the
     // renderer stamped orbitpm:unknown-symbol (2026-08-07 fix).
-    expect(role.symbolType).toBe('ST_EMPL_TYPE')
-    expect(rel(draft.relations, 're:r:r-agent:n:n-log').connectionType).toBe('CT_EXEC_1')
-    expect(rel(draft.relations, 're:r:r-agent:n:n-investigate').connectionType).toBe('CT_EXEC_1')
+    expect(roleAtLog.symbolType).toBe('ST_EMPL_TYPE')
+    const roleAtInvestigate = obj(draft.objects, 'r:r-agent@n-investigate')
+    expect(roleAtInvestigate.names).toEqual(roleAtLog.names)
+    expect(rel(draft.relations, 're:r:r-agent@n-log:n:n-log').connectionType).toBe('CT_EXEC_1')
+    expect(rel(draft.relations, 're:r:r-agent@n-investigate:n:n-investigate').connectionType).toBe(
+      'CT_EXEC_1'
+    )
     const ownerAttr = draft.attributes.find(
       (attribute) => attribute.attributeType === 'AT_PERS_RESP'
     )
+    // Phase E still fires ONCE per canonical role (not per duplicate) — the
+    // AT_PERS_RESP model attribute is a canonical-role property, not per-copy.
     expect(ownerAttr?.ownerKind).toBe('model')
     expect(ownerAttr?.ownerLogicalId).toBe('m:proc-full')
     expect(ownerAttr?.values).toEqual({ en: 'IT Manager', ar: 'مدير تقنية المعلومات' })
@@ -263,25 +286,31 @@ describe('expansion table — one assertion per row (VALID_CANONICAL_FULL)', () 
 
   it('systems -> OT_APPL_SYS + ST_APPL_SYS + CT_SUPP_3 per node', () => {
     const { draft } = full()
-    const system = obj(draft.objects, 's:s-itsm')
-    expect(system.objectType).toBe('OT_APPL_SYS')
-    expect(system.symbolType).toBe('ST_APPL_SYS')
-    expect(rel(draft.relations, 're:s:s-itsm:n:n-log').connectionType).toBe('CT_SUPP_3')
-    expect(rel(draft.relations, 're:s:s-itsm:n:n-triage').connectionType).toBe('CT_SUPP_3')
+    // Per-owner satellite duplication: one system copy per owning node.
+    const systemAtLog = obj(draft.objects, 's:s-itsm@n-log')
+    expect(systemAtLog.objectType).toBe('OT_APPL_SYS')
+    expect(systemAtLog.symbolType).toBe('ST_APPL_SYS')
+    expect(rel(draft.relations, 're:s:s-itsm@n-log:n:n-log').connectionType).toBe('CT_SUPP_3')
+    expect(rel(draft.relations, 're:s:s-itsm@n-triage:n:n-triage').connectionType).toBe(
+      'CT_SUPP_3'
+    )
   })
 
   it('controls -> OT_POLICY/ST_BUSINESS_POLICY/CT_AFFECTS and OT_BUSINESS_RULE/ST_BUSINESS_RULE/CT_IS_EVAL_BY_1', () => {
     const { draft } = full()
-    const policy = obj(draft.objects, 'c:c-sla-policy')
+    // Per-owner satellite duplication: `c:<controlId>@<ownerNodeId>`.
+    const policy = obj(draft.objects, 'c:c-sla-policy@n-triage')
     expect(policy.objectType).toBe('OT_POLICY')
     expect(policy.symbolType).toBe('ST_BUSINESS_POLICY')
-    expect(rel(draft.relations, 're:c:c-sla-policy:n:n-triage').connectionType).toBe('CT_AFFECTS')
-    const rule = obj(draft.objects, 'c:c-escalation-rule')
+    expect(rel(draft.relations, 're:c:c-sla-policy@n-triage:n:n-triage').connectionType).toBe(
+      'CT_AFFECTS'
+    )
+    const rule = obj(draft.objects, 'c:c-escalation-rule@n-exception')
     expect(rule.objectType).toBe('OT_BUSINESS_RULE')
     expect(rule.symbolType).toBe('ST_BUSINESS_RULE')
-    expect(rel(draft.relations, 're:c:c-escalation-rule:xe:n-exception').connectionType).toBe(
-      'CT_IS_EVAL_BY_1'
-    )
+    expect(
+      rel(draft.relations, 're:c:c-escalation-rule@n-exception:xe:n-exception').connectionType
+    ).toBe('CT_IS_EVAL_BY_1')
   })
 
   it('a requirement control -> OT_REQUIREMENT + CT_REFS_TO_2 (row completed)', () => {
@@ -316,25 +345,33 @@ describe('expansion table — one assertion per row (VALID_CANONICAL_FULL)', () 
     }
     const { draft } = projectCanonicalToDraft(withRequirement)
     expect(validateArisAiDraft(draft).ok).toBe(true)
-    const req = obj(draft.objects, 'c:req-1')
+    // Per-owner satellite duplication: `c:<controlId>@<ownerNodeId>`.
+    const req = obj(draft.objects, 'c:req-1@b')
     expect(req.objectType).toBe('OT_REQUIREMENT')
     expect(req.symbolType).toBe('ST_REQUIREMENT')
-    expect(rel(draft.relations, 're:c:req-1:n:b').connectionType).toBe('CT_REFS_TO_2')
+    expect(rel(draft.relations, 're:c:req-1@b:n:b').connectionType).toBe('CT_REFS_TO_2')
   })
 
   it('facts -> a comma-joined, sorted evidence string on the causing object', () => {
     const { draft } = full()
     expect(obj(draft.objects, 'n:n-log').evidence).toBe('f-1')
-    // io-ticket references f-1 and f-6 -> sorted, comma-joined
-    expect(obj(draft.objects, 'io:io-ticket').evidence).toBe('f-1,f-6')
+    // io-ticket references f-1 and f-6 -> sorted, comma-joined. With per-owner
+    // satellite duplication the io duplicate carries the same evidence string.
+    expect(obj(draft.objects, 'io:io-ticket@n-log').evidence).toBe('f-1,f-6')
   })
 
   it('unknowns -> ArisAiUncertainty targeting the projected draft id (kind mapped 1:1)', () => {
     const { draft } = full()
     const byTarget = new Map(draft.uncertainties.map((unc) => [unc.targetLogicalId, unc]))
+    // Control-flow node: unchanged — the node object carries `representativeFor`.
     expect(byTarget.get('n:n-wait')?.kind).toBe('ambiguous-mapping')
     expect(byTarget.get('n:n-wait')?.field).toBe('waitDetail')
-    expect(byTarget.get('io:io-report')?.kind).toBe('missing-field')
+    // Satellite target (io-report): with per-owner satellite duplication, no
+    // single duplicate carries the canonical id's `representativeFor`, so the
+    // unknown falls back to the primary model id — a model-level note that is
+    // still visible without being pinned arbitrarily to one duplicate.
+    expect(byTarget.get('m:proc-full')?.kind).toBe('missing-field')
+    expect(byTarget.get('m:proc-full')?.field).toBe('outputOfNodeIds')
   })
 })
 

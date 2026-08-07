@@ -34,8 +34,17 @@ const sha256Hex = (input: string | Uint8Array): string =>
 // corridor immediately outside the control-flow bounding box, so satellite
 // coordinates (and every satellite route's bends) move — the SVG bytes
 // shift accordingly. Layout-only change; EPC_ENGINE_VERSION stays at 0.3.0.
+// Re-updated same day after switching `projectToEpc` from one-satellite-per-
+// canonical to one-satellite-per-(satellite, owner) pair: shared satellites
+// (e.g., a role or system used by several functions) now project into N
+// per-owner duplicates, each visually short-tethered to its own owning
+// function. That removes the cross-page horizontal connectors of the shared-
+// satellite layout, but grows the object count by (owners - 1) per shared
+// satellite, so both the AML and the SVG bytes shift. Projection-behavior
+// change; EPC_ENGINE_VERSION and PROJECTION_VERSION intentionally stay put
+// (this is a rendering-shape improvement inside the same contract).
 const VALID_CANONICAL_FULL_SVG_SHA256 =
-  'ff330a0c46d41e228128acb584551f13ebe0c10bb00bdb54779be375d565c483'
+  '764e3708d48b7202aafaa83e5189ade3aa956eabeced5b2c814f1ca675fb33d8'
 
 /** Schema-valid, but its projected EEPC has no start/end event — fails the gate. */
 const STRUCTURALLY_INVALID: CanonicalProcessV1 = {
