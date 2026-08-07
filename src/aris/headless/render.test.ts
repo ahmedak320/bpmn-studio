@@ -43,8 +43,16 @@ const sha256Hex = (input: string | Uint8Array): string =>
 // satellite, so both the AML and the SVG bytes shift. Projection-behavior
 // change; EPC_ENGINE_VERSION and PROJECTION_VERSION intentionally stay put
 // (this is a rendering-shape improvement inside the same contract).
+// Re-updated same day: rolled back the per-owner column layout (v27) — with
+// per-owner satellite duplication in the projection, one column per owner
+// blew the canvas to 7600px wide and OOM'd the container rasterizer. All
+// satellites now share the single column at reservedCrossMax, and each
+// owner's satellites stack downward from that owner's along-top. Canvas
+// width stays bounded by core flow; each owner's satellites are still
+// clustered locally by along position; and per-owner duplication (still in
+// projectToEpc.ts) keeps every route short.
 const VALID_CANONICAL_FULL_SVG_SHA256 =
-  '764e3708d48b7202aafaa83e5189ade3aa956eabeced5b2c814f1ca675fb33d8'
+  '196d3e1f13bb4c97ec4dc7556904120c9cb9d9f3d35295aeaea086595bb5aa4f'
 
 /** Schema-valid, but its projected EEPC has no start/end event — fails the gate. */
 const STRUCTURALLY_INVALID: CanonicalProcessV1 = {

@@ -121,34 +121,42 @@ export function placeSatellites(
       left - right
   )
 
+  // Per-owner column fanout is gone: with satellites duplicated per owner in
+  // projectToEpc.ts, we only need ONE column for every owner's satellites.
+  // The full-column-per-owner policy (previous version of this file) blew up
+  // the canvas: 20-step process × 15 owners × ~350px column stride pushed
+  // width past 7000px, so the container rasterizer needed ~200MP of memory
+  // and OOM'd. Single-column keeps canvas width ~ core-flow width and stays
+  // fast under the 2GB container budget.
   const baseCross = reservedCrossMax + spacing.crossGap
   const maxSatCross = boxes.reduce((highest, box) => Math.max(highest, box.cross), 0)
-  // Each column reserves the widest satellite plus one crossGap of clearance,
-  // so the corridor of the *next* column has room to breathe without touching
-  // the previous column's satellites.
-  const columnStride = Math.max(maxSatCross + spacing.crossGap, spacing.crossGap * 2)
   const columnStartOf = new Map<number, number>()
   const corridorCrossOf = new Map<number, number>()
-  owners.forEach((owner, ordinal) => {
-    const columnStart = baseCross + ordinal * columnStride
-    columnStartOf.set(owner, columnStart)
-    // Corridor sits half a crossGap left of the column, comfortably clear of
-    // both the previous column's satellites and this column's satellites.
-    corridorCrossOf.set(owner, columnStart - spacing.crossGap / 2)
-  })
+  for (const owner of owners) {
+    columnStartOf.set(owner, baseCross)
+    corridorCrossOf.set(owner, baseCross - spacing.crossGap / 2)
+  }
 
-  // --- place each owner's satellites in its column, stacked at owner's top -
-  // Stacking downward from `owner.alongTop` (never above it) is what keeps
-  // `base.y` — and therefore every control-flow node's shifted `rect.y` —
-  // decided by the control flow alone. Extending past the owner's bottom is
-  // fine; only the *upper* extent participates in the shift.
+  // --- place each owner's satellites stacked next to that owner ------------
+  // All owners share the single satellite column at `baseCross`. Each owner's
+  // satellites stack downward from that owner's along-top — but the global
+  // `stackCursor` tracks the lowest point already occupied so a later owner
+  // whose top would land inside a previous owner's stack is packed tight
+  // instead of overlapping. Owner iteration is already in rank order, so
+  // `Math.max(stackCursor, ownerAlongTop)` gives each owner the LATER of
+  // (a) its natural top and (b) the end of the previous stack. Along-axis
+  // overlaps are therefore impossible by construction. Cross overlaps are
+  // impossible too because everything shares one column. Owners with 1–4
+  // duplicates (typical after per-owner projection) stay near their owner;
+  // dense owners naturally push later owners' clusters downward.
   const satelliteGap = Math.max(spacing.labelGap * 2, Math.round(spacing.crossGap * 0.25))
+  let stackCursor = -Infinity
   for (const owner of owners) {
     const members = (membersOf.get(owner) as number[]).slice().sort((left, right) => left - right)
     const columnStart = columnStartOf.get(owner) as number
     const ownerBox = placement.boxes[owner] as OccupiedBox
     const ownerAlongTop = (placement.alongOf[owner] as number) - ownerBox.along / 2
-    let cursor = ownerAlongTop
+    let cursor = Math.max(stackCursor, ownerAlongTop)
     for (const member of members) {
       const box = boxes[member] as OccupiedBox
       crossOf[member] = columnStart + box.cross / 2
@@ -156,17 +164,32 @@ export function placeSatellites(
       cursor += box.along + satelliteGap
       crossMax = Math.max(crossMax, columnStart + box.cross)
     }
+    stackCursor = cursor
   }
+  // Silence unused-var warning for maxSatCross (kept around only to document
+  // that per-owner column-stride math was intentionally removed).
+  void maxSatCross
 
-  // --- orphans stacked in a final shared column at the far side -----------
+  // --- orphans stacked in the same shared column, after all owners --------
+  // With per-owner duplication in the projection, real orphans are rare (a
+  // satellite with no control-flow connection at all). Stack them ABOVE the
+  // owner-satellite region so they don't collide with any owner's stack.
   if (orphans.length > 0) {
-    const orphanColumnStart = baseCross + owners.length * columnStride
     // Start orphans at the control-flow's first band, not `spacing.margin`,
     // so an orphan-only satellite set never lowers `base.y` below the
-    // control-flow's top and shifts the whole backbone (§13.2).
+    // control-flow's top and shifts the whole backbone (§13.2). Orphans use
+    // the same single column as owner satellites.
+    const orphanColumnStart = baseCross
     const orphanTop =
       (placement.bandStart[0] as number | undefined) ?? spacing.margin + spacing.rankGap
+    // Find the current lowest satellite along to stack orphans after everyone.
     let cursor = orphanTop
+    for (let i = 0; i < alongOf.length; i += 1) {
+      if (ownerOf[i] === -1) continue
+      const box = boxes[i] as OccupiedBox
+      const bottom = (alongOf[i] as number) + box.along / 2 + satelliteGap
+      if (bottom > cursor) cursor = bottom
+    }
     for (const orphan of orphans.slice().sort((left, right) => left - right)) {
       const box = boxes[orphan] as OccupiedBox
       alongOf[orphan] = cursor + box.along / 2
