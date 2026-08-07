@@ -26,9 +26,11 @@ const sha256Hex = (input: string | Uint8Array): string =>
 // Updated 2026-08-07: satellite symbolType fix (roles->ST_EMPL_TYPE,
 // systems->ST_APPL_SYS, informationObjects->ST_INFO_CARR_EDOC, controls->
 // ST_{BUSINESS_POLICY,BUSINESS_RULE,REQUIREMENT}) intentionally changes the
-// AML SymbolNum values, which changes the SVG bytes.
+// AML SymbolNum values, which changes the SVG bytes. Re-updated same day
+// after bumping EPC_ENGINE_VERSION 0.2.0 -> 0.3.0 (the stamped root
+// attribute changes 3 bytes in the SVG string).
 const VALID_CANONICAL_FULL_SVG_SHA256 =
-  '087c78128cba11a1ff8c48425e50a72b7b1ab81406b54b06b70d083deffdb28e'
+  'dbed6d953f1cc689cfab6bbae2c1d590ffc62f2e00406b72220bf718cffd569b'
 
 /** Schema-valid, but its projected EEPC has no start/end event — fails the gate. */
 const STRUCTURALLY_INVALID: CanonicalProcessV1 = {
@@ -135,7 +137,7 @@ describe('renderCanonicalProcess — VALID_CANONICAL_FULL', () => {
 
     const expectedInputSha = sha256Hex(canonicalJsonBytes(VALID_CANONICAL_FULL))
 
-    expect(result.svg).toContain('data-epc-engine-version="0.2.0"')
+    expect(result.svg).toContain('data-epc-engine-version="0.3.0"')
     expect(result.svg).toContain('data-epc-schema-version="1"')
     expect(result.svg).toContain('data-epc-projection-version="1"')
     expect(result.svg).toContain(`data-epc-input-sha256="${expectedInputSha}"`)
@@ -143,7 +145,7 @@ describe('renderCanonicalProcess — VALID_CANONICAL_FULL', () => {
     expect(result.svg).not.toContain('data-epc-source-version')
 
     expect(result.metadata).toEqual({
-      engineVersion: '0.2.0',
+      engineVersion: '0.3.0',
       schemaVersion: 1,
       projectionVersion: 1,
       inputSha256: expectedInputSha,

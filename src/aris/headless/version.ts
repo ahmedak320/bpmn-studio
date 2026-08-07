@@ -16,4 +16,4 @@
  * also invalidates the committed SVG snapshot hash in `render.test.ts`.
  */
 
-export const EPC_ENGINE_VERSION = '0.2.0'
+export const EPC_ENGINE_VERSION = '0.3.0'
