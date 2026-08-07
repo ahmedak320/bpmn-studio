@@ -1,7 +1,7 @@
 {
   "name": "@orbitpm/epc-engine",
-  "version": "0.2.0",
-  "description": "OrbitPM EPC engine as a service — CanonicalProcessV1 → EPC projection, validation, headless SVG render",
+  "version": "0.3.0",
+  "description": "OrbitPM EPC engine as a service \u2014 CanonicalProcessV1 \u2192 EPC projection, validation, headless SVG render",
   "license": "MIT",
   "type": "module",
   "exports": {
