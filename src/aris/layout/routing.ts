@@ -71,6 +71,16 @@ export function shapeAlongMax(geometry: FlowGeometry, node: number): number {
  */
 export class GapSlotAllocator {
   private readonly counters: number[]
+  /**
+   * Per-source shared slots. All forward branches that leave the SAME split
+   * node (an XOR/AND gate, or a fan-out function with 2+ outgoing edges) share
+   * ONE horizontal-turn slot in a given rank gap, so their L-shaped turns land
+   * at the same cross coordinate instead of fanning out across N slots. Keyed
+   * by `${sourceNode}@${gap}` so a DIFFERENT rank gap still allocates its own
+   * slot independently. The receiving (target) end is never keyed here, so it
+   * stays per-target.
+   */
+  private readonly sharedSlots = new Map<string, number>()
 
   constructor(
     private readonly gapStart: readonly number[],
@@ -78,6 +88,23 @@ export class GapSlotAllocator {
     private readonly slotsPerSide = 5
   ) {
     this.counters = new Array<number>(gapStart.length).fill(0)
+  }
+
+  /**
+   * Like {@link next}, but every call with the same `(sourceNode, gap)` pair
+   * reuses the FIRST slot handed out for that pair. A single-outgoing source is
+   * therefore called exactly once and still gets its own unique slot; a split
+   * reuses that one slot across all its branches, so their horizontal turns
+   * share a cross coordinate. Deterministic: the same call order yields the
+   * same slots.
+   */
+  nextForSource(gap: number, sourceNode: number): number {
+    const key = `${sourceNode}@${gap}`
+    const existing = this.sharedSlots.get(key)
+    if (existing !== undefined) return existing
+    const slot = this.next(gap)
+    this.sharedSlots.set(key, slot)
+    return slot
   }
 
   next(gap: number): number {
@@ -283,7 +310,11 @@ export function routeForwardEdge(
     ]
   }
 
-  const firstGap = slots.next(sourceRank + 1)
+  // The source-side horizontal turn is shared per source: all branches leaving
+  // the SAME split node reuse ONE slot in this rank gap, so their L-shaped
+  // turns land at the same cross coordinate (a visually clean split). The
+  // target-side turn (`secondGap` below) stays per-target and is NOT shared.
+  const firstGap = slots.nextForSource(sourceRank + 1, source)
   if (targetRank === sourceRank + 1) {
     return simplifyFlowPolyline([
       { along: exitAlong, cross: sourceCross },

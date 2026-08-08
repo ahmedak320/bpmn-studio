@@ -91,8 +91,15 @@ const sha256Hex = (input: string | Uint8Array): string =>
 // control-flow backbone is byte-identical; only satellite coordinates/routes
 // (and the canvas origin, which may now go negative) move, shifting the SVG
 // bytes. Layout-only change; EPC_ENGINE_VERSION stays at 0.3.0.
+// Updated 2026-08-09 (shared-source split turns, no version bump): forward
+// branches leaving the SAME split now SHARE one source-side gap slot
+// (`GapSlotAllocator.nextForSource`), so every branch's L-shaped horizontal
+// turn lands at the same cross coordinate instead of fanning across N slots.
+// Only the horizontal-turn coordinate of multi-branch splits moves (source
+// exits and target near-side stubs are unchanged), which shifts the SVG bytes.
+// Layout-only change; EPC_ENGINE_VERSION stays at 0.3.0.
 const VALID_CANONICAL_FULL_SVG_SHA256 =
-  '0d56c784882d7cf017217780026a05fc81c43669ed4732c933099dac272803b1'
+  '771cdb319678d6f2a8256f0239164b7ed52ad2d292fd11f9b06731f13d62fe29'
 
 /** Schema-valid, but its projected EEPC has no start/end event — fails the gate. */
 const STRUCTURALLY_INVALID: CanonicalProcessV1 = {

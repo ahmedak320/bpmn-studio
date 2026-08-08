@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { cleanLayout } from '../cleanLayout'
 import { cleanLayoutRevision, resetToSourceLayout, sourceLayoutRevision } from '../modes'
 import { pointOnRectBoundary } from '../geometry'
+import { GapSlotAllocator } from '../routing'
 import type { ArisLayoutEdgeRoute, ArisLayoutNodePlacement, ArisLayoutResult } from '../types'
 import {
   bendDiamond,
@@ -455,6 +456,99 @@ describe('level-locked splits — every branch leaves at the same along-coord', 
     const ys = out.map((edge) => (edge.points[0] as { y: number }).y)
     expect(ys[1]).toBeCloseTo(ys[0] as number, 9)
     expectClean(result)
+  })
+})
+
+describe('shared-source split turns — every branch turns at one horizontal y', () => {
+  // Bug fix (2026-08-09): branches leaving the SAME split (XOR/AND gate or a
+  // fan-out function) were each allocated their OWN gap slot, so their L-shaped
+  // horizontal turns landed at DIFFERENT cross coords and looked mis-stacked.
+  // `GapSlotAllocator.nextForSource` now SHARES one source-side slot per
+  // (source, rank-gap), so all branch horizontal turns share a coordinate. The
+  // turn coord is the second-to-last point of the branch route (the point right
+  // before the target's near-side vertical stub); a branch that happens to sit
+  // straight below the source has only 2 points and thus no turn to misalign.
+  function turnY(edge: ArisLayoutEdgeRoute): number | null {
+    if (edge.points.length < 3) return null
+    return (edge.points[edge.points.length - 2] as { y: number }).y
+  }
+  function branchTurnYs(result: ArisLayoutResult, splitId: string): number[] {
+    return result.edges
+      .filter((edge) => edge.source === splitId && edge.classification === 'forward')
+      .map((edge) => turnY(edge))
+      .filter((value): value is number => value !== null)
+  }
+  function andDiamond(branchCount: number): ArisLayoutGraphInput {
+    const nodes = [
+      event('E.start'),
+      rule('R.split', 'and'),
+      rule('R.merge', 'and'),
+      event('E.end')
+    ]
+    const edges = [flow('E.start', 'R.split')]
+    for (let index = 0; index < branchCount; index += 1) {
+      nodes.push(fn(`F.${index}`))
+      edges.push(flow('R.split', `F.${index}`))
+      edges.push(flow(`F.${index}`, 'R.merge'))
+    }
+    edges.push(flow('R.merge', 'E.end'))
+    return { id: `and-${branchCount}`, nodes, edges }
+  }
+
+  it('XOR split N=2: both branches turn at the same horizontal y', () => {
+    const result = cleanLayout(xorDiamond(2))
+    const ys = branchTurnYs(result, 'R.split')
+    expect(ys.length).toBe(2)
+    for (const y of ys) expect(y).toBeCloseTo(ys[0] as number, 9)
+    expectClean(result)
+  })
+
+  it('XOR split N=3: all bending branches turn at the same horizontal y', () => {
+    const result = cleanLayout(xorDiamond(3))
+    const ys = branchTurnYs(result, 'R.split')
+    expect(ys.length).toBeGreaterThanOrEqual(2)
+    for (const y of ys) expect(y).toBeCloseTo(ys[0] as number, 9)
+    expectClean(result)
+  })
+
+  it('AND split (fan-out) N=3: all bending branches turn at the same horizontal y', () => {
+    const result = cleanLayout(andDiamond(3))
+    const ys = branchTurnYs(result, 'R.split')
+    expect(ys.length).toBeGreaterThanOrEqual(2)
+    for (const y of ys) expect(y).toBeCloseTo(ys[0] as number, 9)
+    expectClean(result)
+  })
+
+  it('fan-out function (no gate) N=3: all bending branches turn at the same horizontal y', () => {
+    const result = cleanLayout({
+      id: 'fan-out-3',
+      nodes: [
+        fn('D', { sourcePosition: { x: 0, y: 0 } }),
+        fn('A', { sourcePosition: { x: -400, y: 600 } }),
+        fn('B', { sourcePosition: { x: 0, y: 600 } }),
+        fn('C', { sourcePosition: { x: 400, y: 600 } })
+      ],
+      edges: [flow('D', 'A'), flow('D', 'B'), flow('D', 'C')]
+    })
+    const ys = branchTurnYs(result, 'D')
+    expect(ys.length).toBeGreaterThanOrEqual(2)
+    for (const y of ys) expect(y).toBeCloseTo(ys[0] as number, 9)
+    expectClean(result)
+  })
+
+  it('regression: distinct single-out sources still get their OWN slot', () => {
+    // Per-source SHARING must only collapse repeated calls for the SAME source;
+    // two different sources in the same rank gap must still get distinct slots.
+    const alloc = new GapSlotAllocator([0, 0], [100, 100])
+    const a1 = alloc.nextForSource(0, 7)
+    const a2 = alloc.nextForSource(0, 7) // same source -> reuse
+    const b1 = alloc.nextForSource(0, 9) // different source -> own slot
+    expect(a2).toBe(a1)
+    expect(b1).not.toBe(a1)
+    // A different rank gap allocates independently of gap 0: source 7 in gap 1
+    // is the FIRST ticket of band 1, so it lands at that band's centre.
+    const c1 = alloc.nextForSource(1, 7)
+    expect(c1).toBe(50) // centre of gap 1's [0,100] band, untouched by gap 0
   })
 })
 
