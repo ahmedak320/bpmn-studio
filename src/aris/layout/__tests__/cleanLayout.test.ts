@@ -244,6 +244,27 @@ describe('step 10 — satellites never expand the core flow grid (plan 13.2)', (
     expect(JSON.stringify(routes(decorated))).toBe(JSON.stringify(routes(bare)))
   })
 
+  it('shares ONE trunk for all of an owner\'s satellites (item 1)', () => {
+    // Owner F.b carries all 6 satellites. Every satellite route must share an
+    // identical trunk prefix (owner exit + gap crossing), so the routes overlap
+    // into one line near the owner and only branch inside the corridor.
+    const withSix = cleanLayout(chainWithSatellites(6))
+    const satRoutes = withSix.edges.filter((edge) => edge.kind === 'satellite')
+    expect(satRoutes.length).toBe(6)
+    const trunk = satRoutes[0]?.points.slice(0, 2)
+    for (const route of satRoutes) {
+      expect(route.points[0]).toEqual(trunk?.[0])
+      expect(route.points[1]).toEqual(trunk?.[1])
+    }
+    // The branches diverge afterwards: the 4th point (corridor->satellite row)
+    // differs per satellite, so this is genuinely trunk-and-branch, not one
+    // route drawn six times.
+    const branchRows = new Set(
+      satRoutes.map((route) => JSON.stringify(route.points[route.points.length - 1]))
+    )
+    expect(branchRows.size).toBe(6)
+  })
+
   it('keeps every satellite outside the control-flow bounding box', () => {
     const controlMax = Math.max(
       ...decorated.nodes
@@ -254,6 +275,67 @@ describe('step 10 — satellites never expand the core flow grid (plan 13.2)', (
       if (node.kind !== 'satellite') continue
       expect(node.rect.x).toBeGreaterThan(controlMax)
     }
+  })
+})
+
+describe('straight-first routing — a straight run keeps a single segment', () => {
+  // Item 6: an edge whose source and target sit on the same cross line and on
+  // adjacent ranks must be a single straight segment (exactly 2 points). No
+  // pass may decorate an already-straight route with a mid-bend.
+  it('routes an aligned adjacent-rank edge as a 2-point straight line', () => {
+    const result = cleanLayout({
+      id: 'straight',
+      nodes: [
+        fn('A', { sourcePosition: { x: 0, y: 0 } }),
+        fn('B', { sourcePosition: { x: 0, y: 600 } })
+      ],
+      edges: [flow('A', 'B')]
+    })
+    const edge = edgeById(result, 'A->B')
+    expect(edge.points.length).toBe(2)
+    // Straight => the two endpoints share a cross coordinate (x in TTB).
+    expect((edge.points[1] as { x: number }).x).toBeCloseTo(
+      (edge.points[0] as { x: number }).x,
+      9
+    )
+    expectClean(result)
+  })
+})
+
+describe('level-locked splits — every branch leaves at the same along-coord', () => {
+  // Item 2: when a split (XOR gate or a fan-out function) emits N branches,
+  // all branch routes must exit the source at exactly the same along
+  // coordinate (y in top-to-bottom). `routeForwardEdge` derives the source
+  // exit from `shapeAlongMax(source)`, which is a per-source constant, so this
+  // holds by construction — this test locks it against a regression that would
+  // stagger the source stub per branch.
+  it('emits all XOR-gate branches at one source y', () => {
+    const result = cleanLayout(xorDiamond(4))
+    expect(result.orientation).toBe('top-to-bottom')
+    const splitOut = result.edges.filter(
+      (edge) => edge.source === 'R.split' && edge.classification === 'forward'
+    )
+    expect(splitOut.length).toBe(4)
+    const ys = splitOut.map((edge) => (edge.points[0] as { y: number }).y)
+    for (const y of ys) expect(y).toBeCloseTo(ys[0] as number, 9)
+    expectClean(result)
+  })
+
+  it('emits all fan-out-function branches at one source y', () => {
+    const result = cleanLayout({
+      id: 'fan-out',
+      nodes: [
+        fn('Determine', { sourcePosition: { x: 0, y: 0 } }),
+        fn('Annual', { sourcePosition: { x: 0, y: 600 } }),
+        fn('Adhoc', { sourcePosition: { x: 0, y: 1200 } })
+      ],
+      edges: [flow('Determine', 'Annual'), flow('Determine', 'Adhoc')]
+    })
+    const out = result.edges.filter((edge) => edge.source === 'Determine')
+    expect(out.length).toBe(2)
+    const ys = out.map((edge) => (edge.points[0] as { y: number }).y)
+    expect(ys[1]).toBeCloseTo(ys[0] as number, 9)
+    expectClean(result)
   })
 })
 

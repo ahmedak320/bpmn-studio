@@ -199,9 +199,36 @@ export function placeSatellites(
     }
   }
 
-  // --- routes: one owner-local L-shape per satellite edge -----------------
+  // --- routes: ONE shared trunk per owner, branching at each satellite -----
+  // Item 1 (trunk-and-branch). Every satellite route for one owner shares an
+  // identical prefix — a single exit at the owner's near-side centre and a
+  // single gap crossing into that owner's corridor — so the N routes overlap
+  // into ONE trunk line near the owner instead of the previous fan of N
+  // near-parallel staggered stubs. The routes only diverge once they are in
+  // the corridor, branching off at each satellite's own along-row very close
+  // to that satellite (a short horizontal stub). The corridor's vertical run
+  // is a shared cross coordinate, so the corridor segments overlap into the
+  // trunk's spine too; the visible split happens at each satellite's row.
   const slots = new GapSlotAllocator(placement.gapStart, placement.gapEnd)
-  const exitCounters = new Map<number, number>()
+
+  interface OwnerTrunk {
+    readonly exitAlong: number
+    readonly exitCross: number
+    readonly gapAlong: number
+    readonly corridorCross: number
+  }
+  const ownerTrunk = new Map<number, OwnerTrunk>()
+  for (const owner of owners) {
+    const columnStart = columnStartOf.get(owner) ?? baseCross
+    const corridorCross = corridorCrossOf.get(owner) ?? columnStart - spacing.crossGap / 2
+    ownerTrunk.set(owner, {
+      exitAlong: shapeAlongMax(geometry, owner),
+      exitCross: geometry.nodeCross[owner] as number,
+      // ONE gap slot for the whole owner: the trunk crosses the rank gap once.
+      gapAlong: slots.next((placement.rankOf[owner] as number) + 1),
+      corridorCross
+    })
+  }
 
   const shapeLeftCrossOf = (index: number): number =>
     (crossOf[index] as number) +
@@ -212,28 +239,22 @@ export function placeSatellites(
     (alongOf[index] as number) + (boxes[index] as OccupiedBox).nodeAlongOffset
 
   const routeForOwnerSatellite = (owner: number, satellite: number): FlowPoint[] => {
-    const columnStart = columnStartOf.get(owner) ?? baseCross
-    const corridorCross = corridorCrossOf.get(owner) ?? columnStart - spacing.crossGap / 2
-
-    // Stagger exits along the owner's near-side (bottom edge in TTB), so two
-    // routes leaving the same owner do not sit on top of each other.
-    const used = exitCounters.get(owner) ?? 0
-    exitCounters.set(owner, used + 1)
-    const ownerShapeCross = geometry.shapeCross[owner] as number
-    const ownerNodeCross = geometry.nodeCross[owner] as number
-    const spread = ownerShapeCross * (0.05 + (0.4 * (used % 5)) / 5)
-    const exitCross = ownerNodeCross + spread
-    const exitAlong = shapeAlongMax(geometry, owner)
-
-    const gapAlong = slots.next((placement.rankOf[owner] as number) + 1)
+    const trunk =
+      ownerTrunk.get(owner) ??
+      ({
+        exitAlong: shapeAlongMax(geometry, owner),
+        exitCross: geometry.nodeCross[owner] as number,
+        gapAlong: slots.next((placement.rankOf[owner] as number) + 1),
+        corridorCross: baseCross - spacing.crossGap / 2
+      } satisfies OwnerTrunk)
     const satAlong = shapeAlongCentreOf(satellite)
     const satLeftCross = shapeLeftCrossOf(satellite)
 
     return simplifyFlowPolyline([
-      { along: exitAlong, cross: exitCross },
-      { along: gapAlong, cross: exitCross },
-      { along: gapAlong, cross: corridorCross },
-      { along: satAlong, cross: corridorCross },
+      { along: trunk.exitAlong, cross: trunk.exitCross },
+      { along: trunk.gapAlong, cross: trunk.exitCross },
+      { along: trunk.gapAlong, cross: trunk.corridorCross },
+      { along: satAlong, cross: trunk.corridorCross },
       { along: satAlong, cross: satLeftCross }
     ])
   }

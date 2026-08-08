@@ -51,8 +51,14 @@ const sha256Hex = (input: string | Uint8Array): string =>
 // width stays bounded by core flow; each owner's satellites are still
 // clustered locally by along position; and per-owner duplication (still in
 // projectToEpc.ts) keeps every route short.
+// Updated 2026-08-08 (layout polish, no version bump): satellite routing now
+// draws ONE shared trunk per owner (item 1 trunk-and-branch) — every satellite
+// route for a given owner shares an identical exit + gap-crossing prefix and
+// only branches inside the corridor at each satellite's along-row, instead of
+// N staggered per-satellite stubs. Only satellite connector geometry moves;
+// the control-flow backbone is byte-identical, so this is a layout-only shift.
 const VALID_CANONICAL_FULL_SVG_SHA256 =
-  '196d3e1f13bb4c97ec4dc7556904120c9cb9d9f3d35295aeaea086595bb5aa4f'
+  '14e3396093daceb0c441afcc917c9a37bcb1704f3158237d8cecd4ace73ffc2c'
 
 /** Schema-valid, but its projected EEPC has no start/end event — fails the gate. */
 const STRUCTURALLY_INVALID: CanonicalProcessV1 = {
