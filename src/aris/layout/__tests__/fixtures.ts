@@ -115,6 +115,62 @@ export function chainWithSatellites(count: number): ArisLayoutGraphInput {
 }
 
 /**
+ * A symmetric XOR diamond (`start -> split -> {F.left, F.right} -> merge ->
+ * end`) whose chosen branch carries `count` satellites. The branch's outgoing
+ * edge runs back to the CENTERED merge, so the spine bends at the owner:
+ *
+ * - `branch: 'right'` — owner `F.right` sits right of centre; its successor
+ *   (the merge) is to its LEFT ⇒ the spine bends left ⇒ satellites go RIGHT.
+ * - `branch: 'left'` — owner `F.left` sits left of centre; its successor is to
+ *   its RIGHT ⇒ the spine bends right ⇒ satellites go LEFT.
+ *
+ * Used to exercise per-owner OUTER-side satellite placement.
+ */
+export function bendDiamond(branch: 'left' | 'right', count: number): ArisLayoutGraphInput {
+  const nodes: ArisLayoutNodeInput[] = [
+    event('E.start'),
+    rule('R.split', 'xor'),
+    fn('F.left'),
+    fn('F.right'),
+    rule('R.merge', 'xor'),
+    event('E.end')
+  ]
+  const edges: ArisLayoutEdgeInput[] = [
+    flow('E.start', 'R.split'),
+    flow('R.split', 'F.left'),
+    flow('R.split', 'F.right'),
+    flow('F.left', 'R.merge'),
+    flow('F.right', 'R.merge'),
+    flow('R.merge', 'E.end')
+  ]
+  const owner = branch === 'left' ? 'F.left' : 'F.right'
+  for (let index = 0; index < count; index += 1) {
+    nodes.push(satellite(`S.${index}`))
+    edges.push(attach(owner, `S.${index}`))
+  }
+  return { id: `bend-${branch}`, nodes, edges }
+}
+
+/**
+ * A straight `start -> F.a -> F.b -> end` chain whose END event carries `count`
+ * satellites. The end has no outgoing edge, so the side decision falls through
+ * to the incoming edge; a straight arrival defaults to RIGHT.
+ */
+export function endSpineSatellites(count: number): ArisLayoutGraphInput {
+  const nodes: ArisLayoutNodeInput[] = [event('E.start'), fn('F.a'), fn('F.b'), event('E.end')]
+  const edges: ArisLayoutEdgeInput[] = [
+    flow('E.start', 'F.a'),
+    flow('F.a', 'F.b'),
+    flow('F.b', 'E.end')
+  ]
+  for (let index = 0; index < count; index += 1) {
+    nodes.push(satellite(`S.${index}`))
+    edges.push(attach('E.end', `S.${index}`))
+  }
+  return { id: 'end-spine-satellites', nodes, edges }
+}
+
+/**
  * A graph of exactly `nodeCount` control-flow nodes: a spine of alternating
  * events and functions, interrupted every 24 nodes by an XOR diamond and
  * carrying a return path every 40 nodes.

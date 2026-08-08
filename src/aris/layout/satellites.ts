@@ -38,6 +38,7 @@
 
 import type { ArisLayoutEdgeInput, ArisLayoutNodeInput } from './types'
 import { occupiedBoxOf, type OccupiedBox } from './axis'
+import { LAYOUT_EPSILON } from './geometry'
 import {
   GapSlotAllocator,
   shapeAlongMax,
@@ -53,16 +54,30 @@ export interface SatellitePlacement {
   readonly boxes: readonly OccupiedBox[]
   /** Route for each satellite edge, keyed by its index in `satelliteEdges`. */
   readonly routes: readonly (readonly FlowPoint[])[]
-  /** Outermost cross coordinate the satellite region reaches. */
+  /** Outermost cross coordinate the satellite region reaches on the max side. */
   readonly crossMax: number
+  /** Outermost cross coordinate the satellite region reaches on the min side. */
+  readonly crossMin: number
 }
+
+/**
+ * Per-owner satellite side. Satellites hang off the OUTER side of the spine at
+ * the owner's position: if the spine bends left there, they go RIGHT (max
+ * cross); if it bends right, they go LEFT (min cross); a straight spine defaults
+ * to RIGHT. Ties resolve to RIGHT. This is purely a function of the control
+ * placement (deterministic), so it never touches the backbone geometry.
+ */
+type SatelliteSide = 'left' | 'right'
 
 export function placeSatellites(
   satelliteNodes: readonly ArisLayoutNodeInput[],
   satelliteEdges: readonly ArisLayoutEdgeInput[],
   controlIndexOf: ReadonlyMap<string, number>,
   geometry: FlowGeometry,
-  reservedCrossMax: number
+  reservedCrossMax: number,
+  reservedCrossMin: number,
+  controlOut: readonly (readonly number[])[],
+  controlIn: readonly (readonly number[])[]
 ): SatellitePlacement {
   const { placement } = geometry
   const spacing = placement.spacing
@@ -77,9 +92,10 @@ export function placeSatellites(
   const alongOf = new Array<number>(satelliteNodes.length).fill(0)
   const crossOf = new Array<number>(satelliteNodes.length).fill(0)
   let crossMax = reservedCrossMax
+  let crossMin = reservedCrossMin
 
   if (satelliteNodes.length === 0) {
-    return { alongOf, crossOf, boxes, routes: [], crossMax }
+    return { alongOf, crossOf, boxes, routes: [], crossMax, crossMin }
   }
 
   // --- group satellites by the first control-flow node they attach to ------
@@ -122,74 +138,102 @@ export function placeSatellites(
   )
 
   // Per-owner column fanout is gone: with satellites duplicated per owner in
-  // projectToEpc.ts, we only need ONE column for every owner's satellites.
-  // The full-column-per-owner policy (previous version of this file) blew up
-  // the canvas: 20-step process × 15 owners × ~350px column stride pushed
-  // width past 7000px, so the container rasterizer needed ~200MP of memory
-  // and OOM'd. Single-column keeps canvas width ~ core-flow width and stays
-  // fast under the 2GB container budget.
-  const baseCross = reservedCrossMax + spacing.crossGap
-  const maxSatCross = boxes.reduce((highest, box) => Math.max(highest, box.cross), 0)
-  const columnStartOf = new Map<number, number>()
-  const corridorCrossOf = new Map<number, number>()
-  for (const owner of owners) {
-    columnStartOf.set(owner, baseCross)
-    corridorCrossOf.set(owner, baseCross - spacing.crossGap / 2)
+  // projectToEpc.ts, we only need ONE column per SIDE for every owner's
+  // satellites. The full-column-per-owner policy (an earlier version of this
+  // file) blew up the canvas: 20-step process × 15 owners × ~350px column
+  // stride pushed width past 7000px, so the container rasterizer needed
+  // ~200MP of memory and OOM'd. Two shared columns (one just outside each
+  // return-channel band) keeps total canvas width ~ core-flow width and stays
+  // fast under the 2GB container budget — but now the space is split so a
+  // bending spine's satellites sit on the OUTER side of the bend.
+  //
+  // `rightBase` is the near (spine-facing) edge of the right column; a
+  // right-side satellite's box occupies [rightBase, rightBase + box.cross].
+  // `leftBase` is the near (spine-facing) edge of the left column; a left-side
+  // satellite's box occupies [leftBase - box.cross, leftBase]. Both columns
+  // grow strictly OUTWARD, so a right satellite can never push the spine left
+  // and a left satellite can never push it right (§13.2, preserved
+  // conceptually by anchoring the canvas on the control flow in cleanLayout).
+  const rightBase = reservedCrossMax + spacing.crossGap
+  const leftBase = reservedCrossMin - spacing.crossGap
+
+  // --- per-owner OUTER-side decision --------------------------------------
+  // Look at the owner's outgoing edge: if the next node sits LEFT of the owner
+  // (spine bends left), satellites go RIGHT (outside the bend); if it sits
+  // RIGHT, satellites go LEFT. A straight continuation defaults to RIGHT. When
+  // an owner has no outgoing edge (an end event) we mirror the same rule on its
+  // incoming edge. Multiple neighbours are reduced by their mean cross so a
+  // symmetric split reads as "straight" → RIGHT. Ties resolve to RIGHT.
+  const sideOfOwner = (owner: number): SatelliteSide => {
+    const ownerCross = placement.crossOf[owner] as number
+    const meanCross = (indices: readonly number[]): number =>
+      indices.reduce((sum, index) => sum + (placement.crossOf[index] as number), 0) / indices.length
+    const outs = controlOut[owner] ?? []
+    if (outs.length > 0) {
+      const next = meanCross(outs)
+      if (next < ownerCross - LAYOUT_EPSILON) return 'right' // spine bends left
+      if (next > ownerCross + LAYOUT_EPSILON) return 'left' // spine bends right
+      return 'right'
+    }
+    const ins = controlIn[owner] ?? []
+    if (ins.length > 0) {
+      const prev = meanCross(ins)
+      // Mirror of the outgoing rule: arriving FROM the right ⇒ bending left.
+      if (prev > ownerCross + LAYOUT_EPSILON) return 'right'
+      if (prev < ownerCross - LAYOUT_EPSILON) return 'left'
+      return 'right'
+    }
+    return 'right'
   }
+  const sideOf = new Map<number, SatelliteSide>()
+  for (const owner of owners) sideOf.set(owner, sideOfOwner(owner))
 
   // --- place each owner's satellites stacked next to that owner ------------
-  // All owners share the single satellite column at `baseCross`. Each owner's
-  // satellites stack downward from that owner's along-top — but the global
-  // `stackCursor` tracks the lowest point already occupied so a later owner
-  // whose top would land inside a previous owner's stack is packed tight
-  // instead of overlapping. Owner iteration is already in rank order, so
-  // `Math.max(stackCursor, ownerAlongTop)` gives each owner the LATER of
-  // (a) its natural top and (b) the end of the previous stack. Along-axis
-  // overlaps are therefore impossible by construction. Cross overlaps are
-  // impossible too because everything shares one column. Owners with 1–4
-  // duplicates (typical after per-owner projection) stay near their owner;
-  // dense owners naturally push later owners' clusters downward.
+  // Each side has its own shared column and its own stack cursor. Within a
+  // column, each owner's satellites stack downward from that owner's along-top,
+  // and the per-side cursor packs a later owner tight below the previous stack
+  // so along-overlaps are impossible. The two columns live at different cross
+  // coordinates, so a left-side and a right-side owner can share an along band
+  // without colliding. Owner iteration is in rank order (deterministic).
   const satelliteGap = Math.max(spacing.labelGap * 2, Math.round(spacing.crossGap * 0.25))
-  let stackCursor = -Infinity
+  let stackCursorRight = -Infinity
+  let stackCursorLeft = -Infinity
   for (const owner of owners) {
     const members = (membersOf.get(owner) as number[]).slice().sort((left, right) => left - right)
-    const columnStart = columnStartOf.get(owner) as number
     const ownerBox = placement.boxes[owner] as OccupiedBox
     const ownerAlongTop = (placement.alongOf[owner] as number) - ownerBox.along / 2
-    let cursor = Math.max(stackCursor, ownerAlongTop)
+    const side = sideOf.get(owner) as SatelliteSide
+    let cursor = Math.max(side === 'right' ? stackCursorRight : stackCursorLeft, ownerAlongTop)
     for (const member of members) {
       const box = boxes[member] as OccupiedBox
-      crossOf[member] = columnStart + box.cross / 2
+      if (side === 'right') {
+        crossOf[member] = rightBase + box.cross / 2
+        crossMax = Math.max(crossMax, rightBase + box.cross)
+      } else {
+        crossOf[member] = leftBase - box.cross / 2
+        crossMin = Math.min(crossMin, leftBase - box.cross)
+      }
       alongOf[member] = cursor + box.along / 2
       cursor += box.along + satelliteGap
-      crossMax = Math.max(crossMax, columnStart + box.cross)
     }
-    stackCursor = cursor
+    if (side === 'right') stackCursorRight = cursor
+    else stackCursorLeft = cursor
   }
-  // Silence unused-var warning for maxSatCross (kept around only to document
-  // that per-owner column-stride math was intentionally removed).
-  void maxSatCross
 
-  // --- orphans stacked in the same shared column, after all owners --------
+  // --- orphans stacked in the RIGHT column, after all owners --------------
   // With per-owner duplication in the projection, real orphans are rare (a
-  // satellite with no control-flow connection at all). Stack them ABOVE the
-  // owner-satellite region so they don't collide with any owner's stack.
+  // satellite with no control-flow connection at all). They have no owner, so
+  // no bend to read: they default to the RIGHT column and stack below every
+  // right-side owner stack so they can't collide with one.
   if (orphans.length > 0) {
     // Start orphans at the control-flow's first band, not `spacing.margin`,
     // so an orphan-only satellite set never lowers `base.y` below the
-    // control-flow's top and shifts the whole backbone (§13.2). Orphans use
-    // the same single column as owner satellites.
-    const orphanColumnStart = baseCross
+    // control-flow's top and shifts the whole backbone (§13.2).
+    const orphanColumnStart = rightBase
     const orphanTop =
       (placement.bandStart[0] as number | undefined) ?? spacing.margin + spacing.rankGap
-    // Find the current lowest satellite along to stack orphans after everyone.
-    let cursor = orphanTop
-    for (let i = 0; i < alongOf.length; i += 1) {
-      if (ownerOf[i] === -1) continue
-      const box = boxes[i] as OccupiedBox
-      const bottom = (alongOf[i] as number) + box.along / 2 + satelliteGap
-      if (bottom > cursor) cursor = bottom
-    }
+    // Stack orphans after the lowest right-side owner satellite.
+    let cursor = Math.max(orphanTop, stackCursorRight)
     for (const orphan of orphans.slice().sort((left, right) => left - right)) {
       const box = boxes[orphan] as OccupiedBox
       alongOf[orphan] = cursor + box.along / 2
@@ -217,16 +261,22 @@ export function placeSatellites(
     readonly gapAlong: number
     readonly corridorCross: number
   }
+  // A right-side owner's corridor sits just LEFT of the right column (between
+  // the spine and its satellites); a left-side owner's corridor sits just RIGHT
+  // of the left column. Either way the corridor is the thin channel between the
+  // spine and that owner's satellite stack.
+  const corridorCrossFor = (side: SatelliteSide): number =>
+    side === 'right' ? rightBase - spacing.crossGap / 2 : leftBase + spacing.crossGap / 2
+
   const ownerTrunk = new Map<number, OwnerTrunk>()
   for (const owner of owners) {
-    const columnStart = columnStartOf.get(owner) ?? baseCross
-    const corridorCross = corridorCrossOf.get(owner) ?? columnStart - spacing.crossGap / 2
+    const side = sideOf.get(owner) as SatelliteSide
     ownerTrunk.set(owner, {
       exitAlong: shapeAlongMax(geometry, owner),
       exitCross: geometry.nodeCross[owner] as number,
       // ONE gap slot for the whole owner: the trunk crosses the rank gap once.
       gapAlong: slots.next((placement.rankOf[owner] as number) + 1),
-      corridorCross
+      corridorCross: corridorCrossFor(side)
     })
   }
 
@@ -235,27 +285,36 @@ export function placeSatellites(
     (boxes[index] as OccupiedBox).nodeCrossOffset -
     (shapeCrossOf[index] as number) / 2
 
+  const shapeRightCrossOf = (index: number): number =>
+    (crossOf[index] as number) +
+    (boxes[index] as OccupiedBox).nodeCrossOffset +
+    (shapeCrossOf[index] as number) / 2
+
   const shapeAlongCentreOf = (index: number): number =>
     (alongOf[index] as number) + (boxes[index] as OccupiedBox).nodeAlongOffset
 
   const routeForOwnerSatellite = (owner: number, satellite: number): FlowPoint[] => {
+    const side = sideOf.get(owner) ?? 'right'
     const trunk =
       ownerTrunk.get(owner) ??
       ({
         exitAlong: shapeAlongMax(geometry, owner),
         exitCross: geometry.nodeCross[owner] as number,
         gapAlong: slots.next((placement.rankOf[owner] as number) + 1),
-        corridorCross: baseCross - spacing.crossGap / 2
+        corridorCross: corridorCrossFor(side)
       } satisfies OwnerTrunk)
     const satAlong = shapeAlongCentreOf(satellite)
-    const satLeftCross = shapeLeftCrossOf(satellite)
+    // Enter the satellite on the edge facing the spine: its LEFT edge on the
+    // right side, its RIGHT edge on the left side.
+    const satNearCross =
+      side === 'right' ? shapeLeftCrossOf(satellite) : shapeRightCrossOf(satellite)
 
     return simplifyFlowPolyline([
       { along: trunk.exitAlong, cross: trunk.exitCross },
       { along: trunk.gapAlong, cross: trunk.exitCross },
       { along: trunk.gapAlong, cross: trunk.corridorCross },
       { along: satAlong, cross: trunk.corridorCross },
-      { along: satAlong, cross: satLeftCross }
+      { along: satAlong, cross: satNearCross }
     ])
   }
 
@@ -303,5 +362,5 @@ export function placeSatellites(
     return []
   })
 
-  return { alongOf, crossOf, boxes, routes, crossMax }
+  return { alongOf, crossOf, boxes, routes, crossMax, crossMin }
 }

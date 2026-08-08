@@ -81,8 +81,18 @@ const sha256Hex = (input: string | Uint8Array): string =>
 // the owner via role.owner:true, the system s-itsm via the >=60% majority (2 of
 // 3 system owner-nodes). The AML is unchanged — SVG-only rendering-shape change,
 // no EPC_ENGINE_VERSION/PROJECTION_VERSION bump.
+// Re-updated 2026-08-08 (outer-side satellite placement, no version bump):
+// `placeSatellites` now decides a per-owner LEFT/RIGHT side from the local
+// spine geometry — satellites hang off the OUTER side of the process path at
+// that owner (bend-left ⇒ RIGHT, bend-right ⇒ LEFT, straight ⇒ RIGHT), and the
+// reserved cross space is expanded on BOTH sides of the spine. `cleanLayout`
+// now anchors the normalization shift on the control-flow bbox (not the full
+// bbox), so a left-side satellite no longer drags the spine right (§13.2). The
+// control-flow backbone is byte-identical; only satellite coordinates/routes
+// (and the canvas origin, which may now go negative) move, shifting the SVG
+// bytes. Layout-only change; EPC_ENGINE_VERSION stays at 0.3.0.
 const VALID_CANONICAL_FULL_SVG_SHA256 =
-  '39496dd90c9028796972d1532b75d2566cca2f58982b050c748528728f1943b3'
+  '0d56c784882d7cf017217780026a05fc81c43669ed4732c933099dac272803b1'
 
 /** Schema-valid, but its projected EEPC has no start/end event — fails the gate. */
 const STRUCTURALLY_INVALID: CanonicalProcessV1 = {
@@ -306,7 +316,13 @@ describe('renderCanonicalProcess — VALID_CANONICAL_FULL', () => {
       ],
       decisions: [],
       edges: [
-        { id: 'e-start', kind: 'sequence', sourceNodeId: 'n-start', targetNodeId: 'n-a1', confidence: 'high' },
+        {
+          id: 'e-start',
+          kind: 'sequence',
+          sourceNodeId: 'n-start',
+          targetNodeId: 'n-a1',
+          confidence: 'high'
+        },
         ...nodeIds.slice(0, -1).map((id, index) => ({
           id: `e-${index + 1}`,
           kind: 'sequence' as const,
@@ -314,7 +330,13 @@ describe('renderCanonicalProcess — VALID_CANONICAL_FULL', () => {
           targetNodeId: nodeIds[index + 1] as string,
           confidence: 'high' as const
         })),
-        { id: 'e-end', kind: 'sequence', sourceNodeId: 'n-a20', targetNodeId: 'n-end', confidence: 'high' }
+        {
+          id: 'e-end',
+          kind: 'sequence',
+          sourceNodeId: 'n-a20',
+          targetNodeId: 'n-end',
+          confidence: 'high'
+        }
       ],
       roles: [
         {
@@ -380,8 +402,20 @@ const RETURN_PATH_GAP: CanonicalProcessV1 = {
   ],
   decisions: [],
   edges: [
-    { id: 'e-1', kind: 'sequence', sourceNodeId: 'n-start', targetNodeId: 'n-review', confidence: 'high' },
-    { id: 'e-2', kind: 'sequence', sourceNodeId: 'n-review', targetNodeId: 'n-end', confidence: 'high' }
+    {
+      id: 'e-1',
+      kind: 'sequence',
+      sourceNodeId: 'n-start',
+      targetNodeId: 'n-review',
+      confidence: 'high'
+    },
+    {
+      id: 'e-2',
+      kind: 'sequence',
+      sourceNodeId: 'n-review',
+      targetNodeId: 'n-end',
+      confidence: 'high'
+    }
   ],
   roles: [],
   systems: [],
@@ -447,7 +481,9 @@ describe('renderCanonicalProcess — advisory return-path findings', () => {
     if (!result.ok) throw new Error('expected a successful render')
     expect(result.returnPathFindings.length).toBeGreaterThan(0)
     const gap = result.returnPathFindings.find(
-      (finding) => finding.route.outcomeNodeId.includes('n.end') || finding.route.outcomeNodeId.includes('n-end')
+      (finding) =>
+        finding.route.outcomeNodeId.includes('n.end') ||
+        finding.route.outcomeNodeId.includes('n-end')
     )
     expect(gap ?? result.returnPathFindings[0]).toBeDefined()
     const finding = result.returnPathFindings[0]
@@ -463,5 +499,163 @@ describe('renderCanonicalProcess — advisory return-path findings', () => {
     const result = await renderCanonicalProcess(AR_ONLY)
     if (!result.ok) throw new Error('expected a successful render')
     expect(result.returnPathFindings).toEqual([])
+  })
+})
+
+/**
+ * A fully bilingual, well-formed start->activity->end flow. Every node carries
+ * BOTH an EN and an AR name, so the deterministic gap scanner raises no
+ * `missingArabicName` gap — the contrast case for the advisory gap findings.
+ * (A truly zero-gap render is not reachable through the projector: an activity
+ * with no input/output/system satellite always raises `missingInputsOutputsSystems`,
+ * which no canonical-only fixture can wire away — see the lane deliverable notes.)
+ */
+const CLEAN_BILINGUAL: CanonicalProcessV1 = {
+  version: 1,
+  identity: {
+    id: 'proc-clean',
+    names: { en: 'Clean process', ar: 'عملية نظيفة' },
+    confidence: 'high'
+  },
+  nodes: [
+    { id: 'n-start', kind: 'event', names: { en: 'Start', ar: 'بداية' }, confidence: 'high' },
+    {
+      id: 'n-task',
+      kind: 'activity',
+      names: { en: 'Do the step', ar: 'نفذ الخطوة' },
+      confidence: 'high'
+    },
+    { id: 'n-end', kind: 'event', names: { en: 'Done', ar: 'انتهى' }, confidence: 'high' }
+  ],
+  decisions: [],
+  edges: [
+    {
+      id: 'e-1',
+      kind: 'sequence',
+      sourceNodeId: 'n-start',
+      targetNodeId: 'n-task',
+      confidence: 'high'
+    },
+    {
+      id: 'e-2',
+      kind: 'sequence',
+      sourceNodeId: 'n-task',
+      targetNodeId: 'n-end',
+      confidence: 'high'
+    }
+  ],
+  roles: [],
+  systems: [],
+  informationObjects: [],
+  controls: [],
+  facts: [],
+  unknowns: []
+}
+
+describe('renderCanonicalProcess — advisory gap-scanner findings', () => {
+  it('surfaces tagged, structured gap findings for a canonical with gaps', async () => {
+    const result = await renderCanonicalProcess(VALID_CANONICAL_FULL)
+    if (!result.ok) throw new Error('expected a successful render')
+
+    expect(result.gapFindings.length).toBeGreaterThan(0)
+    for (const finding of result.gapFindings) {
+      expect(finding.source).toBe('gap-scanner')
+      expect(typeof finding.kind).toBe('string')
+      // targetIds can be empty for model-scoped gaps (e.g. missingStartOrEndEvent).
+      expect(Array.isArray(finding.targetIds)).toBe(true)
+      expect(finding.messageKey.length).toBeGreaterThan(0)
+    }
+    // VALID_CANONICAL_FULL leaves several activities without an Arabic name.
+    expect(result.gapFindings.some((finding) => finding.kind === 'missingArabicName')).toBe(true)
+    // Advisory only — the render still succeeded (structural gate is clean).
+    expect(result.findings.ok).toBe(true)
+  })
+
+  it('raises no missing-Arabic-name gap for a fully bilingual well-formed process', async () => {
+    const result = await renderCanonicalProcess(CLEAN_BILINGUAL)
+    if (!result.ok) throw new Error('expected a successful render')
+    expect(result.gapFindings.every((finding) => finding.source === 'gap-scanner')).toBe(true)
+    expect(result.gapFindings.some((finding) => finding.kind === 'missingArabicName')).toBe(false)
+  })
+})
+
+describe('renderCanonicalProcess — advisory convention findings', () => {
+  it('returns tagged convention findings shaped like ArisEpcModelFinding', async () => {
+    const result = await renderCanonicalProcess(VALID_CANONICAL_FULL)
+    if (!result.ok) throw new Error('expected a successful render')
+
+    expect(result.conventionFindings.length).toBeGreaterThan(0)
+    for (const finding of result.conventionFindings) {
+      expect(finding.source).toBe('convention')
+      expect(finding.ruleId.startsWith('conv.')).toBe(true)
+      expect(finding.messageKey.length).toBeGreaterThan(0)
+      expect(finding.modelId.length).toBeGreaterThan(0)
+      expect(Array.isArray(finding.nodeIds)).toBe(true)
+      expect(Array.isArray(finding.edgeIds)).toBe(true)
+    }
+    // Advisory only — the render still succeeded.
+    expect(result.findings.ok).toBe(true)
+  })
+})
+
+describe('renderCanonicalProcess — derived (round-trip) AML', () => {
+  it('emits debugDerivedAml starting with <?xml on a valid draft', async () => {
+    const result = await renderCanonicalProcess(VALID_CANONICAL_FULL)
+    if (!result.ok) throw new Error('expected a successful render')
+    expect(result.debugDerivedAml).toBeDefined()
+    expect(result.debugDerivedAml?.startsWith('<?xml')).toBe(true)
+    // A round-trip artifact — carries the same top-level AML envelope as debugAml.
+    expect(result.debugDerivedAml).toContain('<AML>')
+  })
+})
+
+describe('renderCanonicalProcess — layout selection ("auto" picker)', () => {
+  it('defaults to clean (layoutMode "clean") and keeps the snapshot byte-stable', async () => {
+    const unset = await renderCanonicalProcess(VALID_CANONICAL_FULL)
+    const explicit = await renderCanonicalProcess(VALID_CANONICAL_FULL, { layout: 'clean' })
+    if (!unset.ok || !explicit.ok) throw new Error('expected successful renders')
+    // Default (option unset) is byte-identical to the historical clean-layout
+    // capture, and reports the mode it applied.
+    expect(unset.layoutMode).toBe('clean')
+    expect(sha256Hex(unset.svg)).toBe(VALID_CANONICAL_FULL_SVG_SHA256)
+    // An explicit 'clean' produces the same SVG as the unset default.
+    expect(explicit.layoutMode).toBe('clean')
+    expect(explicit.svg).toBe(unset.svg)
+  })
+
+  it('layout:"source" keeps the imported coordinates → a different SVG shape than clean', async () => {
+    const clean = await renderCanonicalProcess(VALID_CANONICAL_FULL)
+    const source = await renderCanonicalProcess(VALID_CANONICAL_FULL, { layout: 'source' })
+    if (!clean.ok || !source.ok) throw new Error('expected successful renders')
+    expect(source.layoutMode).toBe('source')
+    // The source (single-column import) geometry is not the clean recompute, so
+    // the captured SVG bytes differ.
+    expect(source.svg).not.toBe(clean.svg)
+  })
+
+  it('layout:"auto" falls back to clean for a process whose source layout fails the gate', async () => {
+    // VALID_CANONICAL_FULL is branchy + satellite-bearing; its naive single-
+    // column import geometry routes edges through unrelated shapes, so the
+    // acceptance gate rejects it and 'auto' recomputes. This is also the
+    // behavior for every AI-authored canonical input (no usable source coords).
+    const result = await renderCanonicalProcess(VALID_CANONICAL_FULL, { layout: 'auto' })
+    if (!result.ok) throw new Error('expected a successful render')
+    expect(result.layoutMode).toBe('clean')
+    // 'auto'→clean matches the clean capture exactly.
+    const clean = await renderCanonicalProcess(VALID_CANONICAL_FULL)
+    if (!clean.ok) throw new Error('expected a successful render')
+    expect(result.svg).toBe(clean.svg)
+  })
+
+  it('layout:"auto" keeps source when the source layout passes the same acceptance gate', async () => {
+    // AR_ONLY is a linear start→activity→end flow with no branches or
+    // satellites, so its single-column import geometry passes the acceptance
+    // gate (no overlaps, no edge-through-shape, no missing/duplicate edges).
+    const auto = await renderCanonicalProcess(AR_ONLY, { layout: 'auto' })
+    const source = await renderCanonicalProcess(AR_ONLY, { layout: 'source' })
+    if (!auto.ok || !source.ok) throw new Error('expected successful renders')
+    expect(auto.layoutMode).toBe('source')
+    // 'auto' returned the SAME source layout it scored, byte-for-byte.
+    expect(auto.svg).toBe(source.svg)
   })
 })

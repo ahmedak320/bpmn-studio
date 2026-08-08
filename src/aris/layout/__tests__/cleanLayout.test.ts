@@ -5,9 +5,11 @@ import { cleanLayoutRevision, resetToSourceLayout, sourceLayoutRevision } from '
 import { pointOnRectBoundary } from '../geometry'
 import type { ArisLayoutEdgeRoute, ArisLayoutNodePlacement, ArisLayoutResult } from '../types'
 import {
+  bendDiamond,
   chainWithSatellites,
   cycleGraph,
   deepFreeze,
+  endSpineSatellites,
   event,
   flow,
   fn,
@@ -18,6 +20,57 @@ import {
   twoComponentGraph,
   xorDiamond
 } from './fixtures'
+import type { ArisLayoutGraphInput } from '../types'
+
+/** Drop every satellite node and satellite edge, leaving only the backbone. */
+function stripSatellites(graph: ArisLayoutGraphInput): ArisLayoutGraphInput {
+  const controlIds = new Set(
+    graph.nodes.filter((node) => node.role !== 'satellite').map((node) => node.id)
+  )
+  return {
+    ...graph,
+    nodes: graph.nodes.filter((node) => node.role !== 'satellite'),
+    edges: graph.edges.filter((edge) => controlIds.has(edge.source) && controlIds.has(edge.target))
+  }
+}
+
+/**
+ * The spine's geometry expressed RELATIVE to its own centroid: absolute
+ * translation (which side satellites push the canvas toward) is factored out,
+ * so two layouts with an identical backbone SHAPE compare equal even when they
+ * sit at different absolute coordinates. This is the §13.2 invariant in its
+ * two-sided form — a left-side satellite and a right-side satellite must both
+ * leave the backbone shape untouched.
+ */
+function relativeBackbone(result: ArisLayoutResult): string {
+  const control = result.nodes.filter((node) => node.kind === 'control-flow')
+  const centersX = control.map((node) => node.rect.x + node.rect.width / 2)
+  const centersY = control.map((node) => node.rect.y + node.rect.height / 2)
+  const meanX = centersX.reduce((sum, value) => sum + value, 0) / (control.length || 1)
+  const meanY = centersY.reduce((sum, value) => sum + value, 0) / (control.length || 1)
+  const round = (value: number): number => Math.round(value * 1e6) / 1e6
+  return JSON.stringify(
+    control
+      .map((node, index) => ({
+        id: node.id,
+        rank: node.rank,
+        dx: round((centersX[index] as number) - meanX),
+        dy: round((centersY[index] as number) - meanY),
+        width: node.rect.width,
+        height: node.rect.height
+      }))
+      .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+  )
+}
+
+/** Control-flow bounding box across x (min left edge, max right edge). */
+function controlXBounds(result: ArisLayoutResult): { min: number; max: number } {
+  const control = result.nodes.filter((node) => node.kind === 'control-flow')
+  return {
+    min: Math.min(...control.map((node) => node.rect.x)),
+    max: Math.max(...control.map((node) => node.rect.x + node.rect.width))
+  }
+}
 
 function nodeById(result: ArisLayoutResult, id: string): ArisLayoutNodePlacement {
   const found = result.nodes.find((node) => node.id === id)
@@ -228,12 +281,15 @@ describe('step 10 — satellites never expand the core flow grid (plan 13.2)', (
     expect(decorated.edges.filter((edge) => edge.kind === 'satellite')).toHaveLength(12)
   })
 
-  it('leaves the control-flow backbone byte-identical', () => {
-    const control = (result: ArisLayoutResult): unknown =>
-      result.nodes
-        .filter((node) => node.kind === 'control-flow')
-        .map((node) => ({ id: node.id, rank: node.rank, rect: node.rect }))
-    expect(JSON.stringify(control(decorated))).toBe(JSON.stringify(control(bare)))
+  it('leaves the control-flow backbone byte-identical (relative geometry)', () => {
+    // Rewritten for two-sided satellites (§13.2): the backbone is compared as
+    // RELATIVE geometry (each spine node's cross offset from the spine
+    // centroid) rather than absolute coordinates, so the invariant holds even
+    // when a left-side satellite shifts the whole picture's absolute origin.
+    // For this straight fixture every satellite is on the RIGHT, so the spine
+    // is in fact also absolutely unchanged — but the relative form is the
+    // contract that survives left-side satellites in the fixtures below.
+    expect(relativeBackbone(decorated)).toBe(relativeBackbone(bare))
   })
 
   it('leaves the control-flow routes byte-identical', () => {
@@ -244,7 +300,7 @@ describe('step 10 — satellites never expand the core flow grid (plan 13.2)', (
     expect(JSON.stringify(routes(decorated))).toBe(JSON.stringify(routes(bare)))
   })
 
-  it('shares ONE trunk for all of an owner\'s satellites (item 1)', () => {
+  it("shares ONE trunk for all of an owner's satellites (item 1)", () => {
     // Owner F.b carries all 6 satellites. Every satellite route must share an
     // identical trunk prefix (owner exit + gap crossing), so the routes overlap
     // into one line near the owner and only branch inside the corridor.
@@ -265,15 +321,81 @@ describe('step 10 — satellites never expand the core flow grid (plan 13.2)', (
     expect(branchRows.size).toBe(6)
   })
 
-  it('keeps every satellite outside the control-flow bounding box', () => {
-    const controlMax = Math.max(
-      ...decorated.nodes
-        .filter((node) => node.kind === 'control-flow')
-        .map((node) => node.rect.x + node.rect.width)
-    )
+  it('keeps every satellite outside the control-flow bounding box (either side)', () => {
+    // Rewritten from the all-right assumption (`rect.x > controlMax`) to the
+    // RELATIVE invariant: a satellite may sit on EITHER side of the spine, but
+    // never inside the control-flow bounding box. Each satellite is therefore
+    // fully to the right of `controlMax` OR fully to the left of `controlMin`.
+    const { min: controlMin, max: controlMax } = controlXBounds(decorated)
     for (const node of decorated.nodes) {
       if (node.kind !== 'satellite') continue
-      expect(node.rect.x).toBeGreaterThan(controlMax)
+      const fullyRight = node.rect.x >= controlMax
+      const fullyLeft = node.rect.x + node.rect.width <= controlMin
+      expect(fullyRight || fullyLeft).toBe(true)
+    }
+  })
+})
+
+describe('step 10 — outer-side (L/R) satellite placement', () => {
+  const gapValue = 0
+
+  it("places a left-branch owner's satellites on the LEFT (spine bends right)", () => {
+    const result = cleanLayout(bendDiamond('left', 3))
+    expectClean(result)
+    const { min: controlMin } = controlXBounds(result)
+    const sats = result.nodes.filter((node) => node.kind === 'satellite')
+    expect(sats.length).toBe(3)
+    for (const sat of sats) {
+      expect(sat.rect.x + sat.rect.width).toBeLessThanOrEqual(controlMin + gapValue)
+    }
+  })
+
+  it("places a right-branch owner's satellites on the RIGHT (spine bends left)", () => {
+    const result = cleanLayout(bendDiamond('right', 3))
+    expectClean(result)
+    const { max: controlMax } = controlXBounds(result)
+    const sats = result.nodes.filter((node) => node.kind === 'satellite')
+    expect(sats.length).toBe(3)
+    for (const sat of sats) {
+      expect(sat.rect.x).toBeGreaterThanOrEqual(controlMax - gapValue)
+    }
+  })
+
+  it("defaults a straight-spine owner's satellites to the RIGHT", () => {
+    const result = cleanLayout(chainWithSatellites(4))
+    expectClean(result)
+    const { max: controlMax } = controlXBounds(result)
+    const sats = result.nodes.filter((node) => node.kind === 'satellite')
+    expect(sats.length).toBe(4)
+    for (const sat of sats) {
+      expect(sat.rect.x).toBeGreaterThanOrEqual(controlMax - gapValue)
+    }
+  })
+
+  it('uses the incoming edge for an end-of-spine owner (defaults RIGHT when straight)', () => {
+    const result = cleanLayout(endSpineSatellites(3))
+    expectClean(result)
+    // The end event has NO outgoing edge, so the decision falls through to its
+    // incoming edge; a straight arrival ties to RIGHT.
+    const { max: controlMax } = controlXBounds(result)
+    const sats = result.nodes.filter((node) => node.kind === 'satellite')
+    expect(sats.length).toBe(3)
+    for (const sat of sats) {
+      expect(sat.rect.x).toBeGreaterThanOrEqual(controlMax - gapValue)
+    }
+  })
+
+  it('keeps the spine backbone byte-identical to the satellite-stripped fixture (relative geometry)', () => {
+    const fixtures: ArisLayoutGraphInput[] = [
+      bendDiamond('left', 3),
+      bendDiamond('right', 3),
+      chainWithSatellites(6),
+      endSpineSatellites(4)
+    ]
+    for (const fixture of fixtures) {
+      const decorated = cleanLayout(fixture)
+      const bare = cleanLayout(stripSatellites(fixture))
+      expect(relativeBackbone(decorated)).toBe(relativeBackbone(bare))
     }
   })
 })
@@ -294,10 +416,7 @@ describe('straight-first routing — a straight run keeps a single segment', () 
     const edge = edgeById(result, 'A->B')
     expect(edge.points.length).toBe(2)
     // Straight => the two endpoints share a cross coordinate (x in TTB).
-    expect((edge.points[1] as { x: number }).x).toBeCloseTo(
-      (edge.points[0] as { x: number }).x,
-      9
-    )
+    expect((edge.points[1] as { x: number }).x).toBeCloseTo((edge.points[0] as { x: number }).x, 9)
     expectClean(result)
   })
 })

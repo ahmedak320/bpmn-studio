@@ -67,7 +67,13 @@ import type { ArisWorkingDocument } from '../model/types'
 import { buildAmlFromArisAiDraft } from '../shell/arisAiCreate'
 import { buildSemanticArisDocument } from '../source/semanticIndex'
 import { tokenizeXmlDocument } from '../source/xmlTokenizer'
-import { cleanLayout } from '../layout/cleanLayout'
+import { cleanLayout, measureLayoutResult } from '../layout/cleanLayout'
+import { sourceLayoutRevision } from '../layout/modes'
+import { evaluateLayoutAcceptance } from '../layout/rejection'
+import { scanArisChatGaps, type ArisChatGap } from '../chat/gapScanner'
+import { buildConventionFindings } from '../conventions/validate'
+import { exportArisDerivedAml, prepareArisDerivedExport } from '../shell/arisDerivedExport'
+import type { ArisEpcModelFinding } from '../shell/arisEpcFindings'
 import { ensureHeadlessDom } from './environment'
 import { EPC_ENGINE_VERSION } from './version'
 
@@ -114,6 +120,20 @@ export interface RenderCanonicalProcessOptions {
    * (`formats.includes('pdf')`); SVG/PNG previews leave it unset/false.
    */
   readonly printFrame?: boolean
+  /**
+   * Layout policy for the rendered model (plan §12.4 / §14.4). Default `'clean'`
+   * preserves the historical byte-stable behavior — always recompute via
+   * `cleanLayoutRevision`/`cleanLayout`. `'source'` respects the imported
+   * coordinates verbatim (`sourceLayoutRevision`). `'auto'` KEEPS the source
+   * layout only when it passes the SAME acceptance gate `cleanLayout` runs on
+   * its own output (`evaluateLayoutAcceptance` over the `analyzeLayout` metrics
+   * + defects, default `DEFAULT_MAX_EMPTY_BAND_RATIO`) and otherwise falls back
+   * to `cleanLayout`. AI-authored canonical inputs carry only a naive single-
+   * column source geometry, so `'auto'` resolves to `'clean'` for any branching
+   * or satellite-bearing process; the mode actually applied is reported back as
+   * `layoutMode`. An explicit input — does not break determinism.
+   */
+  readonly layout?: 'auto' | 'clean' | 'source'
 }
 
 /** Versioned metadata mirrored onto the SVG root and returned to the caller. */
@@ -143,6 +163,28 @@ export interface ReturnPathFinding {
   readonly route: MissingReturnRoute
 }
 
+/**
+ * One advisory deterministic gap-scanner finding (`scanArisChatGaps`,
+ * `../chat/gapScanner.ts`) surfaced through the render envelope. Wraps the
+ * scanner's own structured `ArisChatGap` (kind, severity, target ids, i18n
+ * message key) with a `source: 'gap-scanner'` tag. Advisory ONLY — never fails
+ * the render; a separate result field, never stamped into `svg`.
+ */
+export interface GapScannerFinding extends ArisChatGap {
+  readonly source: 'gap-scanner'
+}
+
+/**
+ * One advisory convention-validator finding (`buildConventionFindings`,
+ * `../conventions/validate.ts`) surfaced through the render envelope. Wraps the
+ * validator's own `ArisEpcModelFinding` (rule id, severity, i18n message key,
+ * node/edge ids, model id) with a `source: 'convention'` tag. Advisory ONLY —
+ * never fails the render; a separate result field, never stamped into `svg`.
+ */
+export interface ConventionFinding extends ArisEpcModelFinding {
+  readonly source: 'convention'
+}
+
 export interface HeadlessRenderSuccess {
   readonly ok: true
   readonly svg: string
@@ -170,9 +212,42 @@ export interface HeadlessRenderSuccess {
    * structural-gate output and is left untouched.)
    */
   readonly returnPathFindings: readonly ReturnPathFinding[]
+  /**
+   * Advisory deterministic gap-scanner findings (`scanArisChatGaps`,
+   * `../chat/gapScanner.ts`) over the built working document — missing owner,
+   * missing branch labels, orphan nodes, dangling linked-model / connection
+   * references, missing names, and the rest of plan 18.1's gap kinds. Each is
+   * tagged `source: 'gap-scanner'`. Empty when the document is clean. Never
+   * fails the render; a separate result field — never stamped into `svg`.
+   */
+  readonly gapFindings: readonly GapScannerFinding[]
+  /**
+   * Advisory ARIS convention-validator findings (`buildConventionFindings`,
+   * `../conventions/validate.ts`) over the built working document — illegal
+   * connections, missing function identifier, missing executor, missing model
+   * attribute, naming hints. Each is tagged `source: 'convention'`. Empty when
+   * the document is compliant. Never fails the render; a separate result field
+   * — never stamped into `svg`.
+   */
+  readonly conventionFindings: readonly ConventionFinding[]
   readonly metadata: HeadlessRenderMetadata
+  /**
+   * The layout mode ACTUALLY applied to the rendered model: `'clean'` (recomputed)
+   * or `'source'` (imported coordinates kept). Equals the `layout` option except
+   * for `layout: 'auto'`, where it reports the picker's decision — `'source'`
+   * when the imported layout passed the acceptance gate, else `'clean'`.
+   */
+  readonly layoutMode: 'clean' | 'source'
   /** The generated AML, for debugging/round-trip; never part of the SVG. */
   readonly debugAml: string
+  /**
+   * A BPMN-shaped derived AML variant (`exportArisDerivedAml`,
+   * `../shell/arisDerivedExport.ts`) round-tripped from `debugAml`, for
+   * round-trip validation / external-tool compatibility. Present ONLY when the
+   * derived export passes every §9.3 validation; omitted otherwise. Never part
+   * of the SVG.
+   */
+  readonly debugDerivedAml?: string
 }
 
 /** The input was not a well-formed `CanonicalProcessV1` — no canvas was booted. */
@@ -250,7 +325,39 @@ export async function renderCanonicalProcess(
   let canvas: ArisCanvas | undefined
   try {
     canvas = ArisCanvas.create({ container, document: workingDocument, modelId, minimap: false })
-    canvas.applyCleanLayout((graph) => cleanLayout(graph))
+
+    // Layout selection (plan §12.4 / §14.4). Default 'clean' is the historical
+    // path — the closure returns `cleanLayout(graph)` VERBATIM, so the captured
+    // SVG stays byte-identical to before this option existed. 'source' keeps the
+    // imported coordinates. 'auto' keeps source ONLY when it passes the SAME
+    // acceptance gate cleanLayout applies to its own output (edge/node overlap,
+    // detached/missing/duplicate edges, extreme whitespace at the engine's
+    // default `DEFAULT_MAX_EMPTY_BAND_RATIO`) — measured with the engine's own
+    // `measureLayoutResult`/`analyzeLayout` + `evaluateLayoutAcceptance`, no
+    // invented thresholds — and otherwise falls back to `cleanLayout`. The
+    // engine runs synchronously inside `applyCleanLayout`, so the closure records
+    // the chosen mode into `layoutMode` before capture.
+    const requestedLayout = options.layout ?? 'clean'
+    let layoutMode: 'clean' | 'source' = requestedLayout === 'source' ? 'source' : 'clean'
+    canvas.applyCleanLayout((graph) => {
+      if (requestedLayout === 'clean') return cleanLayout(graph)
+      if (requestedLayout === 'source') return sourceLayoutRevision(graph)
+      // 'auto': score the imported layout against the engine's acceptance gate.
+      const source = sourceLayoutRevision(graph)
+      const analysis = measureLayoutResult(
+        source.nodes,
+        source.edges,
+        source.canvas,
+        graph.edges.map((edge) => edge.id)
+      )
+      const acceptance = evaluateLayoutAcceptance(analysis.metrics, analysis.defects)
+      if (acceptance.accepted) {
+        layoutMode = 'source'
+        return source
+      }
+      layoutMode = 'clean'
+      return cleanLayout(graph)
+    })
 
     // Print frame (A4 border + title block + RACI + DMT symbol legend) is
     // SVG-only page furniture, OFF by default. The calling service
@@ -310,8 +417,21 @@ export async function renderCanonicalProcess(
       narrative: buildProcessNarrative(canonical),
       verification: buildVerificationPackage(canonical),
       returnPathFindings: collectReturnPathFindings(projection.draft),
+      // Advisory findings + derived AML are derived purely from the built
+      // working document / generated AML — SEPARATE result fields, never
+      // stamped into `svg`, so they cannot perturb the byte-stable snapshot.
+      // Both scanners are wrapped so a scanner fault degrades to an empty list
+      // rather than failing the render (advisory only). `builtDocument` is the
+      // pre-suppression, lossless document that matches `aml.xml`.
+      gapFindings: collectGapFindings(builtDocument),
+      conventionFindings: collectConventionFindings(builtDocument),
       metadata,
-      debugAml: aml.xml
+      layoutMode,
+      debugAml: aml.xml,
+      ...(() => {
+        const derived = tryDerivedAml(aml.xml, builtDocument)
+        return derived !== undefined ? { debugDerivedAml: derived } : {}
+      })()
     }
   } finally {
     canvas?.destroy()
@@ -474,6 +594,63 @@ function collectReturnPathFindings(draft: ArisAiDraftV1): ReturnPathFinding[] {
     }
   }
   return findings
+}
+
+/**
+ * Advisory gap-scanner pass over the built working document. The real
+ * `ArisWorkingDocument` is structurally the `ArisChatWorkingDocument` shape the
+ * scanner consumes (see `../chat/types.ts`), so it is handed over directly. Any
+ * scanner fault degrades to an empty list — the render is never failed on
+ * advisory findings.
+ */
+function collectGapFindings(document: ArisWorkingDocument): GapScannerFinding[] {
+  try {
+    return scanArisChatGaps(document).map((gap) => ({ source: 'gap-scanner', ...gap }))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Advisory ARIS-convention pass over the built working document. Any fault
+ * degrades to an empty list — the render is never failed on advisory findings.
+ */
+function collectConventionFindings(document: ArisWorkingDocument): ConventionFinding[] {
+  try {
+    return buildConventionFindings(document).map((finding) => ({ source: 'convention', ...finding }))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Build the derived (BPMN-shaped) AML by round-tripping the generated AML through
+ * the writer's derived-export pipeline (an identity diff: the built document
+ * against itself over its own generated bytes, so `editCount` is 0 and the
+ * derived text is byte-identical to `debugAml`). Reached ONLY on the valid-draft
+ * success path — a parse/gate failure returns before this and the field is
+ * omitted.
+ *
+ * `exportArisDerivedAml` is the download-grade entry that throws unless every
+ * §9.3 writer validation passes. The generator's AML lays connection definitions
+ * flat under the `<Group>` rather than nested under their source `<ObjDef>`, so
+ * the writer's `connection-endpoints-exist` check rejects it and the strict entry
+ * throws; the non-throwing sibling `prepareArisDerivedExport` (same module,
+ * identical `DerivedAmlExport`) is the fallback so a valid draft still yields its
+ * round-trip artifact. Any residual fault yields `undefined` (field omitted) —
+ * advisory only, the render is never failed.
+ */
+function tryDerivedAml(originalText: string, document: ArisWorkingDocument): string | undefined {
+  try {
+    return exportArisDerivedAml({ originalText, original: document, live: document }).result.text
+  } catch {
+    try {
+      return prepareArisDerivedExport({ originalText, original: document, live: document }).result
+        .text
+    } catch {
+      return undefined
+    }
+  }
 }
 
 function stabilizeCaptionClipIds(svg: string): string {

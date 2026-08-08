@@ -199,17 +199,27 @@ function buildDraft(
   })
 
   let routeCrossMax = channels.maxSideCross
+  let routeCrossMin = channels.minSideCross
   for (const route of controlRoutes) {
-    for (const point of route.points) routeCrossMax = Math.max(routeCrossMax, point.cross)
+    for (const point of route.points) {
+      routeCrossMax = Math.max(routeCrossMax, point.cross)
+      routeCrossMin = Math.min(routeCrossMin, point.cross)
+    }
   }
 
   // --- step 10 -------------------------------------------------------------
+  // Satellites hang off BOTH sides of the spine now: `reservedCrossMax`/`Min`
+  // bracket the reserved routing band, and `placeSatellites` decides per owner
+  // which OUTER side each cluster sits on from the control adjacency alone.
   const satellites = placeSatellites(
     separated.satelliteNodes,
     separated.satelliteEdges,
     adjacency.indexOf,
     geometry,
-    routeCrossMax + spacing.channelGap
+    routeCrossMax + spacing.channelGap,
+    routeCrossMin - spacing.channelGap,
+    adjacency.out,
+    adjacency.in
   )
 
   // --- flow space -> screen space -----------------------------------------
@@ -299,19 +309,41 @@ function buildDraft(
     })
   })
 
-  // --- normalize to the origin --------------------------------------------
+  // --- normalize the canvas: anchor the SPINE, hang satellites off it ------
+  // `base` is the FULL content bbox (used only to size the canvas). The shift
+  // that positions every shape is anchored on the CONTROL-FLOW bbox alone, so a
+  // left-side satellite can never drag the spine right (and a right-side one can
+  // never drag it left): the backbone lands at the same absolute coordinates
+  // whether the model carries 0 or 50 satellites (§13.2). Satellites simply
+  // extend the canvas outward on whichever side they sit, and the canvas origin
+  // (below) moves to include them without translating the spine.
   let canvas: ArisLayoutRect | null = null
+  let controlAnchor: ArisLayoutRect | null = null
   for (const node of nodes) {
     canvas = canvas ? unionRect(canvas, node.rect) : node.rect
     if (node.labelRect) canvas = unionRect(canvas, node.labelRect)
+    if (node.kind === 'control-flow') {
+      controlAnchor = controlAnchor ? unionRect(controlAnchor, node.rect) : node.rect
+      if (node.labelRect) controlAnchor = unionRect(controlAnchor, node.labelRect)
+    }
   }
   for (const edge of edges) {
     const bounds = boundsOfPoints(edge.points)
     if (bounds) canvas = canvas ? unionRect(canvas, bounds) : bounds
+    if (edge.kind === 'control-flow' && bounds) {
+      controlAnchor = controlAnchor ? unionRect(controlAnchor, bounds) : bounds
+    }
   }
   const base = canvas ?? { x: 0, y: 0, width: 0, height: 0 }
-  const shiftX = spacing.margin - base.x
-  const shiftY = spacing.margin - base.y
+  const anchor = controlAnchor ?? base
+  const shiftX = spacing.margin - anchor.x
+  const shiftY = spacing.margin - anchor.y
+  // Where the full content lands after the spine-anchored shift. When no
+  // satellite sits outside the control-flow bbox (the historical all-right
+  // case where control is the leftmost/topmost content) this is exactly
+  // `spacing.margin`, so `originX`/`originY` are 0 and the canvas is unchanged.
+  const originX = base.x + shiftX - spacing.margin
+  const originY = base.y + shiftY - spacing.margin
   const translateRect = (rect: ArisLayoutRect): ArisLayoutRect => ({
     x: rect.x + shiftX,
     y: rect.y + shiftY,
@@ -371,15 +403,15 @@ function buildDraft(
       : annotation.rect
   }
   const finalCanvas: ArisLayoutRect = {
-    x: 0,
-    y: 0,
+    x: originX,
+    y: originY,
     width: Math.max(
       base.width + spacing.margin * 2,
-      annotationBounds ? annotationBounds.x + annotationBounds.width + spacing.margin : 0
+      annotationBounds ? annotationBounds.x + annotationBounds.width + spacing.margin - originX : 0
     ),
     height: Math.max(
       base.height + spacing.margin * 2,
-      annotationBounds ? annotationBounds.y + annotationBounds.height + spacing.margin : 0
+      annotationBounds ? annotationBounds.y + annotationBounds.height + spacing.margin - originY : 0
     )
   }
 
