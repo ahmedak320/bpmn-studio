@@ -36,7 +36,8 @@
  * stacked in the last column at the far side of the canvas.
  */
 
-import type { ArisLayoutEdgeInput, ArisLayoutNodeInput } from './types'
+import type { ArisLayoutEdgeInput, ArisLayoutNodeInput, ArisLayoutOrientation } from './types'
+import type { ResolvedSpacing } from './placement'
 import { occupiedBoxOf, type OccupiedBox } from './axis'
 import { LAYOUT_EPSILON } from './geometry'
 import {
@@ -68,6 +69,62 @@ export interface SatellitePlacement {
  * placement (deterministic), so it never touches the backbone geometry.
  */
 type SatelliteSide = 'left' | 'right'
+
+/**
+ * The along-axis gap between two stacked satellites in an owner's column. Kept
+ * as a single exported constant so the rank-band sizing pass
+ * (`satelliteVerticalLoad`) and the placement pass below can never disagree on
+ * how tall an owner's stack will be.
+ */
+export function satelliteStackGap(spacing: ResolvedSpacing): number {
+  return Math.max(spacing.labelGap * 2, Math.round(spacing.crossGap * 0.25))
+}
+
+/**
+ * Density-expansion input for the rank-band sizing stage: the along-axis height
+ * each owner's satellite stack will occupy, keyed by the owner's CONTROL-node
+ * index. Mirrors `placeSatellites`' owner resolution EXACTLY — the first
+ * control<->satellite edge claims the satellite, and a satellite that is both an
+ * input and an output of the same owner is counted once — so the sizing pass
+ * and the placement pass agree on which owners are dense and by how much. An
+ * owner with no satellites is absent from the map (treated as zero load), which
+ * is what keeps sparse layouts byte-identical to the pre-expansion engine.
+ */
+export function satelliteVerticalLoad(
+  satelliteNodes: readonly ArisLayoutNodeInput[],
+  satelliteEdges: readonly ArisLayoutEdgeInput[],
+  controlIndexOf: ReadonlyMap<string, number>,
+  orientation: ArisLayoutOrientation,
+  spacing: ResolvedSpacing
+): Map<number, number> {
+  const load = new Map<number, number>()
+  if (satelliteNodes.length === 0) return load
+  const satelliteIndexOf = new Map<string, number>()
+  satelliteNodes.forEach((node, index) => satelliteIndexOf.set(node.id, index))
+  const boxes = satelliteNodes.map((node) => occupiedBoxOf(node, orientation, spacing.labelGap))
+  const gap = satelliteStackGap(spacing)
+  const claimed = new Array<boolean>(satelliteNodes.length).fill(false)
+  for (const edge of satelliteEdges) {
+    const sourceControl = controlIndexOf.get(edge.source)
+    const targetControl = controlIndexOf.get(edge.target)
+    const sourceSatellite = satelliteIndexOf.get(edge.source)
+    const targetSatellite = satelliteIndexOf.get(edge.target)
+    let owner = -1
+    let satellite = -1
+    if (sourceControl !== undefined && targetSatellite !== undefined) {
+      owner = sourceControl
+      satellite = targetSatellite
+    } else if (targetControl !== undefined && sourceSatellite !== undefined) {
+      owner = targetControl
+      satellite = sourceSatellite
+    }
+    if (owner < 0 || satellite < 0) continue
+    if (claimed[satellite]) continue
+    claimed[satellite] = true
+    load.set(owner, (load.get(owner) ?? 0) + (boxes[satellite] as OccupiedBox).along + gap)
+  }
+  return load
+}
 
 export function placeSatellites(
   satelliteNodes: readonly ArisLayoutNodeInput[],
@@ -195,7 +252,7 @@ export function placeSatellites(
   // so along-overlaps are impossible. The two columns live at different cross
   // coordinates, so a left-side and a right-side owner can share an along band
   // without colliding. Owner iteration is in rank order (deterministic).
-  const satelliteGap = Math.max(spacing.labelGap * 2, Math.round(spacing.crossGap * 0.25))
+  const satelliteGap = satelliteStackGap(spacing)
   let stackCursorRight = -Infinity
   let stackCursorLeft = -Infinity
   for (const owner of owners) {

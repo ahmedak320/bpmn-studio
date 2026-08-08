@@ -98,8 +98,29 @@ const sha256Hex = (input: string | Uint8Array): string =>
 // Only the horizontal-turn coordinate of multi-branch splits moves (source
 // exits and target near-side stubs are unchanged), which shifts the SVG bytes.
 // Layout-only change; EPC_ENGINE_VERSION stays at 0.3.0.
+// Re-updated 2026-08-09 (satellite-density rank-gap expansion, no version bump):
+// the rank-band sizing stage now GROWS the vertical gap immediately after a
+// dense owner (an owner whose satellite stack is taller than the space to its
+// next spine step), so the owner's satellites stop cascading past the next step
+// and dragging later owners' stacks down. Only vertical spacing between certain
+// rank bands grows — the spine's cross positions and rank ordering are
+// unchanged, sparse owners (0-1 satellites) stay at baseline, and total canvas
+// height grows. VALID_CANONICAL_FULL has dense owners, so some rank gaps expand
+// and the SVG (viewBox height + every below-a-dense-owner y) shifts.
+// Layout-only change; EPC_ENGINE_VERSION stays at 0.3.0.
+// Re-updated 2026-08-09 (shared-target merge turns, no version bump): the mirror
+// of the shared-source split fix. Forward edges arriving at the SAME merge node
+// (an XOR/AND gate or a fan-in function with 2+ incoming edges) now SHARE one
+// target-side gap slot, so every incoming edge's last horizontal segment lands
+// at the same cross coordinate and the merge becomes a clean 3+-way junction.
+// Long edges use `GapSlotAllocator.nextForTarget`; adjacent-rank edges (whose
+// single L-turn must serve either a split or a merge) use `nextForJunction`,
+// which shares source-first then target so split alignment (v35) never
+// regresses. Only merge-target horizontal-turn coordinates move; because the
+// junctions now form cleanly, the overlay may also paint additional junction
+// dots, so the SVG bytes shift. Layout-only change; EPC_ENGINE_VERSION stays 0.3.0.
 const VALID_CANONICAL_FULL_SVG_SHA256 =
-  '771cdb319678d6f2a8256f0239164b7ed52ad2d292fd11f9b06731f13d62fe29'
+  '208b42d878110300b789b8ac05b69ea7ba15e82f99ad660d072d743345fd4785'
 
 /** Schema-valid, but its projected EEPC has no start/end event — fails the gate. */
 const STRUCTURALLY_INVALID: CanonicalProcessV1 = {

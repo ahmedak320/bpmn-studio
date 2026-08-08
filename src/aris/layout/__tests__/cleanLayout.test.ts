@@ -10,6 +10,7 @@ import {
   chainWithSatellites,
   cycleGraph,
   deepFreeze,
+  denseOwnerChain,
   endSpineSatellites,
   event,
   flow,
@@ -62,6 +63,46 @@ function relativeBackbone(result: ArisLayoutResult): string {
       }))
       .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
   )
+}
+
+/**
+ * The spine's CROSS geometry only (each spine node's cross offset from the
+ * spine's cross-centroid). This is the part of §13.2 that must hold ABSOLUTELY
+ * even with the satellite-density rank-gap expansion: satellites may grow the
+ * VERTICAL spacing between ranks, but they must NEVER move a spine node
+ * sideways. `dy` is deliberately excluded because vertical growth is now the
+ * intended behaviour below a dense owner.
+ */
+function relativeBackboneCross(result: ArisLayoutResult): string {
+  const control = result.nodes.filter((node) => node.kind === 'control-flow')
+  const centersX = control.map((node) => node.rect.x + node.rect.width / 2)
+  const meanX = centersX.reduce((sum, value) => sum + value, 0) / (control.length || 1)
+  const round = (value: number): number => Math.round(value * 1e6) / 1e6
+  return JSON.stringify(
+    control
+      .map((node, index) => ({
+        id: node.id,
+        rank: node.rank,
+        dx: round((centersX[index] as number) - meanX),
+        width: node.rect.width,
+        height: node.rect.height
+      }))
+      .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+  )
+}
+
+/**
+ * The relative backbone of the spine PREFIX — control nodes at rank <= maxRank,
+ * i.e. down to and INCLUDING the first dense owner. Density expansion only ever
+ * pushes ranks strictly BELOW a dense owner downward, so the prefix is
+ * unaffected and compares equal between a decorated and a satellite-stripped
+ * layout.
+ */
+function relativeBackbonePrefix(result: ArisLayoutResult, maxRank: number): string {
+  return relativeBackbone({
+    ...result,
+    nodes: result.nodes.filter((node) => node.kind !== 'control-flow' || node.rank <= maxRank)
+  })
 }
 
 /** Control-flow bounding box across x (min left edge, max right edge). */
@@ -282,21 +323,34 @@ describe('step 10 — satellites never expand the core flow grid (plan 13.2)', (
     expect(decorated.edges.filter((edge) => edge.kind === 'satellite')).toHaveLength(12)
   })
 
-  it('leaves the control-flow backbone byte-identical (relative geometry)', () => {
-    // Rewritten for two-sided satellites (§13.2): the backbone is compared as
-    // RELATIVE geometry (each spine node's cross offset from the spine
-    // centroid) rather than absolute coordinates, so the invariant holds even
-    // when a left-side satellite shifts the whole picture's absolute origin.
-    // For this straight fixture every satellite is on the RIGHT, so the spine
-    // is in fact also absolutely unchanged — but the relative form is the
-    // contract that survives left-side satellites in the fixtures below.
-    expect(relativeBackbone(decorated)).toBe(relativeBackbone(bare))
+  it('never moves the spine sideways and leaves it unchanged up to the dense owner', () => {
+    // §13.2 in its density-aware form. `chainWithSatellites(12)` hangs all 12
+    // satellites on owner F.b (rank 2), which is now DENSE: its stack is taller
+    // than the gap to the next step, so the satellite-cascade fix grows the
+    // rank-gap AFTER F.b, pushing F.c and E.end down. What must still hold:
+    //   (a) the spine never moves SIDEWAYS — cross offsets are byte-identical;
+    //   (b) the spine is byte-identical down to and INCLUDING the dense owner.
+    // Only ranks strictly below F.b move, and only vertically, by design.
+    expect(relativeBackboneCross(decorated)).toBe(relativeBackboneCross(bare))
+    expect(relativeBackbonePrefix(decorated, 2)).toBe(relativeBackbonePrefix(bare, 2))
   })
 
-  it('leaves the control-flow routes byte-identical', () => {
+  it('grows the rank-gap AFTER the dense owner (satellite cascade fix)', () => {
+    // The gap F.b -> F.c grows; the gap E.start -> F.a above the dense owner
+    // keeps the baseline. Total diagram height therefore grows.
+    const gap = (result: ArisLayoutResult, from: string, to: string): number =>
+      centerY(nodeById(result, to)) - centerY(nodeById(result, from))
+    expect(gap(decorated, 'F.b', 'F.c')).toBeGreaterThan(gap(bare, 'F.b', 'F.c'))
+    expect(gap(decorated, 'E.start', 'F.a')).toBe(gap(bare, 'E.start', 'F.a'))
+  })
+
+  it('leaves the control-flow routes byte-identical up to the dense owner', () => {
+    // Routes among ranks at or above the dense owner (E.start->F.a, F.a->F.b)
+    // are untouched; only routes below F.b shift down with the expansion.
+    const upstream = new Set(['E.start->F.a', 'F.a->F.b'])
     const routes = (result: ArisLayoutResult): unknown =>
       result.edges
-        .filter((edge) => edge.kind === 'control-flow')
+        .filter((edge) => edge.kind === 'control-flow' && upstream.has(edge.id))
         .map((edge) => ({ id: edge.id, points: edge.points }))
     expect(JSON.stringify(routes(decorated))).toBe(JSON.stringify(routes(bare)))
   })
@@ -386,7 +440,10 @@ describe('step 10 — outer-side (L/R) satellite placement', () => {
     }
   })
 
-  it('keeps the spine backbone byte-identical to the satellite-stripped fixture (relative geometry)', () => {
+  it('never moves the spine sideways vs the satellite-stripped fixture (relative geometry)', () => {
+    // The surviving absolute half of §13.2 across every side/shape: satellites
+    // may grow VERTICAL spacing below a dense owner, but they never move a spine
+    // node SIDEWAYS. Cross offsets stay byte-identical for all of these.
     const fixtures: ArisLayoutGraphInput[] = [
       bendDiamond('left', 3),
       bendDiamond('right', 3),
@@ -396,8 +453,75 @@ describe('step 10 — outer-side (L/R) satellite placement', () => {
     for (const fixture of fixtures) {
       const decorated = cleanLayout(fixture)
       const bare = cleanLayout(stripSatellites(fixture))
-      expect(relativeBackbone(decorated)).toBe(relativeBackbone(bare))
+      expect(relativeBackboneCross(decorated)).toBe(relativeBackboneCross(bare))
     }
+  })
+})
+
+describe('step 10 — satellite-density rank-gap expansion (cascade fix)', () => {
+  // The along-gap between two consecutive owners, measured centre-to-centre.
+  const ownerGap = (result: ArisLayoutResult, from: string, to: string): number =>
+    centerY(nodeById(result, to)) - centerY(nodeById(result, from))
+
+  it('grows ONLY the gap after a single dense owner, leaving the others baseline', () => {
+    // Owners F.0 (1 sat, sparse) -> F.1 (5 sats, DENSE) -> F.2 (1 sat, sparse).
+    const dense = cleanLayout(denseOwnerChain([1, 5, 1]))
+    const baseline = cleanLayout(denseOwnerChain([0, 0, 0]))
+    expectClean(dense)
+
+    // The gap AFTER the dense owner (F.1 -> F.2) is expanded...
+    expect(ownerGap(dense, 'F.1', 'F.2')).toBeGreaterThan(ownerGap(baseline, 'F.1', 'F.2'))
+    // ...while every other rank gap stays exactly at baseline.
+    expect(ownerGap(dense, 'E.start', 'F.0')).toBe(ownerGap(baseline, 'E.start', 'F.0'))
+    expect(ownerGap(dense, 'F.0', 'F.1')).toBe(ownerGap(baseline, 'F.0', 'F.1'))
+    expect(ownerGap(dense, 'F.2', 'E.end')).toBe(ownerGap(baseline, 'F.2', 'E.end'))
+  })
+
+  it('grows both gaps after two consecutive dense owners', () => {
+    // Owners F.0 (5 sats, DENSE) -> F.1 (5 sats, DENSE) -> F.2 (1 sat, sparse).
+    const dense = cleanLayout(denseOwnerChain([5, 5, 1]))
+    const baseline = cleanLayout(denseOwnerChain([0, 0, 0]))
+    expectClean(dense)
+
+    expect(ownerGap(dense, 'F.0', 'F.1')).toBeGreaterThan(ownerGap(baseline, 'F.0', 'F.1'))
+    expect(ownerGap(dense, 'F.1', 'F.2')).toBeGreaterThan(ownerGap(baseline, 'F.1', 'F.2'))
+    // The gap before the first dense owner is untouched.
+    expect(ownerGap(dense, 'E.start', 'F.0')).toBe(ownerGap(baseline, 'E.start', 'F.0'))
+  })
+
+  it('each dense owner ends its satellite stack above the next spine step (no cascade)', () => {
+    // The whole point of the fix: a dense owner's satellites must not run past
+    // the top of the next control-flow step below it.
+    const dense = cleanLayout(denseOwnerChain([1, 5, 1]))
+    expectClean(dense)
+    const nextTop = nodeById(dense, 'F.2').rect.y
+    const ownerSats = dense.nodes.filter(
+      (node) => node.kind === 'satellite' && node.id.startsWith('S.1.')
+    )
+    expect(ownerSats).toHaveLength(5)
+    for (const sat of ownerSats) {
+      expect(sat.rect.y + sat.rect.height).toBeLessThanOrEqual(nextTop)
+    }
+  })
+
+  it('is byte-identical to the baseline when every owner is sparse (0-1 satellites)', () => {
+    // Sparse owners (0-1 satellites) never trigger expansion: the whole layout
+    // — spine AND satellites — must match the zero-satellite baseline spine
+    // exactly (backbone), with no rank gap grown.
+    const sparse = cleanLayout(denseOwnerChain([1, 0, 1]))
+    const baseline = cleanLayout(denseOwnerChain([0, 0, 0]))
+    expectClean(sparse)
+    expect(relativeBackbone(sparse)).toBe(relativeBackbone(baseline))
+    for (const from of ['E.start', 'F.0', 'F.1', 'F.2'] as const) {
+      const to = from === 'E.start' ? 'F.0' : from === 'F.2' ? 'E.end' : `F.${Number(from.at(-1)) + 1}`
+      expect(ownerGap(sparse, from, to)).toBe(ownerGap(baseline, from, to))
+    }
+  })
+
+  it('is deterministic for a dense layout (byte-identical over repeated runs)', () => {
+    const once = cleanLayout(denseOwnerChain([1, 5, 1]))
+    const twice = cleanLayout(denseOwnerChain([1, 5, 1]))
+    expect(JSON.stringify(twice.nodes)).toBe(JSON.stringify(once.nodes))
   })
 })
 

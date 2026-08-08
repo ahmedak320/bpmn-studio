@@ -93,7 +93,13 @@ export function resolveSpacing(
   const medianAlong = median(alongSizes, 60)
   const medianCross = median(crossSizes, 120)
   const rankGap = overrides.rankGap ?? Math.max(40, Math.round(medianAlong * 0.8))
-  const crossGap = overrides.crossGap ?? Math.max(40, Math.round(medianCross * 0.35))
+  // crossGap tuned down from 0.35 / floor 40 (was too airy — the AnimalWF
+  // render sat at ~1010px between spine (x=481) and satellite column (x=1491)
+  // which the user called out as excessive). 0.22 / floor 24 gives ~37%
+  // horizontal reduction; every dependent gap (componentGap, channelGap,
+  // corridorGap, satellite column offset) scales off crossGap so the whole
+  // horizontal budget shrinks proportionally.
+  const crossGap = overrides.crossGap ?? Math.max(24, Math.round(medianCross * 0.22))
   return {
     rankGap,
     crossGap,
@@ -413,7 +419,15 @@ export function placeControlFlow(
   classification: EdgeClassification,
   components: ConnectedComponents,
   orientation: ArisLayoutOrientation,
-  spacing: ResolvedSpacing
+  spacing: ResolvedSpacing,
+  /**
+   * Density-aware rank-gap expansion input (satellite cascade fix): the
+   * along-axis height each owner's satellite stack will occupy, keyed by the
+   * owner's control-node index (see `satelliteVerticalLoad`). When omitted or
+   * empty, band sizing is byte-identical to the pre-expansion engine, so the
+   * §13.2 invariant holds unchanged for any satellite-free graph.
+   */
+  satelliteLoad?: ReadonlyMap<number, number>
 ): ControlPlacement {
   const nodeCount = controlNodes.length
   const boxes = controlNodes.map((node) => occupiedBoxOf(node, orientation, spacing.labelGap))
@@ -465,6 +479,7 @@ export function placeControlFlow(
 
   const bandStart: number[] = []
   const bandEnd: number[] = []
+  const hasSatelliteLoad = satelliteLoad !== undefined && satelliteLoad.size > 0
   let along = spacing.margin + spacing.rankGap
   for (let rank = 0; rank < rankCount; rank += 1) {
     let height = 0
@@ -473,7 +488,29 @@ export function placeControlFlow(
     }
     bandStart.push(along)
     bandEnd.push(along + height)
-    along = along + height + spacing.rankGap
+    // --- density-aware rank-gap expansion (satellite cascade fix) ----------
+    // An owner's satellites stack downward from the owner's along-top. When
+    // that stack is taller than the space to the next spine step, it cascades
+    // PAST that step and drags every later owner's stack down with it (the
+    // per-side stack cursor packs later owners below the previous stack). Grow
+    // ONLY the gap AFTER this rank by the largest per-owner DEFICIT, so each
+    // dense owner's stack still ends at or above the next step's top. This
+    // only ever ADDS space (never shrinks or moves sideways), downstream ranks
+    // keep the baseline gap, and the last rank has no next step so never grows.
+    let extraGap = 0
+    if (hasSatelliteLoad && rank < rankCount - 1) {
+      const bandCenter = along + height / 2
+      const nextStepTop = along + height + spacing.rankGap
+      for (const member of rankNodes[rank] as readonly number[]) {
+        const needed = (satelliteLoad as ReadonlyMap<number, number>).get(member) ?? 0
+        if (needed <= 0) continue
+        const ownerAlongTop = bandCenter - (boxes[member] as OccupiedBox).along / 2
+        const baseAvailable = nextStepTop - ownerAlongTop
+        extraGap = Math.max(extraGap, needed - baseAvailable)
+      }
+      extraGap = Math.max(0, Math.round(extraGap))
+    }
+    along = along + height + spacing.rankGap + extraGap
   }
 
   const gapStart: number[] = []

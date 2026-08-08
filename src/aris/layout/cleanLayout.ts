@@ -56,7 +56,7 @@ import {
   routeReturnEdge,
   type FlowPoint
 } from './routing'
-import { placeSatellites } from './satellites'
+import { placeSatellites, satelliteVerticalLoad } from './satellites'
 import { placeAnnotations } from './annotations'
 import { analyzeLayout, type LayoutAnalysis } from './metrics'
 import { DEFAULT_MAX_EMPTY_BAND_RATIO, evaluateLayoutAcceptance } from './rejection'
@@ -146,13 +146,26 @@ function buildDraft(
   const strongComponents = findStronglyConnectedComponents(adjacency)
   const classification = classifyEdges(adjacency)
 
+  // Density-aware rank-gap expansion (satellite cascade fix): the band-sizing
+  // stage needs to know each owner's satellite-stack height BEFORE it fixes the
+  // spine, so satellites can never push a spine node sideways but a dense owner
+  // CAN grow the vertical gap to the next step. Computed from the same
+  // satellite input `placeSatellites` consumes, so the two passes agree.
+  const satelliteLoad = satelliteVerticalLoad(
+    separated.satelliteNodes,
+    separated.satelliteEdges,
+    adjacency.indexOf,
+    orientation,
+    spacing
+  )
   const placement = placeControlFlow(
     separated.controlNodes,
     adjacency,
     classification,
     components,
     orientation,
-    spacing
+    spacing,
+    satelliteLoad
   )
   const geometry = buildFlowGeometry(
     placement,

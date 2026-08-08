@@ -72,13 +72,20 @@ export function shapeAlongMax(geometry: FlowGeometry, node: number): number {
 export class GapSlotAllocator {
   private readonly counters: number[]
   /**
-   * Per-source shared slots. All forward branches that leave the SAME split
-   * node (an XOR/AND gate, or a fan-out function with 2+ outgoing edges) share
-   * ONE horizontal-turn slot in a given rank gap, so their L-shaped turns land
-   * at the same cross coordinate instead of fanning out across N slots. Keyed
-   * by `${sourceNode}@${gap}` so a DIFFERENT rank gap still allocates its own
-   * slot independently. The receiving (target) end is never keyed here, so it
-   * stays per-target.
+   * Shared slots, symmetric on both ends of a route.
+   *
+   * * **Per-source** (key `${sourceNode}@${gap}`, via {@link nextForSource}):
+   *   all forward branches that leave the SAME split node share ONE
+   *   horizontal-turn slot in a given rank gap, so their L-shaped turns land at
+   *   the same cross coordinate instead of fanning out across N slots.
+   * * **Per-target** (key `t${targetNode}@${gap}`, via {@link nextForTarget}):
+   *   the mirror image — all forward edges that ARRIVE at the SAME merge node
+   *   (an XOR/AND gate or a fan-in function with 2+ incoming edges) share ONE
+   *   target-side horizontal-turn slot, so their last horizontal segments land
+   *   at the same cross coordinate and the merge is a clean 3+-way junction.
+   *
+   * A DIFFERENT rank gap always allocates independently. The two namespaces
+   * never collide: source keys begin with a digit, target keys with `t`.
    */
   private readonly sharedSlots = new Map<string, number>()
 
@@ -104,6 +111,53 @@ export class GapSlotAllocator {
     if (existing !== undefined) return existing
     const slot = this.next(gap)
     this.sharedSlots.set(key, slot)
+    return slot
+  }
+
+  /**
+   * Mirror of {@link nextForSource} on the TARGET side. Every call with the
+   * same `(targetNode, gap)` pair reuses the FIRST slot handed out for that
+   * pair, so all forward edges arriving at one merge node in a given rank gap
+   * share a single target-side horizontal-turn slot. A single-incoming target
+   * is called exactly once and still gets its own unique slot; a merge reuses
+   * that one slot across all its incoming edges. Deterministic: same call order
+   * yields the same slots.
+   */
+  nextForTarget(gap: number, targetNode: number): number {
+    const key = `t${targetNode}@${gap}`
+    const existing = this.sharedSlots.get(key)
+    if (existing !== undefined) return existing
+    const slot = this.next(gap)
+    this.sharedSlots.set(key, slot)
+    return slot
+  }
+
+  /**
+   * An adjacent-rank edge has a SINGLE horizontal turn that must serve whichever
+   * junction it belongs to: a split (share per source, so branch turns stack on
+   * one line) OR a merge (share per target, so incoming turns stack on one
+   * line). This resolves both incrementally without any degree lookup:
+   *
+   * 1. If the source already owns a slot in this gap, reuse it (the edge is a
+   *    branch of an already-seen split). Source alignment wins ties, so a
+   *    split's alignment never regresses — the §v35 invariant holds.
+   * 2. Otherwise, if the target already owns a slot in this gap, reuse it (the
+   *    edge is an incoming edge of an already-seen merge).
+   * 3. Otherwise allocate a fresh slot.
+   *
+   * The chosen slot is then registered under BOTH the source and target keys, so
+   * a later sibling arriving from the OTHER side of the same junction reuses it.
+   * The keys share the exact namespaces of {@link nextForSource} /
+   * {@link nextForTarget}, so an adjacent branch and a non-adjacent branch of
+   * the same split (or merge) still land on one line.
+   */
+  nextForJunction(gap: number, sourceNode: number, targetNode: number): number {
+    const sourceKey = `${sourceNode}@${gap}`
+    const targetKey = `t${targetNode}@${gap}`
+    const slot =
+      this.sharedSlots.get(sourceKey) ?? this.sharedSlots.get(targetKey) ?? this.next(gap)
+    if (!this.sharedSlots.has(sourceKey)) this.sharedSlots.set(sourceKey, slot)
+    if (!this.sharedSlots.has(targetKey)) this.sharedSlots.set(targetKey, slot)
     return slot
   }
 
@@ -310,21 +364,28 @@ export function routeForwardEdge(
     ]
   }
 
-  // The source-side horizontal turn is shared per source: all branches leaving
-  // the SAME split node reuse ONE slot in this rank gap, so their L-shaped
-  // turns land at the same cross coordinate (a visually clean split). The
-  // target-side turn (`secondGap` below) stays per-target and is NOT shared.
-  const firstGap = slots.nextForSource(sourceRank + 1, source)
+  // Adjacent-rank edge: one horizontal turn only. It has to serve both roles a
+  // route can play at once — a split branch (align per source) and a merge
+  // incoming edge (align per target). `nextForJunction` picks a shared slot for
+  // whichever junction this edge belongs to, so a split's branches AND a merge's
+  // incoming edges each stack onto one clean line.
   if (targetRank === sourceRank + 1) {
+    const turnGap = slots.nextForJunction(sourceRank + 1, source, target)
     return simplifyFlowPolyline([
       { along: exitAlong, cross: sourceCross },
-      { along: firstGap, cross: sourceCross },
-      { along: firstGap, cross: targetCross },
+      { along: turnGap, cross: sourceCross },
+      { along: turnGap, cross: targetCross },
       { along: entryAlong, cross: targetCross }
     ])
   }
 
-  const secondGap = slots.next(targetRank)
+  // Long edge: two turns. The source-side turn is shared per source (all
+  // branches leaving the SAME split reuse ONE slot, a clean split). The
+  // target-side turn is shared per target (all edges arriving at the SAME merge
+  // reuse ONE slot, so their last horizontal segments land at one cross coord —
+  // a clean 3+-way merge junction). The two ends are keyed independently.
+  const firstGap = slots.nextForSource(sourceRank + 1, source)
+  const secondGap = slots.nextForTarget(targetRank, target)
   const corridor =
     freeCorridorCross(geometry, sourceRank, targetRank, (sourceCross + targetCross) / 2) ??
     fallbackChannelCross

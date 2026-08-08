@@ -115,6 +115,33 @@ export function chainWithSatellites(count: number): ArisLayoutGraphInput {
 }
 
 /**
+ * A straight `start -> F.0 -> F.1 -> ... -> F.{k-1} -> end` chain where owner
+ * `F.i` carries `counts[i]` satellites. Used to exercise the satellite-density
+ * rank-gap expansion: a sparse owner (0-1 satellites) leaves its gap at
+ * baseline, a dense owner grows the gap immediately AFTER it. Satellites are
+ * ids `S.<owner>.<index>`; every satellite attaches to its owner function.
+ */
+export function denseOwnerChain(counts: readonly number[]): ArisLayoutGraphInput {
+  const nodes: ArisLayoutNodeInput[] = [event('E.start')]
+  const edges: ArisLayoutEdgeInput[] = []
+  let previous = 'E.start'
+  counts.forEach((count, owner) => {
+    const id = `F.${owner}`
+    nodes.push(fn(id))
+    edges.push(flow(previous, id))
+    for (let index = 0; index < count; index += 1) {
+      const satelliteId = `S.${owner}.${index}`
+      nodes.push(satellite(satelliteId))
+      edges.push(attach(id, satelliteId))
+    }
+    previous = id
+  })
+  nodes.push(event('E.end'))
+  edges.push(flow(previous, 'E.end'))
+  return { id: `dense-owner-chain-${counts.join('-')}`, nodes, edges }
+}
+
+/**
  * A symmetric XOR diamond (`start -> split -> {F.left, F.right} -> merge ->
  * end`) whose chosen branch carries `count` satellites. The branch's outgoing
  * edge runs back to the CENTERED merge, so the spine bends at the owner:
