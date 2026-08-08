@@ -64,11 +64,13 @@ import MinimapModule from 'diagram-js-minimap/dist/index.esm.js'
 import DirectEditingModule from 'diagram-js-direct-editing'
 
 import { ArisAuthoring } from './authoring'
+import { ArisConnectionOverlay } from './arisConnectionOverlay'
 import { ArisDirectEditingProvider } from './directEdit'
 import { ArisCanvasSync } from './canvasSync'
 import { ArisClipboard } from './clipboard'
 import { ArisCommandBridge } from './commandBridge'
 import { ArisContextPadProvider } from './contextPadProvider'
+import { ArisDefaultLegend } from './defaultLegend'
 import { ArisDocumentStore } from './documentStore'
 import { HeadlessPalette } from './headlessPalette'
 import { ArisHoverTooltip } from './hoverTooltip'
@@ -105,6 +107,8 @@ export const ArisCanvasModule: DiagramModuleDeclaration = {
     'arisHoverTooltip',
     'arisContextPadProvider',
     'arisSelectionHighlight',
+    'arisConnectionOverlay',
+    'arisDefaultLegend',
     'arisClipboard',
     'arisAuthoring',
     'arisSearchProvider',
@@ -127,6 +131,8 @@ export const ArisCanvasModule: DiagramModuleDeclaration = {
   arisHoverTooltip: ['type', ArisHoverTooltip],
   arisContextPadProvider: ['type', ArisContextPadProvider],
   arisSelectionHighlight: ['type', ArisSelectionHighlight],
+  arisConnectionOverlay: ['type', ArisConnectionOverlay],
+  arisDefaultLegend: ['type', ArisDefaultLegend],
   arisClipboard: ['type', ArisClipboard],
   arisAuthoring: ['type', ArisAuthoring],
   arisSearchProvider: ['type', ArisSearchProvider],

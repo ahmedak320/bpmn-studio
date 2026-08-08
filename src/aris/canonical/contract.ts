@@ -395,6 +395,14 @@ export interface CanonicalSystem {
   readonly id: string
   readonly names: CanonicalText
   readonly nodeIds: readonly string[]
+  /**
+   * Declares this system as the process-wide DEFAULT system — a RENDERING hint
+   * only (never affects the projection/AML). When set, the default-legend
+   * (`src/aris/canonical/defaults.ts`) prefers it over an auto-detected
+   * majority, and a per-step satellite matching it is collapsed into the legend.
+   * Back-compat: absent means "no declared default" (auto-fallback applies).
+   */
+  readonly default?: boolean
   readonly factIds?: readonly string[]
   readonly confidence: CanonicalConfidence
 }
@@ -404,6 +412,7 @@ export const CanonicalSystemSchema = z
     id: canonicalIdString(),
     names: CanonicalTextSchema,
     nodeIds: z.array(z.string().min(1)),
+    default: z.boolean().optional(),
     factIds: z.array(z.string().min(1)).optional(),
     confidence: CanonicalConfidenceSchema
   })
@@ -418,6 +427,12 @@ export interface CanonicalInformationObject {
   readonly names: CanonicalText
   readonly inputToNodeIds: readonly string[]
   readonly outputOfNodeIds: readonly string[]
+  /**
+   * Declares this information carrier as the process-wide DEFAULT — a RENDERING
+   * hint only (see `CanonicalSystem.default`). Back-compat: absent means "no
+   * declared default".
+   */
+  readonly default?: boolean
   readonly factIds?: readonly string[]
   readonly confidence: CanonicalConfidence
 }
@@ -428,6 +443,7 @@ export const CanonicalInformationObjectSchema = z
     names: CanonicalTextSchema,
     inputToNodeIds: z.array(z.string().min(1)),
     outputOfNodeIds: z.array(z.string().min(1)),
+    default: z.boolean().optional(),
     factIds: z.array(z.string().min(1)).optional(),
     confidence: CanonicalConfidenceSchema
   })
@@ -446,6 +462,12 @@ export interface CanonicalControl {
   readonly names: CanonicalText
   readonly kind: CanonicalControlKind
   readonly nodeIds: readonly string[]
+  /**
+   * Declares this control as the process-wide DEFAULT — a RENDERING hint only
+   * (see `CanonicalSystem.default`). Back-compat: absent means "no declared
+   * default".
+   */
+  readonly default?: boolean
   readonly factIds?: readonly string[]
   readonly confidence: CanonicalConfidence
 }
@@ -456,6 +478,7 @@ export const CanonicalControlSchema = z
     names: CanonicalTextSchema,
     kind: z.enum(CANONICAL_CONTROL_KINDS),
     nodeIds: z.array(z.string().min(1)),
+    default: z.boolean().optional(),
     factIds: z.array(z.string().min(1)).optional(),
     confidence: CanonicalConfidenceSchema
   })

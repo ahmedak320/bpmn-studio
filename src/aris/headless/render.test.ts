@@ -57,8 +57,32 @@ const sha256Hex = (input: string | Uint8Array): string =>
 // only branches inside the corridor at each satellite's along-row, instead of
 // N staggered per-satellite stubs. Only satellite connector geometry moves;
 // the control-flow backbone is byte-identical, so this is a layout-only shift.
+// Updated 2026-08-08 (overlay wire-through, no version bump): the ARIS canvas
+// now registers `arisConnectionOverlay` (`../canvas/arisConnectionOverlay.ts`)
+// in `ArisCanvasModule`. That service snapshots every connection's post-layout
+// waypoints on `commandStack.changed` (which `applyCleanLayout` fires
+// synchronously before the headless capture runs), delegates to the shared
+// `../../org/edgeVisuals` geometry engine, and paints ONE non-interactive
+// `<g class="orbitpm-connection-visuals">` into the active diagram layer —
+// inside the `.viewport` the export clones, and carrying no class matched by
+// `EXPORT_STRIP_SELECTOR`, so it survives `captureArisCanvasSvg` verbatim.
+// Under that group it emits split/merge junction dots
+// (`data-aris-edge-visual="junction"`) and line-hop bridge arcs + white masks
+// (`data-aris-edge-visual="hop"`). VALID_CANONICAL_FULL gains 10 junction dots
+// and 3 hops, growing the SVG by ~5KB — pure additive adornment; the
+// control-flow backbone and every existing anchor byte are unchanged. Rendering
+// addition only; EPC_ENGINE_VERSION and PROJECTION_VERSION intentionally stay put.
+// Re-updated 2026-08-08 (default-legend + satellite suppression, no version
+// bump): a top-right «Owner: IT Manager» / «System: ITSM Platform» legend is
+// painted (`../canvas/defaultLegend.ts`, registered as `arisDefaultLegend`), and
+// the per-step satellites matching those defaults are dropped from the SVG —
+// r:r-manager@{n-triage,n-exception} and s:s-itsm@{n-log,n-triage} (4
+// occurrences + their connectors). Both defaults come from VALID_CANONICAL_FULL:
+// the owner via role.owner:true, the system s-itsm via the >=60% majority (2 of
+// 3 system owner-nodes). The AML is unchanged — SVG-only rendering-shape change,
+// no EPC_ENGINE_VERSION/PROJECTION_VERSION bump.
 const VALID_CANONICAL_FULL_SVG_SHA256 =
-  '14e3396093daceb0c441afcc917c9a37bcb1704f3158237d8cecd4ace73ffc2c'
+  '39496dd90c9028796972d1532b75d2566cca2f58982b050c748528728f1943b3'
 
 /** Schema-valid, but its projected EEPC has no start/end event — fails the gate. */
 const STRUCTURALLY_INVALID: CanonicalProcessV1 = {
@@ -197,6 +221,135 @@ describe('renderCanonicalProcess — VALID_CANONICAL_FULL', () => {
 
     expect(second.svg).toBe(first.svg)
     expect(sha256Hex(first.svg)).toBe(VALID_CANONICAL_FULL_SVG_SHA256)
+  })
+
+  it('paints diagram-wide connection adornments (junction dots + line hops)', async () => {
+    // `arisConnectionOverlay` (registered in `ArisCanvasModule`) paints the
+    // shared `edgeVisuals` geometry into the captured SVG. VALID_CANONICAL_FULL
+    // has split/merge gateways (⇒ junctions) and crossing routes (⇒ hops), so
+    // both adornment kinds must appear at least once.
+    const result = await renderCanonicalProcess(VALID_CANONICAL_FULL)
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('expected a successful render')
+
+    const countOf = (needle: string): number => result.svg.split(needle).length - 1
+    const junctions = countOf('data-aris-edge-visual="junction"')
+    const hops = countOf('data-aris-edge-visual="hop"')
+
+    expect(junctions).toBeGreaterThan(0)
+    expect(hops).toBeGreaterThan(0)
+    // Every hop is knocked out by exactly one white under-mask.
+    expect(countOf('data-aris-edge-hop-mask="true"')).toBe(hops)
+    // The overlay group is present exactly once.
+    expect(countOf('class="orbitpm-connection-visuals"')).toBe(1)
+  })
+
+  it('paints a top-right default legend (owner + system) and drops the matching per-step satellites', async () => {
+    const result = await renderCanonicalProcess(VALID_CANONICAL_FULL)
+    if (!result.ok) throw new Error('expected a successful render')
+
+    // Legend present exactly once, EN labels (default language).
+    const countOf = (needle: string): number => result.svg.split(needle).length - 1
+    expect(countOf('class="orbitpm-default-legend"')).toBe(1)
+    expect(result.svg).toContain('Owner:')
+    expect(result.svg).toContain('System:')
+    // Owner declared via role.owner:true; system s-itsm via >=60% majority.
+    expect(result.svg).toContain('IT Manager')
+    expect(result.svg).toContain('ITSM Platform')
+    expect(result.svg).toContain('data-legend-kind="owner"')
+    expect(result.svg).toContain('data-legend-kind="system"')
+
+    // The four suppressed satellite occurrences are gone from the SVG…
+    const suppressed = [
+      'ObjOcc.r:r-manager@n-triage',
+      'ObjOcc.r:r-manager@n-exception',
+      'ObjOcc.s:s-itsm@n-log',
+      'ObjOcc.s:s-itsm@n-triage'
+    ]
+    for (const occ of suppressed) {
+      expect(result.svg).not.toContain(occ)
+      // …yet every one remains in the AML (lossless): its ObjectDefinition,
+      // ObjectOccurrence and satellite Connection are all still emitted.
+      expect(result.debugAml).toContain(occ)
+      expect(result.debugAml).toContain(occ.replace('ObjOcc.', 'ObjDef.'))
+    }
+  })
+
+  it('renders the AR default legend when language:"ar" is passed', async () => {
+    const result = await renderCanonicalProcess(VALID_CANONICAL_FULL, { language: 'ar' })
+    if (!result.ok) throw new Error('expected a successful render')
+    const countOf = (needle: string): number => result.svg.split(needle).length - 1
+    expect(countOf('class="orbitpm-default-legend"')).toBe(1)
+    // AR owner label "المالك" and AR owner name; no EN "Owner:" leaks in.
+    expect(result.svg).toContain('المالك')
+    expect(result.svg).toContain('مدير تقنية المعلومات')
+    expect(result.svg).not.toContain('Owner:')
+  })
+
+  it('keeps the AML lossless when default-owner suppression drops 20 satellites from the SVG', async () => {
+    // A role that OWNS 20 activities becomes the process owner default; every one
+    // of those 20 nodes has ONLY that role, so all 20 role duplicates are
+    // suppressed from the SVG — while all 20 ObjectDefinitions survive in the AML.
+    const nodeIds = Array.from({ length: 20 }, (_unused, index) => `n-a${index + 1}`)
+    const canonical: CanonicalProcessV1 = {
+      version: 1,
+      identity: { id: 'proc-20', names: { en: 'Owner-heavy process' }, confidence: 'high' },
+      nodes: [
+        { id: 'n-start', kind: 'event', names: { en: 'Start' }, confidence: 'high' },
+        ...nodeIds.map((id, index) => ({
+          id,
+          kind: 'activity' as const,
+          names: { en: `Step ${index + 1}` },
+          confidence: 'high' as const
+        })),
+        { id: 'n-end', kind: 'event', names: { en: 'End' }, confidence: 'high' }
+      ],
+      decisions: [],
+      edges: [
+        { id: 'e-start', kind: 'sequence', sourceNodeId: 'n-start', targetNodeId: 'n-a1', confidence: 'high' },
+        ...nodeIds.slice(0, -1).map((id, index) => ({
+          id: `e-${index + 1}`,
+          kind: 'sequence' as const,
+          sourceNodeId: id,
+          targetNodeId: nodeIds[index + 1] as string,
+          confidence: 'high' as const
+        })),
+        { id: 'e-end', kind: 'sequence', sourceNodeId: 'n-a20', targetNodeId: 'n-end', confidence: 'high' }
+      ],
+      roles: [
+        {
+          id: 'r-owner',
+          names: { en: 'Survey Team' },
+          nodeIds,
+          owner: true,
+          confidence: 'high'
+        }
+      ],
+      systems: [],
+      informationObjects: [],
+      controls: [],
+      facts: [],
+      unknowns: []
+    }
+
+    const result = await renderCanonicalProcess(canonical)
+    if (!result.ok) throw new Error('expected a successful render')
+
+    // All 20 role-satellite ObjectDefinitions are present in the AML…
+    for (const nodeId of nodeIds) {
+      expect(result.debugAml).toContain(`ObjDef.r:r-owner@${nodeId}`)
+      // …and every one is suppressed from the SVG.
+      expect(result.svg).not.toContain(`ObjOcc.r:r-owner@${nodeId}`)
+    }
+    // 20 DISTINCT role-owner ObjectDefinitions in the AML, unchanged by
+    // suppression (each id text also recurs as an ObjOcc reference, so dedupe).
+    const distinctOwnerDefs = new Set(
+      [...result.debugAml.matchAll(/ObjDef\.r:r-owner@n-a\d+/g)].map((match) => match[0])
+    )
+    expect(distinctOwnerDefs.size).toBe(20)
+    // The legend declared the owner once.
+    expect(result.svg).toContain('class="orbitpm-default-legend"')
+    expect(result.svg).toContain('Survey Team')
   })
 })
 

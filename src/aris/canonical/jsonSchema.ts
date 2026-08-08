@@ -187,6 +187,7 @@ function systemSchema(): Record<string, unknown> {
       id: safeIdSchema(),
       names: localizedTextSchema(),
       nodeIds: nodeIdArraySchema(),
+      default: { type: 'boolean' },
       factIds: nodeIdArraySchema(),
       confidence: confidenceSchema()
     }
@@ -203,6 +204,7 @@ function informationObjectSchema(): Record<string, unknown> {
       names: localizedTextSchema(),
       inputToNodeIds: nodeIdArraySchema(),
       outputOfNodeIds: nodeIdArraySchema(),
+      default: { type: 'boolean' },
       factIds: nodeIdArraySchema(),
       confidence: confidenceSchema()
     }
@@ -219,6 +221,7 @@ function controlSchema(): Record<string, unknown> {
       names: localizedTextSchema(),
       kind: { type: 'string', enum: [...CANONICAL_CONTROL_KINDS] },
       nodeIds: nodeIdArraySchema(),
+      default: { type: 'boolean' },
       factIds: nodeIdArraySchema(),
       confidence: confidenceSchema()
     }

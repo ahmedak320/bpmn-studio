@@ -38,6 +38,8 @@ import type { ArisRenderer } from '../canvas/renderer'
 import type { Element } from 'diagram-js/lib/model/Types'
 import { createCanvasContainer } from '../canvas/testing/jsdomSvg'
 import {
+  computeDefaults,
+  computeSuppressedSatelliteDraftIds,
   parseCanonicalProcess,
   projectCanonicalToDraft,
   validateProjectedDraft,
@@ -47,7 +49,9 @@ import {
   type CanonicalProjectionAnchors,
   type EpcProjectionFindings
 } from '../canonical'
+import { ArisDefaultLegend, type DefaultLegendLanguage } from '../canvas/defaultLegend'
 import { buildFromSource } from '../model/buildFromSource'
+import type { ArisWorkingDocument } from '../model/types'
 import { buildAmlFromArisAiDraft } from '../shell/arisAiCreate'
 import { buildSemanticArisDocument } from '../source/semanticIndex'
 import { tokenizeXmlDocument } from '../source/xmlTokenizer'
@@ -81,6 +85,13 @@ export interface RenderCanonicalProcessOptions {
    * so it does not break determinism.
    */
   readonly sourceVersionId?: string
+  /**
+   * Language of the top-right default-legend (EN labels vs AR labels). Defaults
+   * to `'en'`. An explicit input, so it does not break determinism. The legend
+   * (and the satellite suppression it summarizes) is SVG-only — the AML always
+   * carries every per-step assignment regardless of this option.
+   */
+  readonly language?: DefaultLegendLanguage
 }
 
 /** Versioned metadata mirrored onto the SVG root and returned to the caller. */
@@ -150,7 +161,20 @@ export async function renderCanonicalProcess(
   // 4. Draft -> AML -> tokens -> semantic -> working document (all pure Node).
   const aml = buildAmlFromArisAiDraft(projection.draft)
   const semantic = buildSemanticArisDocument(tokenizeXmlDocument(aml.xml))
-  const workingDocument = buildFromSource(semantic.index)
+  const builtDocument = buildFromSource(semantic.index)
+
+  // 4b. Default-legend detection + per-step satellite SUPPRESSION. The defaults
+  //     are declared once in a top-right legend (step 6) and the matching
+  //     duplicate satellites are pruned from the working document BEFORE the
+  //     canvas boots — so the SVG loses the redundant occurrences while the AML
+  //     (`aml.xml` / `debugAml`) keeps every ObjectDefinition, Occurrence and
+  //     Connection. Deterministic: pure functions over the parsed canonical.
+  const defaults = computeDefaults(canonical)
+  const suppressedDraftIds = computeSuppressedSatelliteDraftIds(canonical, defaults)
+  const suppressedOccurrenceIds = new Set(
+    [...suppressedDraftIds].map((draftId) => `${OBJECT_OCCURRENCE_PREFIX}${draftId}`)
+  )
+  const workingDocument = pruneSuppressedOccurrences(builtDocument, suppressedOccurrenceIds)
 
   const modelIds = [...workingDocument.models.keys()]
   const modelId = modelIds[options.modelIndex ?? 0] ?? modelIds[0]
@@ -170,6 +194,14 @@ export async function renderCanonicalProcess(
     canvas.get<ArisRenderer>('arisRenderer').setPrintFrameVisible(false)
 
     stampAnchors(canvas, projection.anchors)
+
+    // Paint the top-right default legend (EN/AR per `language`). Seam-driven so
+    // it runs AFTER clean layout — the content bounds are final, so the legend
+    // lands at the true top-right corner and the capture is deterministic. No
+    // detected defaults => the service paints nothing.
+    canvas
+      .get<ArisDefaultLegend>('arisDefaultLegend')
+      .setDefaults(defaults, options.language ?? 'en')
 
     // The export capture reads the diagram-js `.djs-container` (whose direct
     // child is the rendered `<svg>`) — the same container the studio export
@@ -230,6 +262,39 @@ function stampAnchors(canvas: ArisCanvas, anchors: CanonicalProjectionAnchors): 
     const gfx = registry.getGraphics(element) as SVGElement | undefined
     if (gfx) gfx.setAttribute(attribute, canonicalId)
   }
+}
+
+/**
+ * Return a working document with the given occurrence ids (and every connection
+ * incident to them) removed from every model — the RENDER-only satellite
+ * suppression. The source `aml.xml` string is a separate artifact and is never
+ * touched, so `debugAml` stays lossless (all ObjectDefinitions + Occurrences +
+ * Connections remain in the AML); only the canvas/SVG loses the duplicates.
+ * `objectDefinitions` are also left intact — only per-model occurrences drop.
+ */
+function pruneSuppressedOccurrences(
+  document: ArisWorkingDocument,
+  suppressedOccurrenceIds: ReadonlySet<string>
+): ArisWorkingDocument {
+  if (suppressedOccurrenceIds.size === 0) return document
+  const models = new Map(document.models)
+  for (const [id, model] of document.models) {
+    const removed = new Set(
+      model.occurrences
+        .filter((occurrence) => suppressedOccurrenceIds.has(occurrence.id))
+        .map((occurrence) => occurrence.id)
+    )
+    if (removed.size === 0) continue
+    models.set(id, {
+      ...model,
+      occurrences: model.occurrences.filter((occurrence) => !removed.has(occurrence.id)),
+      connectionOccurrences: model.connectionOccurrences.filter(
+        (connection) =>
+          !removed.has(connection.sourceOccurrenceId) && !removed.has(connection.targetOccurrenceId)
+      )
+    })
+  }
+  return { ...document, models }
 }
 
 function buildMetadata(
