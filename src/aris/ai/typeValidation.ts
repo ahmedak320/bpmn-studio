@@ -31,7 +31,16 @@ export const ARIS_AI_SUPPORTED_OBJECT_TYPES = [
   'OT_PERS',
   'OT_REQUIREMENT',
   'OT_POLICY',
-  'OT_PERS_TYPE'
+  'OT_PERS_TYPE',
+  // Satellite symbol-variant object types (2026-08-07): richer role/system/
+  // control satellites projected from the canonical `kind` discriminator. Each
+  // pairs with a registered card() presentation in src/aris/symbols/shapes.ts
+  // (OT_POS/OT_ORG_UNIT/OT_GRP roles, OT_SERVICE system, OT_RISK control).
+  'OT_POS',
+  'OT_ORG_UNIT',
+  'OT_GRP',
+  'OT_SERVICE',
+  'OT_RISK'
 ] as const
 
 const SUPPORTED_OBJECT_TYPE_SET: ReadonlySet<string> = new Set(ARIS_AI_SUPPORTED_OBJECT_TYPES)

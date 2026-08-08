@@ -50,6 +50,11 @@ const DEFAULT_SYMBOLS: Readonly<Record<string, string>> = Object.freeze({
   OT_EVT: 'ST_EV',
   OT_RULE: 'ST_OPR_XOR_1',
   OT_APPL_SYS: 'ST_APPL_SYS',
+  // OT_SERVICE / OT_RISK added 2026-08-07 alongside the satellite `kind`
+  // variants in projectToEpc.ts so a service-system / risk-control satellite
+  // never falls through the trailing `?? 'ST_FUNC'` guard when (defensively)
+  // an object arrives without an explicit symbolType.
+  OT_SERVICE: 'ST_SERVICE',
   OT_PERS: 'ST_PERS_EXT',
   OT_PERS_TYPE: 'ST_EMPL_TYPE',
   OT_ENT_TYPE: 'ST_ENT_TYPE',
@@ -57,6 +62,7 @@ const DEFAULT_SYMBOLS: Readonly<Record<string, string>> = Object.freeze({
   OT_REQUIREMENT: 'ST_REQUIREMENT',
   OT_POLICY: 'ST_BUSINESS_POLICY',
   OT_BUSINESS_RULE: 'ST_BUSINESS_RULE',
+  OT_RISK: 'ST_RISK_1',
   OT_ORG_UNIT: 'ST_ORG_UNIT_1',
   OT_POS: 'ST_POS',
   OT_GRP: 'ST_GRP_1'

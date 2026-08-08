@@ -534,3 +534,130 @@ describe('return-path / reachability (milestone amendment, plan line 27)', () =>
     expect(draft.uncertainties[0].field).toBe('role')
   })
 })
+
+describe('satellite symbol variants — kind discriminator (2026-08-07)', () => {
+  // A tiny start -> activity -> end process with exactly ONE satellite on the
+  // activity node `b`. Each helper splices the satellite family under test so we
+  // can assert the projected objectType + symbolType per `kind`.
+  const baseNodesEdges = {
+    nodes: [
+      { id: 'a', kind: 'event' as const, names: { en: 'Start' }, confidence: 'high' as const },
+      { id: 'b', kind: 'activity' as const, names: { en: 'Do it' }, confidence: 'high' as const },
+      { id: 'c', kind: 'event' as const, names: { en: 'End' }, confidence: 'high' as const }
+    ],
+    edges: [
+      { id: 'e1', kind: 'sequence' as const, sourceNodeId: 'a', targetNodeId: 'b', confidence: 'high' as const },
+      { id: 'e2', kind: 'sequence' as const, sourceNodeId: 'b', targetNodeId: 'c', confidence: 'high' as const }
+    ]
+  }
+
+  function base(
+    parts: Partial<Pick<CanonicalProcessV1, 'roles' | 'systems' | 'informationObjects' | 'controls'>>
+  ): CanonicalProcessV1 {
+    return {
+      version: 1,
+      identity: { id: 'p-kind', names: { en: 'Kind variant process' }, confidence: 'high' },
+      ...baseNodesEdges,
+      decisions: [],
+      roles: parts.roles ?? [],
+      systems: parts.systems ?? [],
+      informationObjects: parts.informationObjects ?? [],
+      controls: parts.controls ?? [],
+      facts: [],
+      unknowns: []
+    }
+  }
+
+  function projectedObject(process: CanonicalProcessV1, logicalId: string): ArisAiObject {
+    const { draft } = projectCanonicalToDraft(process)
+    expect(validateArisAiDraft(draft).ok).toBe(true)
+    return obj(draft.objects, logicalId)
+  }
+
+  const roleCases: ReadonlyArray<
+    [CanonicalProcessV1['roles'][number]['kind'], string, string]
+  > = [
+    [undefined, 'OT_PERS_TYPE', 'ST_EMPL_TYPE'],
+    ['employee-type', 'OT_PERS_TYPE', 'ST_EMPL_TYPE'],
+    ['named-person', 'OT_PERS', 'ST_PERS'],
+    ['external', 'OT_PERS', 'ST_PERS_EXT'],
+    ['position', 'OT_POS', 'ST_POS'],
+    ['org-unit', 'OT_ORG_UNIT', 'ST_ORG_UNIT_1'],
+    ['group', 'OT_GRP', 'ST_GRP_1']
+  ]
+
+  it.each(roleCases)('role kind %s -> %s / %s', (kind, ot, st) => {
+    const role = { id: 'role-1', names: { en: 'R' }, nodeIds: ['b'], confidence: 'high' as const }
+    const process = base({ roles: [kind === undefined ? role : { ...role, kind }] })
+    const projected = projectedObject(process, 'r:role-1@b')
+    expect(projected.objectType).toBe(ot)
+    expect(projected.symbolType).toBe(st)
+  })
+
+  const systemCases: ReadonlyArray<
+    [CanonicalProcessV1['systems'][number]['kind'], string, string]
+  > = [
+    [undefined, 'OT_APPL_SYS', 'ST_APPL_SYS'],
+    ['application', 'OT_APPL_SYS', 'ST_APPL_SYS'],
+    ['service', 'OT_SERVICE', 'ST_SERVICE']
+  ]
+
+  it.each(systemCases)('system kind %s -> %s / %s', (kind, ot, st) => {
+    const system = { id: 'sys-1', names: { en: 'S' }, nodeIds: ['b'], confidence: 'high' as const }
+    const process = base({ systems: [kind === undefined ? system : { ...system, kind }] })
+    const projected = projectedObject(process, 's:sys-1@b')
+    expect(projected.objectType).toBe(ot)
+    expect(projected.symbolType).toBe(st)
+  })
+
+  const infoCases: ReadonlyArray<
+    [CanonicalProcessV1['informationObjects'][number]['kind'], string]
+  > = [
+    [undefined, 'ST_INFO_CARR_EDOC'],
+    ['edoc', 'ST_INFO_CARR_EDOC'],
+    ['document', 'ST_DOC'],
+    ['letter', 'ST_LETTER'],
+    ['email', 'ST_EMAIL_1'],
+    ['log', 'ST_LOG'],
+    ['sms', 'ST_INFO_CARR_HANDY'],
+    ['generic', 'ST_INFO_CARR_1']
+  ]
+
+  it.each(infoCases)('information kind %s -> OT_INFO_CARR / %s', (kind, st) => {
+    const info = {
+      id: 'info-1',
+      names: { en: 'I' },
+      inputToNodeIds: ['b'],
+      outputOfNodeIds: [],
+      confidence: 'high' as const
+    }
+    const process = base({ informationObjects: [kind === undefined ? info : { ...info, kind }] })
+    const projected = projectedObject(process, 'io:info-1@b')
+    expect(projected.objectType).toBe('OT_INFO_CARR')
+    expect(projected.symbolType).toBe(st)
+  })
+
+  it('control kind risk -> OT_RISK / ST_RISK_1 with a CT_AFFECTS satellite relation', () => {
+    const process = base({
+      controls: [
+        { id: 'risk-1', names: { en: 'Data breach risk' }, kind: 'risk', nodeIds: ['b'], confidence: 'high' }
+      ]
+    })
+    const { draft } = projectCanonicalToDraft(process)
+    expect(validateArisAiDraft(draft).ok).toBe(true)
+    const risk = obj(draft.objects, 'c:risk-1@b')
+    expect(risk.objectType).toBe('OT_RISK')
+    expect(risk.symbolType).toBe('ST_RISK_1')
+    expect(rel(draft.relations, 're:c:risk-1@b:n:b').connectionType).toBe('CT_AFFECTS')
+  })
+
+  it('leaves projection byte-identical when no kind is set anywhere (back-compat)', () => {
+    // FULL uses defaults everywhere; re-projecting must equal itself, and the
+    // default satellite symbols must be the historical ones (proves the kind
+    // helpers reproduce pre-kind output).
+    const { draft } = full()
+    expect(obj(draft.objects, 'r:r-agent@n-log').symbolType).toBe('ST_EMPL_TYPE')
+    expect(obj(draft.objects, 's:s-itsm@n-log').symbolType).toBe('ST_APPL_SYS')
+    expect(obj(draft.objects, 'io:io-ticket@n-log').symbolType).toBe('ST_INFO_CARR_EDOC')
+  })
+})

@@ -364,3 +364,104 @@ describe('renderCanonicalProcess — Arabic (RTL) rendering', () => {
     expect(result.svg).toMatch(/<tspan[^>]*>[^<]*[؀-ۿ][^<]*<\/tspan>/u)
   })
 })
+
+/**
+ * A valid start->activity->end flow whose END event name reads as a "reject"
+ * outcome term but is NOT on a cycle — a return-path GAP the advisory
+ * `detectReturnPathOutcomes` pass must surface.
+ */
+const RETURN_PATH_GAP: CanonicalProcessV1 = {
+  version: 1,
+  identity: { id: 'proc-return-gap', names: { en: 'Return gap process' }, confidence: 'high' },
+  nodes: [
+    { id: 'n-start', kind: 'event', names: { en: 'Request received' }, confidence: 'high' },
+    { id: 'n-review', kind: 'activity', names: { en: 'Review request' }, confidence: 'high' },
+    { id: 'n-end', kind: 'event', names: { en: 'Request rejected' }, confidence: 'high' }
+  ],
+  decisions: [],
+  edges: [
+    { id: 'e-1', kind: 'sequence', sourceNodeId: 'n-start', targetNodeId: 'n-review', confidence: 'high' },
+    { id: 'e-2', kind: 'sequence', sourceNodeId: 'n-review', targetNodeId: 'n-end', confidence: 'high' }
+  ],
+  roles: [],
+  systems: [],
+  informationObjects: [],
+  controls: [],
+  facts: [],
+  unknowns: []
+}
+
+describe('renderCanonicalProcess — narrative + verification companion artifacts', () => {
+  it('returns a non-empty bilingual narrative for VALID_CANONICAL_FULL', async () => {
+    const result = await renderCanonicalProcess(VALID_CANONICAL_FULL)
+    if (!result.ok) throw new Error('expected a successful render')
+    expect(result.narrative.schemaVersion).toBe(1)
+    expect(result.narrative.en.length).toBeGreaterThan(0)
+    expect(result.narrative.en).toContain('#')
+    // VALID_CANONICAL_FULL carries AR names, so the AR narrative is populated too.
+    expect(result.narrative.ar.length).toBeGreaterThan(0)
+    // Narrative/verification are SEPARATE result fields — never stamped into svg.
+    expect(result.svg).not.toContain(result.narrative.en.slice(0, 40))
+  })
+
+  it('emits narrative.en for an EN-only process (narrative.ar stays a string per the helper contract)', async () => {
+    const result = await renderCanonicalProcess(RETURN_PATH_GAP)
+    if (!result.ok) throw new Error('expected a successful render')
+    expect(result.narrative.en.length).toBeGreaterThan(0)
+    expect(result.narrative.en).toContain('Return gap process')
+    // buildProcessNarrative always returns both locales (AR carries the
+    // Arabic-structured document even for EN-only names); it is a string, never
+    // undefined.
+    expect(typeof result.narrative.ar).toBe('string')
+  })
+
+  it('returns a non-empty verification package for VALID_CANONICAL_FULL', async () => {
+    const result = await renderCanonicalProcess(VALID_CANONICAL_FULL)
+    if (!result.ok) throw new Error('expected a successful render')
+    expect(result.verification.schemaVersion).toBe(2)
+    expect(result.verification.processId).toBe('proc-full')
+    expect(result.verification.mainFlow.length).toBeGreaterThan(0)
+    expect(result.verification.trigger.length).toBeGreaterThan(0)
+  })
+})
+
+describe('renderCanonicalProcess — print frame gating', () => {
+  it('stamps the print-frame group into the SVG when printFrame:true', async () => {
+    const result = await renderCanonicalProcess(VALID_CANONICAL_FULL, { printFrame: true })
+    if (!result.ok) throw new Error('expected a successful render')
+    expect(result.svg).toContain('data-aris-print-frame="true"')
+  })
+
+  it('omits the print-frame group when printFrame:false or unset', async () => {
+    const explicitOff = await renderCanonicalProcess(VALID_CANONICAL_FULL, { printFrame: false })
+    const unset = await renderCanonicalProcess(VALID_CANONICAL_FULL)
+    if (!explicitOff.ok || !unset.ok) throw new Error('expected successful renders')
+    expect(explicitOff.svg).not.toContain('data-aris-print-frame="true"')
+    expect(unset.svg).not.toContain('data-aris-print-frame="true"')
+  })
+})
+
+describe('renderCanonicalProcess — advisory return-path findings', () => {
+  it('surfaces a missing return-path finding when an outcome node reads as a reject term', async () => {
+    const result = await renderCanonicalProcess(RETURN_PATH_GAP)
+    if (!result.ok) throw new Error('expected a successful render')
+    expect(result.returnPathFindings.length).toBeGreaterThan(0)
+    const gap = result.returnPathFindings.find(
+      (finding) => finding.route.outcomeNodeId.includes('n.end') || finding.route.outcomeNodeId.includes('n-end')
+    )
+    expect(gap ?? result.returnPathFindings[0]).toBeDefined()
+    const finding = result.returnPathFindings[0]
+    expect(finding.source).toBe('return-path')
+    expect(finding.route.status).toBe('missing')
+    // The one editable upstream function ("Review request") is the recommendation.
+    expect(finding.route.candidates.length).toBeGreaterThan(0)
+    // Advisory only — the render still succeeds.
+    expect(result.findings.ok).toBe(true)
+  })
+
+  it('returns no return-path findings when no node reads as a return/reject term', async () => {
+    const result = await renderCanonicalProcess(AR_ONLY)
+    if (!result.ok) throw new Error('expected a successful render')
+    expect(result.returnPathFindings).toEqual([])
+  })
+})

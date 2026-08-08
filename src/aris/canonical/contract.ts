@@ -365,10 +365,40 @@ export const CanonicalEdgeSchema = z
 // CanonicalRole
 // ---------------------------------------------------------------------------
 
+/**
+ * Optional RENDERING hint that selects the satellite symbol variant a role
+ * projects to (see `roleSymbol`/`roleObjectType` in `projectToEpc.ts`). Purely
+ * additive: absent means `'employee-type'` (the historical ST_EMPL_TYPE role
+ * card), so every pre-`kind` canonical projects byte-identically to before.
+ *   - `employee-type` → OT_PERS_TYPE : ST_EMPL_TYPE (default)
+ *   - `named-person`  → OT_PERS      : ST_PERS      (internal named person)
+ *   - `position`      → OT_POS       : ST_POS
+ *   - `org-unit`      → OT_ORG_UNIT  : ST_ORG_UNIT_1
+ *   - `group`         → OT_GRP       : ST_GRP_1
+ *   - `external`      → OT_PERS      : ST_PERS_EXT
+ */
+export type CanonicalRoleKind =
+  | 'employee-type'
+  | 'named-person'
+  | 'position'
+  | 'org-unit'
+  | 'group'
+  | 'external'
+
+export const CANONICAL_ROLE_KINDS = [
+  'employee-type',
+  'named-person',
+  'position',
+  'org-unit',
+  'group',
+  'external'
+] as const
+
 export interface CanonicalRole {
   readonly id: string
   readonly names: CanonicalText
   readonly unit?: CanonicalText
+  readonly kind?: CanonicalRoleKind
   readonly nodeIds: readonly string[]
   readonly owner?: boolean
   readonly factIds?: readonly string[]
@@ -380,6 +410,7 @@ export const CanonicalRoleSchema = z
     id: canonicalIdString(),
     names: CanonicalTextSchema,
     unit: CanonicalTextSchema.optional(),
+    kind: z.enum(CANONICAL_ROLE_KINDS).optional(),
     nodeIds: z.array(z.string().min(1)),
     owner: z.boolean().optional(),
     factIds: z.array(z.string().min(1)).optional(),
@@ -391,9 +422,25 @@ export const CanonicalRoleSchema = z
 // CanonicalSystem
 // ---------------------------------------------------------------------------
 
+/**
+ * Optional RENDERING hint that selects the satellite symbol variant a system
+ * projects to (see `systemSymbol`/`systemObjectType` in `projectToEpc.ts`).
+ * Purely additive: absent means `'application'` (ST_APPL_SYS), the historical
+ * default.
+ *   - `application` → OT_APPL_SYS : ST_APPL_SYS (default)
+ *   - `service`     → OT_SERVICE  : ST_SERVICE
+ * NOTE: no `'function'` variant — the only registered "system function" symbol
+ * (ST_SYS_FUNC_ACT) is an OT_FUNC MAIN-FLOW symbol, not a system satellite, so
+ * emitting it here would break the OT/ST triple and the satellite semantics.
+ */
+export type CanonicalSystemKind = 'application' | 'service'
+
+export const CANONICAL_SYSTEM_KINDS = ['application', 'service'] as const
+
 export interface CanonicalSystem {
   readonly id: string
   readonly names: CanonicalText
+  readonly kind?: CanonicalSystemKind
   readonly nodeIds: readonly string[]
   /**
    * Declares this system as the process-wide DEFAULT system — a RENDERING hint
@@ -411,6 +458,7 @@ export const CanonicalSystemSchema = z
   .strictObject({
     id: canonicalIdString(),
     names: CanonicalTextSchema,
+    kind: z.enum(CANONICAL_SYSTEM_KINDS).optional(),
     nodeIds: z.array(z.string().min(1)),
     default: z.boolean().optional(),
     factIds: z.array(z.string().min(1)).optional(),
@@ -422,9 +470,42 @@ export const CanonicalSystemSchema = z
 // CanonicalInformationObject
 // ---------------------------------------------------------------------------
 
+/**
+ * Optional RENDERING hint that selects the info-carrier symbol variant (see
+ * `informationCarrierSymbol` in `projectToEpc.ts`). Every variant shares the
+ * OT_INFO_CARR object type, so only the symbol changes. Purely additive: absent
+ * means `'edoc'` (ST_INFO_CARR_EDOC), the historical default.
+ *   - `edoc`     → ST_INFO_CARR_EDOC (electronic file/folder, default)
+ *   - `document` → ST_DOC           (paper document)
+ *   - `letter`   → ST_LETTER
+ *   - `email`    → ST_EMAIL_1
+ *   - `log`      → ST_LOG           (log book)
+ *   - `sms`      → ST_INFO_CARR_HANDY (mobile/SMS message)
+ *   - `generic`  → ST_INFO_CARR_1   (generic information carrier)
+ */
+export type CanonicalInformationKind =
+  | 'edoc'
+  | 'document'
+  | 'letter'
+  | 'email'
+  | 'log'
+  | 'sms'
+  | 'generic'
+
+export const CANONICAL_INFORMATION_KINDS = [
+  'edoc',
+  'document',
+  'letter',
+  'email',
+  'log',
+  'sms',
+  'generic'
+] as const
+
 export interface CanonicalInformationObject {
   readonly id: string
   readonly names: CanonicalText
+  readonly kind?: CanonicalInformationKind
   readonly inputToNodeIds: readonly string[]
   readonly outputOfNodeIds: readonly string[]
   /**
@@ -441,6 +522,7 @@ export const CanonicalInformationObjectSchema = z
   .strictObject({
     id: canonicalIdString(),
     names: CanonicalTextSchema,
+    kind: z.enum(CANONICAL_INFORMATION_KINDS).optional(),
     inputToNodeIds: z.array(z.string().min(1)),
     outputOfNodeIds: z.array(z.string().min(1)),
     default: z.boolean().optional(),
@@ -453,9 +535,15 @@ export const CanonicalInformationObjectSchema = z
 // CanonicalControl
 // ---------------------------------------------------------------------------
 
-export type CanonicalControlKind = 'policy' | 'business-rule' | 'requirement'
+/**
+ * `risk` added 2026-08-07: projects to OT_RISK : ST_RISK_1 (governance.risk
+ * card) with a CT_AFFECTS satellite connection. `policy`/`business-rule`/
+ * `requirement` are the historical three; adding `risk` is additive and forces
+ * the exhaustive control switches in `projectToEpc.ts` to handle it.
+ */
+export type CanonicalControlKind = 'policy' | 'business-rule' | 'requirement' | 'risk'
 
-export const CANONICAL_CONTROL_KINDS = ['policy', 'business-rule', 'requirement'] as const
+export const CANONICAL_CONTROL_KINDS = ['policy', 'business-rule', 'requirement', 'risk'] as const
 
 export interface CanonicalControl {
   readonly id: string

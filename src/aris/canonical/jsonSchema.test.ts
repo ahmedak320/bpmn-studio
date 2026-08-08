@@ -6,7 +6,10 @@ import {
   CANONICAL_CONFIDENCE_VALUES,
   CANONICAL_CONTROL_KINDS,
   CANONICAL_EDGE_KINDS,
+  CANONICAL_INFORMATION_KINDS,
   CANONICAL_NODE_KINDS,
+  CANONICAL_ROLE_KINDS,
+  CANONICAL_SYSTEM_KINDS,
   CANONICAL_UNKNOWN_KINDS,
   CanonicalApprovalSchema,
   CanonicalControlSchema,
@@ -111,6 +114,12 @@ describe('buildCanonicalProcessJsonSchema', () => {
     expect((props(items(topProps.edges)).kind as Obj).enum).toEqual(CANONICAL_EDGE_KINDS)
     expect((props(items(topProps.controls)).kind as Obj).enum).toEqual(CANONICAL_CONTROL_KINDS)
     expect((props(items(topProps.unknowns)).kind as Obj).enum).toEqual(CANONICAL_UNKNOWN_KINDS)
+    // Satellite variant discriminators (optional, additive — 2026-08-07).
+    expect((props(items(topProps.roles)).kind as Obj).enum).toEqual(CANONICAL_ROLE_KINDS)
+    expect((props(items(topProps.systems)).kind as Obj).enum).toEqual(CANONICAL_SYSTEM_KINDS)
+    expect((props(items(topProps.informationObjects)).kind as Obj).enum).toEqual(
+      CANONICAL_INFORMATION_KINDS
+    )
   })
 
   it('pins confidence everywhere to high/medium/low', () => {

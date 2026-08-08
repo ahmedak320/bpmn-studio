@@ -25,7 +25,10 @@ import {
   CANONICAL_CONFIDENCE_VALUES,
   CANONICAL_CONTROL_KINDS,
   CANONICAL_EDGE_KINDS,
+  CANONICAL_INFORMATION_KINDS,
   CANONICAL_NODE_KINDS,
+  CANONICAL_ROLE_KINDS,
+  CANONICAL_SYSTEM_KINDS,
   CANONICAL_UNKNOWN_KINDS
 } from './contract'
 import { CANONICAL_SAFE_ID_PATTERN } from './ids'
@@ -170,6 +173,7 @@ function roleSchema(): Record<string, unknown> {
       id: safeIdSchema(),
       names: localizedTextSchema(),
       unit: localizedTextSchema(),
+      kind: { type: 'string', enum: [...CANONICAL_ROLE_KINDS] },
       nodeIds: nodeIdArraySchema(),
       owner: { type: 'boolean' },
       factIds: nodeIdArraySchema(),
@@ -186,6 +190,7 @@ function systemSchema(): Record<string, unknown> {
     properties: {
       id: safeIdSchema(),
       names: localizedTextSchema(),
+      kind: { type: 'string', enum: [...CANONICAL_SYSTEM_KINDS] },
       nodeIds: nodeIdArraySchema(),
       default: { type: 'boolean' },
       factIds: nodeIdArraySchema(),
@@ -202,6 +207,7 @@ function informationObjectSchema(): Record<string, unknown> {
     properties: {
       id: safeIdSchema(),
       names: localizedTextSchema(),
+      kind: { type: 'string', enum: [...CANONICAL_INFORMATION_KINDS] },
       inputToNodeIds: nodeIdArraySchema(),
       outputOfNodeIds: nodeIdArraySchema(),
       default: { type: 'boolean' },

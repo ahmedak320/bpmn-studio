@@ -114,11 +114,19 @@ import type {
 import type {
   CanonicalControl,
   CanonicalDecision,
+  CanonicalInformationObject,
   CanonicalNode,
   CanonicalProcessV1,
+  CanonicalRole,
+  CanonicalSystem,
   CanonicalText
 } from './contract'
 
+// PROJECTION_VERSION note (2026-08-07): the satellite `kind` discriminator adds
+// richer symbol variants (roles/systems/info/controls), but the mapping is
+// strictly backward-compatible — a canonical with no `kind` anywhere projects
+// to the exact same draft (same objectType AND symbolType) as before. Because
+// no existing input changes output, this stays at 1 rather than bumping.
 export const PROJECTION_VERSION = 1 as const
 
 // ---------------------------------------------------------------------------
@@ -130,11 +138,17 @@ const OT_EVT = 'OT_EVT'
 const OT_FUNC = 'OT_FUNC'
 const OT_RULE = 'OT_RULE'
 const OT_PERS_TYPE = 'OT_PERS_TYPE'
+const OT_PERS = 'OT_PERS'
+const OT_POS = 'OT_POS'
+const OT_ORG_UNIT = 'OT_ORG_UNIT'
+const OT_GRP = 'OT_GRP'
 const OT_APPL_SYS = 'OT_APPL_SYS'
+const OT_SERVICE = 'OT_SERVICE'
 const OT_INFO_CARR = 'OT_INFO_CARR'
 const OT_POLICY = 'OT_POLICY'
 const OT_BUSINESS_RULE = 'OT_BUSINESS_RULE'
 const OT_REQUIREMENT = 'OT_REQUIREMENT'
+const OT_RISK = 'OT_RISK'
 
 const ST_EV = 'ST_EV'
 const ST_FUNC = 'ST_FUNC'
@@ -151,6 +165,25 @@ const ST_INFO_CARR_EDOC = 'ST_INFO_CARR_EDOC'
 const ST_REQUIREMENT = 'ST_REQUIREMENT'
 const ST_BUSINESS_POLICY = 'ST_BUSINESS_POLICY'
 const ST_BUSINESS_RULE = 'ST_BUSINESS_RULE'
+// Richer satellite variants — added 2026-08-07. Each pairs with the matching
+// object type above so the renderer's exact MT_EEPC:OT_X:ST_X triple resolves
+// (see the card() registrations in src/aris/symbols/shapes.ts). Selected by the
+// optional `kind` discriminator on the canonical role/system/info types; when
+// `kind` is unset the default helpers below reproduce the pre-kind output byte
+// for byte, which is why PROJECTION_VERSION stays at 1.
+const ST_PERS = 'ST_PERS'
+const ST_PERS_EXT = 'ST_PERS_EXT'
+const ST_POS = 'ST_POS'
+const ST_ORG_UNIT_1 = 'ST_ORG_UNIT_1'
+const ST_GRP_1 = 'ST_GRP_1'
+const ST_SERVICE = 'ST_SERVICE'
+const ST_DOC = 'ST_DOC'
+const ST_EMAIL_1 = 'ST_EMAIL_1'
+const ST_LETTER = 'ST_LETTER'
+const ST_LOG = 'ST_LOG'
+const ST_INFO_CARR_HANDY = 'ST_INFO_CARR_HANDY'
+const ST_INFO_CARR_1 = 'ST_INFO_CARR_1'
+const ST_RISK_1 = 'ST_RISK_1'
 
 const CT_ACTIV_1 = 'CT_ACTIV_1'
 const CT_CRT_1 = 'CT_CRT_1'
@@ -647,8 +680,8 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
         logicalId: `r:${role.id}`,
         cause: role.id,
         representativeFor: role.id,
-        objectType: OT_PERS_TYPE,
-        symbolType: ST_EMPL_TYPE,
+        objectType: roleObjectType(role),
+        symbolType: roleSymbol(role),
         names: localizedText(role.names),
         confidence: role.confidence,
         evidence: evidenceFor(role.factIds)
@@ -659,8 +692,8 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
         addObject({
           logicalId: `r:${role.id}@${nodeId}`,
           cause: role.id,
-          objectType: OT_PERS_TYPE,
-          symbolType: ST_EMPL_TYPE,
+          objectType: roleObjectType(role),
+          symbolType: roleSymbol(role),
           names: localizedText(role.names),
           confidence: role.confidence,
           evidence: evidenceFor(role.factIds)
@@ -674,8 +707,8 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
         logicalId: `s:${system.id}`,
         cause: system.id,
         representativeFor: system.id,
-        objectType: OT_APPL_SYS,
-        symbolType: ST_APPL_SYS,
+        objectType: systemObjectType(system),
+        symbolType: systemSymbol(system),
         names: localizedText(system.names),
         confidence: system.confidence,
         evidence: evidenceFor(system.factIds)
@@ -686,8 +719,8 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
         addObject({
           logicalId: `s:${system.id}@${nodeId}`,
           cause: system.id,
-          objectType: OT_APPL_SYS,
-          symbolType: ST_APPL_SYS,
+          objectType: systemObjectType(system),
+          symbolType: systemSymbol(system),
           names: localizedText(system.names),
           confidence: system.confidence,
           evidence: evidenceFor(system.factIds)
@@ -713,7 +746,7 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
         cause: info.id,
         representativeFor: info.id,
         objectType: OT_INFO_CARR,
-        symbolType: ST_INFO_CARR_EDOC,
+        symbolType: informationCarrierSymbol(info),
         names: localizedText(info.names),
         confidence: info.confidence,
         evidence: evidenceFor(info.factIds)
@@ -725,7 +758,7 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
           logicalId: `io:${info.id}@${nodeId}`,
           cause: info.id,
           objectType: OT_INFO_CARR,
-          symbolType: ST_INFO_CARR_EDOC,
+          symbolType: informationCarrierSymbol(info),
           names: localizedText(info.names),
           confidence: info.confidence,
           evidence: evidenceFor(info.factIds)
@@ -1091,6 +1124,8 @@ function controlObjectType(control: CanonicalControl): string {
       return OT_BUSINESS_RULE
     case 'requirement':
       return OT_REQUIREMENT
+    case 'risk':
+      return OT_RISK
   }
 }
 
@@ -1105,6 +1140,8 @@ function controlSymbolType(control: CanonicalControl): string {
       return ST_BUSINESS_RULE
     case 'requirement':
       return ST_REQUIREMENT
+    case 'risk':
+      return ST_RISK_1
   }
 }
 
@@ -1116,6 +1153,109 @@ function controlConnectionType(control: CanonicalControl): string {
       return CT_IS_EVAL_BY_1
     case 'requirement':
       return CT_REFS_TO_2
+    // A risk "affects" the function it endangers; CT_AFFECTS is the same
+    // generic association CT_ used for policies and needs no new CT constant.
+    case 'risk':
+      return CT_AFFECTS
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Satellite symbol-variant helpers (2026-08-07). Each is pure, deterministic,
+// and falls back to the historical default when `kind` is unset OR carries an
+// unexpected value, so pre-`kind` canonicals project byte-for-byte as before.
+// objectType and symbolType are always chosen together so the renderer's exact
+// MT_EEPC:OT_X:ST_X triple resolves (see src/aris/symbols/shapes.ts).
+// ---------------------------------------------------------------------------
+
+/** OT_ object type for a role — paired with `roleSymbol`. */
+function roleObjectType(role: CanonicalRole): string {
+  switch (role.kind) {
+    case 'named-person':
+    case 'external':
+      return OT_PERS
+    case 'position':
+      return OT_POS
+    case 'org-unit':
+      return OT_ORG_UNIT
+    case 'group':
+      return OT_GRP
+    case 'employee-type':
+    case undefined:
+      return OT_PERS_TYPE
+    default:
+      return OT_PERS_TYPE
+  }
+}
+
+/** ST_ symbol variant for a role satellite. Default: ST_EMPL_TYPE (role card). */
+function roleSymbol(role: CanonicalRole): string {
+  switch (role.kind) {
+    case 'named-person':
+      return ST_PERS
+    case 'external':
+      return ST_PERS_EXT
+    case 'position':
+      return ST_POS
+    case 'org-unit':
+      return ST_ORG_UNIT_1
+    case 'group':
+      return ST_GRP_1
+    case 'employee-type':
+    case undefined:
+      return ST_EMPL_TYPE
+    default:
+      return ST_EMPL_TYPE
+  }
+}
+
+/** OT_ object type for a system — paired with `systemSymbol`. */
+function systemObjectType(system: CanonicalSystem): string {
+  switch (system.kind) {
+    case 'service':
+      return OT_SERVICE
+    case 'application':
+    case undefined:
+      return OT_APPL_SYS
+    default:
+      return OT_APPL_SYS
+  }
+}
+
+/** ST_ symbol variant for a system satellite. Default: ST_APPL_SYS. */
+function systemSymbol(system: CanonicalSystem): string {
+  switch (system.kind) {
+    case 'service':
+      return ST_SERVICE
+    case 'application':
+    case undefined:
+      return ST_APPL_SYS
+    default:
+      return ST_APPL_SYS
+  }
+}
+
+/** ST_ symbol variant for an information carrier. All variants share
+ * OT_INFO_CARR, so only the symbol changes. Default: ST_INFO_CARR_EDOC. */
+function informationCarrierSymbol(info: CanonicalInformationObject): string {
+  switch (info.kind) {
+    case 'document':
+      return ST_DOC
+    case 'letter':
+      return ST_LETTER
+    case 'email':
+      return ST_EMAIL_1
+    case 'log':
+      return ST_LOG
+    case 'sms':
+      return ST_INFO_CARR_HANDY
+    case 'generic':
+      return ST_INFO_CARR_1
+    case 'edoc':
+    case undefined:
+      return ST_INFO_CARR_EDOC
+    default:
+      return ST_INFO_CARR_EDOC
   }
 }
 
