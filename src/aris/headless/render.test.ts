@@ -131,8 +131,11 @@ const sha256Hex = (input: string | Uint8Array): string =>
 // fixture's 2 hops → 0). The control-flow backbone is byte-identical (§13.2); only
 // satellite coordinates/routes and the canvas origin move. Layout-only change;
 // EPC_ENGINE_VERSION stays at 0.3.0.
+// Hash moved again (8846…→299a…) when arrowed connections began rendering their
+// endpoint CONNECTION_ARROW_LENGTH (16) past the dock point so the marker tip
+// reaches the target block edge — render-only; model routes stay byte-exact.
 const VALID_CANONICAL_FULL_SVG_SHA256 =
-  '884618b2e6c1335d1a74865b37bcf89c638d0ccdbe0a3684397586da190c74f8'
+  '299a24f01c8fbcb2a8b49906a74c360067ea5a0d846aae85497ada1c94ba0f68'
 
 /** Schema-valid, but its projected EEPC has no start/end event — fails the gate. */
 const STRUCTURALLY_INVALID: CanonicalProcessV1 = {

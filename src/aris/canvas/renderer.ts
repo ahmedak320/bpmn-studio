@@ -788,6 +788,43 @@ function arrowMarkerRoot(node: SVGElement): SVGElement {
 }
 
 /**
+ * How far (canvas units) the connection arrowhead extends along the line — the
+ * chevron's tip-length in `ensureConnectionArrowMarker` (the marker path's
+ * x-extent, equal to its `refX`). This is the distance an arrowed connection's
+ * rendered endpoint is pushed INTO the target block so the marker tip visually
+ * reaches the block edge instead of stopping short of it.
+ */
+export const CONNECTION_ARROW_LENGTH = 16
+
+/**
+ * Copy of `waypoints` with the final point pushed `length` units further along
+ * the last non-degenerate segment's direction. Pure render-time geometry: the
+ * model waypoints (and the byte-exact imported route) are never mutated.
+ */
+export function extendConnectionEndpoint(
+  waypoints: readonly { readonly x: number; readonly y: number }[],
+  length: number
+): { x: number; y: number }[] {
+  const result = waypoints.map((point) => ({ x: point.x, y: point.y }))
+  if (result.length < 2 || length <= 0) return result
+  let dx = 0
+  let dy = 0
+  for (let i = result.length - 1; i > 0; i--) {
+    dx = result[i]!.x - result[i - 1]!.x
+    dy = result[i]!.y - result[i - 1]!.y
+    if (dx !== 0 || dy !== 0) break
+  }
+  const magnitude = Math.hypot(dx, dy)
+  if (magnitude === 0) return result
+  const tip = result[result.length - 1]!
+  result[result.length - 1] = {
+    x: tip.x + (dx / magnitude) * length,
+    y: tip.y + (dy / magnitude) * length
+  }
+  return result
+}
+
+/**
  * Connection markers are keyed by source style, end, and color. The default DMT point is an open
  * chevron as shown in the process PDFs; an explicit `ST_ARROW_FILLED_*` occurrence override gets
  * the filled point instead.
@@ -1418,7 +1455,15 @@ export class ArisRenderer extends BaseRenderer {
       appearance && DIRECTED_CONNECTION_TYPES.has(appearance.connectionType) ? 'open' : 'none'
     const srcArrow = sourceArrow(appearance?.srcArrow, 'none')
     const tgtArrow = sourceArrow(appearance?.tgtArrow, defaultTargetArrow)
-    const line = createLine(connection.waypoints, {
+    // An arrowed connection's rendered endpoint rides CONNECTION_ARROW_LENGTH
+    // past its dock point (into the target block) so the marker's tip reaches
+    // the block edge; arrow-less connections keep the exact docked endpoint.
+    // Render-only — `connection.waypoints` stays the byte-exact model route.
+    const renderedWaypoints =
+      tgtArrow === 'none'
+        ? connection.waypoints
+        : extendConnectionEndpoint(connection.waypoints, CONNECTION_ARROW_LENGTH)
+    const line = createLine(renderedWaypoints, {
       stroke,
       strokeWidth,
       fill: 'none'

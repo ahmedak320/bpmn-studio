@@ -7,6 +7,7 @@ import { buildFromSource } from '../model/buildFromSource'
 import { buildSemanticArisDocument } from '../source/semanticIndex'
 import { tokenizeXmlDocument } from '../source/xmlTokenizer'
 import { arisBusinessObject, freeTextElementId } from './elements'
+import { extendConnectionEndpoint } from './renderer'
 import { bootCanvas, type Harness } from './testing/harness'
 
 const AML = `<AML>
@@ -183,6 +184,40 @@ describe('source connection appearance', () => {
         return point.x === previous.x || point.y === previous.y
       })
     ).toBe(true)
+  })
+
+  it('extends an arrowed connection\'s rendered endpoint by CONNECTION_ARROW_LENGTH into the target, model route untouched', () => {
+    boot()
+    const line = connectionLine('CxnOcc.visible')
+    // Imported route ends …→(420,342)→(607,342): the last segment runs +x, so
+    // the rendered tip sits CONNECTION_ARROW_LENGTH (16) past the docked
+    // endpoint, inside the target occurrence's box (ObjOcc.B starts at x=600).
+    expect(line.getAttribute('d')).toContain('L623,342')
+    const element = harness!.canvas.elementRegistry.get('CxnOcc.visible') as unknown as {
+      readonly waypoints: readonly { readonly x: number; readonly y: number }[]
+    }
+    expect(element.waypoints[element.waypoints.length - 1]).toEqual({ x: 607, y: 342 })
+  })
+
+  it('does not extend the rendered endpoint of an arrow-less connection', () => {
+    boot('Model.2')
+    const line = connectionLine('CxnOcc.removedDefault')
+    expect(line.getAttribute('marker-end')).toBeNull()
+    expect(line.getAttribute('d')).toContain('L600,160')
+    expect(line.getAttribute('d')).not.toContain('616,160')
+  })
+
+  it('extends along the LAST segment direction (diagonal-safe unit-vector extension)', () => {
+    expect(extendConnectionEndpoint([{ x: 0, y: 0 }, { x: 30, y: 40 }], 16)).toEqual([
+      { x: 0, y: 0 },
+      { x: 30 + 9.6, y: 40 + 12.8 }
+    ])
+    // degenerate final segment: falls back to the last non-degenerate one
+    expect(extendConnectionEndpoint([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 0 }], 16)).toEqual([
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 26, y: 0 }
+    ])
   })
 
   it('uses one z-order across connections, free text, occurrences, and connection labels', () => {
