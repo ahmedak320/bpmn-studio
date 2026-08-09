@@ -134,8 +134,14 @@ const sha256Hex = (input: string | Uint8Array): string =>
 // Hash moved again (8846…→299a…) when arrowed connections began rendering their
 // endpoint CONNECTION_ARROW_LENGTH (16) past the dock point so the marker tip
 // reaches the target block edge — render-only; model routes stay byte-exact.
+// Re-updated 2026-08-09 (arrow endpoint fix, no version bump): reverted the v41
+// render-time endpoint extension and moved the arrow room into the layout via
+// `ARROW_ALLOWANCE = 16` added to every default `rankGap`. Connection endpoints
+// now stop at the target block edge, and the widened rank gap lets the marker
+// chevron sit fully visible with its tip touching the edge. Total canvas height
+// grows by ~16 × rankCount; every control-flow y coordinate shifts down.
 const VALID_CANONICAL_FULL_SVG_SHA256 =
-  '299a24f01c8fbcb2a8b49906a74c360067ea5a0d846aae85497ada1c94ba0f68'
+  '1785ca70f5c342d25f48dcc18d59a27d8870246441e541743fc6959c17f41ea3'
 
 /** Schema-valid, but its projected EEPC has no start/end event — fails the gate. */
 const STRUCTURALLY_INVALID: CanonicalProcessV1 = {

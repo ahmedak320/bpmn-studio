@@ -67,6 +67,13 @@ function median(values: readonly number[], fallback: number): number {
 }
 
 /**
+ * Extra room reserved along every rank gap so arrowed connections have visible
+ * corridor before the chevron. This must stay in sync with
+ * `CONNECTION_ARROW_LENGTH` in `src/aris/canvas/renderer.ts`.
+ */
+export const ARROW_ALLOWANCE = 16
+
+/**
  * Spacing defaults are derived from the **control-flow** node sizes only, so
  * adding satellites can never change the grid (§13.2). They are also unit
  * agnostic: AML hundredths of a millimetre and CSS pixels both behave.
@@ -92,12 +99,20 @@ export function resolveSpacing(
   )
   const medianAlong = median(alongSizes, 60)
   const medianCross = median(crossSizes, 120)
-  const rankGap = overrides.rankGap ?? Math.max(40, Math.round(medianAlong * 0.8))
+  // Add ARROW_ALLOWANCE so the target block sits far enough along the flow axis
+  // for the connection's chevron tip to land on its near edge while the chevron
+  // base remains visible in the gap.
+  const rankGap =
+    overrides.rankGap ?? Math.max(40, Math.round(medianAlong * 0.8)) + ARROW_ALLOWANCE
   // crossGap tuned from 0.35 / floor 40 (too airy) down to 0.22 / floor 24
   // (too tight), now settled at 0.28 / floor 28 for a moderate ~30% increase.
   // Every dependent gap (componentGap, channelGap, corridorGap, satellite
   // column offset) scales off crossGap so the whole horizontal budget grows
-  // proportionally.
+  // proportionally. We intentionally do NOT add ARROW_ALLOWANCE here: widening
+  // the cross gap pushes satellite clusters outward and breaks the §13.2
+  // invariant that satellites never move the control-flow backbone. Horizontal
+  // arrow visibility is handled by the routing stage, which already reserves
+  // corridor around each branch.
   const crossGap = overrides.crossGap ?? Math.max(28, Math.round(medianCross * 0.28))
   return {
     rankGap,

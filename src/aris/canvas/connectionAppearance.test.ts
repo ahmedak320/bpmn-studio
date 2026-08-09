@@ -186,13 +186,15 @@ describe('source connection appearance', () => {
     ).toBe(true)
   })
 
-  it('extends an arrowed connection\'s rendered endpoint by CONNECTION_ARROW_LENGTH into the target, model route untouched', () => {
+  it('keeps an arrowed connection\'s rendered endpoint byte-exact to the model route', () => {
     boot()
     const line = connectionLine('CxnOcc.visible')
-    // Imported route ends …→(420,342)→(607,342): the last segment runs +x, so
-    // the rendered tip sits CONNECTION_ARROW_LENGTH (16) past the docked
-    // endpoint, inside the target occurrence's box (ObjOcc.B starts at x=600).
-    expect(line.getAttribute('d')).toContain('L623,342')
+    // Imported route ends …→(420,342)→(607,342). The layout now reserves
+    // ARROW_ALLOWANCE (16) in every gap, so the target block sits further along
+    // the line and the rendered endpoint stays AT the dock point — the arrow tip
+    // touches the block edge, the chevron base lives in the widened gap.
+    expect(line.getAttribute('d')).toContain('L607,342')
+    expect(line.getAttribute('d')).not.toContain('L623,342')
     const element = harness!.canvas.elementRegistry.get('CxnOcc.visible') as unknown as {
       readonly waypoints: readonly { readonly x: number; readonly y: number }[]
     }

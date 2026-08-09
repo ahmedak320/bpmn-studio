@@ -574,7 +574,11 @@ describe('step 10 — per-owner LOCAL cluster (Rule B)', () => {
 describe('step 10 — §13.2 satellite-free byte-identical (Rule B preserved)', () => {
   it('leaves a branchy control flow byte-identical whether or not satellites are attached', () => {
     // The relative backbone of the spine is unchanged when satellites are added,
-    // proving local clusters never move a control-flow node.
+    // proving local clusters never move a control-flow node. We pin
+    // maxIterations to 1 so the acceptance-repair scaling loop cannot choose
+    // different effective spacing for the decorated graph vs. the bare one;
+    // this isolates the satellite effect from any later iteration decisions.
+    const options = { maxIterations: 1 }
     const decorated = cleanLayout(
       (() => {
         const base = xorDiamond(3)
@@ -586,9 +590,10 @@ describe('step 10 — §13.2 satellite-free byte-identical (Rule B preserved)', 
           attach('F.2', 'S.2')
         ]
         return { id: 'branchy-decorated', nodes, edges }
-      })()
+      })(),
+      options
     )
-    const bare = cleanLayout(xorDiamond(3))
+    const bare = cleanLayout(xorDiamond(3), options)
     expect(relativeBackbone(decorated)).toBe(relativeBackbone(bare))
   })
 })

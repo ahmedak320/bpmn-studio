@@ -1455,14 +1455,13 @@ export class ArisRenderer extends BaseRenderer {
       appearance && DIRECTED_CONNECTION_TYPES.has(appearance.connectionType) ? 'open' : 'none'
     const srcArrow = sourceArrow(appearance?.srcArrow, 'none')
     const tgtArrow = sourceArrow(appearance?.tgtArrow, defaultTargetArrow)
-    // An arrowed connection's rendered endpoint rides CONNECTION_ARROW_LENGTH
-    // past its dock point (into the target block) so the marker's tip reaches
-    // the block edge; arrow-less connections keep the exact docked endpoint.
-    // Render-only — `connection.waypoints` stays the byte-exact model route.
-    const renderedWaypoints =
-      tgtArrow === 'none'
-        ? connection.waypoints
-        : extendConnectionEndpoint(connection.waypoints, CONNECTION_ARROW_LENGTH)
+    // v41 briefly extended arrowed endpoints by CONNECTION_ARROW_LENGTH into the
+    // target block so the marker tip reached the edge. That put the chevron base
+    // at the edge and the tip inside the block. We now keep the endpoint on the
+    // block edge (byte-exact to the model route) and let the layout widen every
+    // rank/cross gap by the arrow length instead, so the chevron tip sits at the
+    // edge with its base visible in the corridor.
+    const renderedWaypoints = connection.waypoints
     const line = createLine(renderedWaypoints, {
       stroke,
       strokeWidth,
