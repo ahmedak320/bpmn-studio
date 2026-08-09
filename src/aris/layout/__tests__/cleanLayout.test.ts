@@ -6,6 +6,7 @@ import { pointOnRectBoundary } from '../geometry'
 import { GapSlotAllocator } from '../routing'
 import type { ArisLayoutEdgeRoute, ArisLayoutNodePlacement, ArisLayoutResult } from '../types'
 import {
+  attach,
   bendDiamond,
   chainWithSatellites,
   cycleGraph,
@@ -455,6 +456,140 @@ describe('step 10 — outer-side (L/R) satellite placement', () => {
       const bare = cleanLayout(stripSatellites(fixture))
       expect(relativeBackboneCross(decorated)).toBe(relativeBackboneCross(bare))
     }
+  })
+})
+
+describe('step 10 — crossing-aware L/R side (Rule A)', () => {
+  /**
+   * A symmetric two-branch XOR diamond with `count` satellites hung on BOTH
+   * branch owners. Placing F.left's satellites on the RIGHT would drive their
+   * connectors across F.right's branch flow line (and vice-versa), so the
+   * crossing scorer must push each owner's satellites to its OUTER side.
+   */
+  function parallelBranches(count: number): ArisLayoutGraphInput {
+    const nodes = [
+      event('E.start'),
+      rule('R.split', 'xor'),
+      fn('F.left'),
+      fn('F.right'),
+      rule('R.merge', 'xor'),
+      event('E.end')
+    ]
+    const edges = [
+      flow('E.start', 'R.split'),
+      flow('R.split', 'F.left'),
+      flow('R.split', 'F.right'),
+      flow('F.left', 'R.merge'),
+      flow('F.right', 'R.merge'),
+      flow('R.merge', 'E.end')
+    ]
+    for (let index = 0; index < count; index += 1) {
+      nodes.push(satellite(`S.L.${index}`), satellite(`S.R.${index}`))
+      edges.push(attach('F.left', `S.L.${index}`), attach('F.right', `S.R.${index}`))
+    }
+    return { id: `parallel-branches-${count}`, nodes, edges }
+  }
+
+  it('sends each branch owner’s satellites to its OUTER side, so no connector crosses the sibling branch', () => {
+    const result = cleanLayout(parallelBranches(2))
+    // The whole point: a crossing-free layout (the acceptance gate proves it).
+    expectClean(result)
+    const left = nodeById(result, 'F.left')
+    const right = nodeById(result, 'F.right')
+    const satsL = result.nodes.filter((node) => node.id.startsWith('S.L.'))
+    const satsR = result.nodes.filter((node) => node.id.startsWith('S.R.'))
+    expect(satsL).toHaveLength(2)
+    expect(satsR).toHaveLength(2)
+    // F.left would cross F.right's flow if it went RIGHT → the scorer chose LEFT
+    // (every S.L satellite sits fully left of F.left's left edge).
+    for (const sat of satsL) {
+      expect(sat.rect.x + sat.rect.width).toBeLessThanOrEqual(left.rect.x + 0.001)
+    }
+    // F.right mirrors: its satellites sit fully right of F.right's right edge.
+    for (const sat of satsR) {
+      expect(sat.rect.x).toBeGreaterThanOrEqual(right.rect.x + right.rect.width - 0.001)
+    }
+  })
+})
+
+describe('step 10 — per-owner LOCAL cluster (Rule B)', () => {
+  /**
+   * Three owners at three DISTINCT cross positions, each with a clear outer
+   * side so their local clusters fit: the centred start event and the two
+   * branch functions of a two-way diamond. One satellite each.
+   */
+  function threeDistinctOwners(): ArisLayoutGraphInput {
+    const base = bendDiamond('left', 0) // start→split→{left,right}→merge→end
+    const nodes = [
+      ...base.nodes,
+      satellite('S.start'),
+      satellite('S.left'),
+      satellite('S.right')
+    ]
+    const edges = [
+      ...base.edges,
+      attach('E.start', 'S.start'),
+      attach('F.left', 'S.left'),
+      attach('F.right', 'S.right')
+    ]
+    return { id: 'three-distinct-owners', nodes, edges }
+  }
+
+  it('places each owner’s cluster immediately beside THAT owner (distinct columns, one shared local offset)', () => {
+    const result = cleanLayout(threeDistinctOwners())
+    expectClean(result)
+    const pairs: readonly [string, string][] = [
+      ['E.start', 'S.start'],
+      ['F.left', 'S.left'],
+      ['F.right', 'S.right']
+    ]
+    const offsets: number[] = []
+    const ownerCentres: number[] = []
+    for (const [ownerId, satId] of pairs) {
+      const owner = nodeById(result, ownerId)
+      const sat = nodeById(result, satId)
+      ownerCentres.push(owner.rect.x + owner.rect.width / 2)
+      // Edge-to-edge horizontal gap between the satellite box and its owner box.
+      const gap =
+        sat.rect.x >= owner.rect.x + owner.rect.width
+          ? sat.rect.x - (owner.rect.x + owner.rect.width) // satellite on the right
+          : owner.rect.x - (sat.rect.x + sat.rect.width) // satellite on the left
+      offsets.push(gap)
+    }
+    // The three owners sit at three DISTINCT cross positions, so their clusters
+    // are three DISTINCT local columns — NOT one shared far-side column.
+    const distinct = new Set(ownerCentres.map((value) => Math.round(value)))
+    expect(distinct.size).toBe(3)
+    // Every owner uses the SAME modest local offset (owner.edge ± smallGap): the
+    // per-owner rule, not a shared column that would give three different gaps.
+    for (const gap of offsets) {
+      expect(gap).toBeGreaterThan(0)
+      expect(gap).toBeCloseTo(offsets[0] as number, 6)
+      // A modest gap, well under a full owner width (proves "local", not "far").
+      expect(gap).toBeLessThan(nodeById(result, 'F.left').rect.width)
+    }
+  })
+})
+
+describe('step 10 — §13.2 satellite-free byte-identical (Rule B preserved)', () => {
+  it('leaves a branchy control flow byte-identical whether or not satellites are attached', () => {
+    // The relative backbone of the spine is unchanged when satellites are added,
+    // proving local clusters never move a control-flow node.
+    const decorated = cleanLayout(
+      (() => {
+        const base = xorDiamond(3)
+        const nodes = [...base.nodes, satellite('S.0'), satellite('S.1'), satellite('S.2')]
+        const edges = [
+          ...base.edges,
+          attach('F.0', 'S.0'),
+          attach('F.1', 'S.1'),
+          attach('F.2', 'S.2')
+        ]
+        return { id: 'branchy-decorated', nodes, edges }
+      })()
+    )
+    const bare = cleanLayout(xorDiamond(3))
+    expect(relativeBackbone(decorated)).toBe(relativeBackbone(bare))
   })
 })
 

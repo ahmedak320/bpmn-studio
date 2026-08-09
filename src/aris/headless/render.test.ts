@@ -119,8 +119,20 @@ const sha256Hex = (input: string | Uint8Array): string =>
 // regresses. Only merge-target horizontal-turn coordinates move; because the
 // junctions now form cleanly, the overlay may also paint additional junction
 // dots, so the SVG bytes shift. Layout-only change; EPC_ENGINE_VERSION stays 0.3.0.
+// Re-updated 2026-08-09 (local satellite clusters + crossing-aware L/R side, no
+// version bump): `placeSatellites` now (a) places each owner's satellites in a
+// LOCAL cluster immediately next to that owner (`owner.boxEdge ± crossGap/2`)
+// instead of a shared far-side column, and (b) picks LEFT vs RIGHT per owner by
+// scoring control-flow crossings (via `edgeVisuals::findCrossings`) and sibling
+// rect-overlap on each side, falling back to an outer-side-vs-spine-centroid
+// rule only when both sides tie at zero. Satellites move much closer to their
+// owners (canvas width SHRINKS: fixture viewBox 1266→978, real 1761→1473), the
+// L/R split rebalances, and every satellite-route line-hop is eliminated (the
+// fixture's 2 hops → 0). The control-flow backbone is byte-identical (§13.2); only
+// satellite coordinates/routes and the canvas origin move. Layout-only change;
+// EPC_ENGINE_VERSION stays at 0.3.0.
 const VALID_CANONICAL_FULL_SVG_SHA256 =
-  '208b42d878110300b789b8ac05b69ea7ba15e82f99ad660d072d743345fd4785'
+  '2f8322cd4e3dfbc1dd008ed62c3f20961760af3e5f5c57b5a378bc3a96a5a21b'
 
 /** Schema-valid, but its projected EEPC has no start/end event — fails the gate. */
 const STRUCTURALLY_INVALID: CanonicalProcessV1 = {
@@ -261,11 +273,15 @@ describe('renderCanonicalProcess — VALID_CANONICAL_FULL', () => {
     expect(sha256Hex(first.svg)).toBe(VALID_CANONICAL_FULL_SVG_SHA256)
   })
 
-  it('paints diagram-wide connection adornments (junction dots + line hops)', async () => {
+  it('paints diagram-wide connection adornments (junction dots; hops when routes cross)', async () => {
     // `arisConnectionOverlay` (registered in `ArisCanvasModule`) paints the
     // shared `edgeVisuals` geometry into the captured SVG. VALID_CANONICAL_FULL
-    // has split/merge gateways (⇒ junctions) and crossing routes (⇒ hops), so
-    // both adornment kinds must appear at least once.
+    // has split/merge gateways, so junction dots must appear. Line HOPS, by
+    // contrast, are now expected to be RARE-to-absent: the crossing-aware,
+    // local-cluster satellite placement (2026-08-09) routes satellites so their
+    // connectors no longer cross the control flow, so this fixture emits ZERO
+    // hops. The invariant that still must hold unconditionally is that every hop
+    // that IS painted carries exactly one white under-mask.
     const result = await renderCanonicalProcess(VALID_CANONICAL_FULL)
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('expected a successful render')
@@ -275,8 +291,9 @@ describe('renderCanonicalProcess — VALID_CANONICAL_FULL', () => {
     const hops = countOf('data-aris-edge-visual="hop"')
 
     expect(junctions).toBeGreaterThan(0)
-    expect(hops).toBeGreaterThan(0)
-    // Every hop is knocked out by exactly one white under-mask.
+    // Crossing-aware satellite placement removed every route crossing here.
+    expect(hops).toBe(0)
+    // Every hop (if any) is knocked out by exactly one white under-mask.
     expect(countOf('data-aris-edge-hop-mask="true"')).toBe(hops)
     // The overlay group is present exactly once.
     expect(countOf('class="orbitpm-connection-visuals"')).toBe(1)

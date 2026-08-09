@@ -232,7 +232,8 @@ function buildDraft(
     routeCrossMax + spacing.channelGap,
     routeCrossMin - spacing.channelGap,
     adjacency.out,
-    adjacency.in
+    adjacency.in,
+    controlRoutes.map((route) => route.points)
   )
 
   // --- flow space -> screen space -----------------------------------------
