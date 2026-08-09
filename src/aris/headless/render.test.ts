@@ -132,7 +132,7 @@ const sha256Hex = (input: string | Uint8Array): string =>
 // satellite coordinates/routes and the canvas origin move. Layout-only change;
 // EPC_ENGINE_VERSION stays at 0.3.0.
 const VALID_CANONICAL_FULL_SVG_SHA256 =
-  '2f8322cd4e3dfbc1dd008ed62c3f20961760af3e5f5c57b5a378bc3a96a5a21b'
+  '884618b2e6c1335d1a74865b37bcf89c638d0ccdbe0a3684397586da190c74f8'
 
 /** Schema-valid, but its projected EEPC has no start/end event — fails the gate. */
 const STRUCTURALLY_INVALID: CanonicalProcessV1 = {

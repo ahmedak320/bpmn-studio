@@ -93,13 +93,12 @@ export function resolveSpacing(
   const medianAlong = median(alongSizes, 60)
   const medianCross = median(crossSizes, 120)
   const rankGap = overrides.rankGap ?? Math.max(40, Math.round(medianAlong * 0.8))
-  // crossGap tuned down from 0.35 / floor 40 (was too airy — the AnimalWF
-  // render sat at ~1010px between spine (x=481) and satellite column (x=1491)
-  // which the user called out as excessive). 0.22 / floor 24 gives ~37%
-  // horizontal reduction; every dependent gap (componentGap, channelGap,
-  // corridorGap, satellite column offset) scales off crossGap so the whole
-  // horizontal budget shrinks proportionally.
-  const crossGap = overrides.crossGap ?? Math.max(24, Math.round(medianCross * 0.22))
+  // crossGap tuned from 0.35 / floor 40 (too airy) down to 0.22 / floor 24
+  // (too tight), now settled at 0.28 / floor 28 for a moderate ~30% increase.
+  // Every dependent gap (componentGap, channelGap, corridorGap, satellite
+  // column offset) scales off crossGap so the whole horizontal budget grows
+  // proportionally.
+  const crossGap = overrides.crossGap ?? Math.max(28, Math.round(medianCross * 0.28))
   return {
     rankGap,
     crossGap,
