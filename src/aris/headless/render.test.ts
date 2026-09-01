@@ -141,7 +141,7 @@ const sha256Hex = (input: string | Uint8Array): string =>
 // chevron sit fully visible with its tip touching the edge. Total canvas height
 // grows by ~16 × rankCount; every control-flow y coordinate shifts down.
 const VALID_CANONICAL_FULL_SVG_SHA256 =
-  '1785ca70f5c342d25f48dcc18d59a27d8870246441e541743fc6959c17f41ea3'
+  '1fd90ce8cf857209a8eeb0adeb10b4eec1c73122461e96b90388ef550acd34e3'
 
 /** Schema-valid, but its projected EEPC has no start/end event — fails the gate. */
 const STRUCTURALLY_INVALID: CanonicalProcessV1 = {
@@ -323,10 +323,9 @@ describe('renderCanonicalProcess — VALID_CANONICAL_FULL', () => {
     expect(result.svg).toContain('data-legend-kind="owner"')
     expect(result.svg).toContain('data-legend-kind="system"')
 
-    // The four suppressed satellite occurrences are gone from the SVG…
+    // The three function-owner default satellite occurrences are gone from the SVG…
     const suppressed = [
       'ObjOcc.r:r-manager@n-triage',
-      'ObjOcc.r:r-manager@n-exception',
       'ObjOcc.s:s-itsm@n-log',
       'ObjOcc.s:s-itsm@n-triage'
     ]
@@ -337,6 +336,26 @@ describe('renderCanonicalProcess — VALID_CANONICAL_FULL', () => {
       expect(result.debugAml).toContain(occ)
       expect(result.debugAml).toContain(occ.replace('ObjOcc.', 'ObjDef.'))
     }
+
+    // The only rendered non-default satellite occurrences are the function-owned
+    // satellites plus the retained, unattached exception-control orphan.
+    const renderedSatelliteIds = [
+      ...new Set(
+        [...result.svg.matchAll(/ObjOcc\.(?:r|s|io|c):[A-Za-z0-9:@-]+/gu)].map(
+          (match) => match[0]
+        )
+      )
+    ].sort()
+    expect(renderedSatelliteIds).toEqual([
+      'ObjOcc.c:c-escalation-rule',
+      'ObjOcc.io:io-report@n-notify',
+      'ObjOcc.io:io-ticket@n-log',
+      'ObjOcc.r:r-agent@n-investigate',
+      'ObjOcc.r:r-agent@n-log',
+      'ObjOcc.s:s-monitoring@n-investigate'
+    ])
+    // n-exception projects as OT_RULE, so it has no role satellite occurrence.
+    expect(result.debugAml).not.toContain('ObjOcc.r:r-manager@n-exception')
   })
 
   it('renders the AR default legend when language:"ar" is passed', async () => {

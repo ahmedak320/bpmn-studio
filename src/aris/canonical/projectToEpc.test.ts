@@ -75,18 +75,18 @@ describe('projectCanonicalToDraft — top-level shape (VALID_CANONICAL_FULL)', (
     const { draft } = full()
     expect(draft.version).toBe(1)
     expect(draft.models).toHaveLength(2)
-    // 20 control-flow objects + 11 per-owner satellite duplicates:
+    // 20 control-flow objects + 10 per-owner satellite duplicates/orphans:
     //   r-agent  {n-log, n-investigate}       → 2
-    //   r-manager{n-triage, n-exception}      → 2
+    //   r-manager{n-triage}                   → 1
     //   s-itsm   {n-log, n-triage}            → 2
     //   s-monitor{n-investigate}              → 1
     //   io-ticket{n-log (out)}                → 1
     //   io-report{n-notify (in)}              → 1
     //   c-sla-policy{n-triage}                → 1
-    //   c-escalation-rule{n-exception}        → 1
+    //   c-escalation-rule{orphan}             → 1
     // See the "Satellite duplication" doc block in projectToEpc.ts.
-    expect(draft.objects).toHaveLength(31)
-    expect(draft.relations).toHaveLength(31)
+    expect(draft.objects).toHaveLength(30) // c-escalation-rule@n-exception attachment dropped; OT_RULE is not a function.
+    expect(draft.relations).toHaveLength(29) // c-escalation-rule@n-exception attachment dropped; OT_RULE is not a function.
     expect(draft.attributes).toHaveLength(1)
     expect(draft.assignments).toHaveLength(1)
     expect(draft.uncertainties).toHaveLength(2)
@@ -98,9 +98,9 @@ describe('projectCanonicalToDraft — top-level shape (VALID_CANONICAL_FULL)', (
     expect(typeCount(draft.objects, 'OT_FUNC')).toBe(7)
     expect(typeCount(draft.objects, 'OT_RULE')).toBe(4)
     // OT_PERS_TYPE / OT_APPL_SYS counts reflect per-owner satellite duplication:
-    // 2 roles × 2 owners each = 4 role duplicates; 2 systems (2 + 1 owners) = 3
+    // r-agent has 2 function owners and r-manager has 1; 2 systems (2 + 1 owners) = 3
     // system duplicates. Info & controls stay at 2 (each satellite has 1 owner).
-    expect(typeCount(draft.objects, 'OT_PERS_TYPE')).toBe(4)
+    expect(typeCount(draft.objects, 'OT_PERS_TYPE')).toBe(3) // c-escalation-rule@n-exception attachment dropped; OT_RULE is not a function.
     expect(typeCount(draft.objects, 'OT_APPL_SYS')).toBe(3)
     expect(typeCount(draft.objects, 'OT_INFO_CARR')).toBe(2)
     expect(typeCount(draft.objects, 'OT_POLICY')).toBe(1)
@@ -305,12 +305,16 @@ describe('expansion table — one assertion per row (VALID_CANONICAL_FULL)', () 
     expect(rel(draft.relations, 're:c:c-sla-policy@n-triage:n:n-triage').connectionType).toBe(
       'CT_AFFECTS'
     )
-    const rule = obj(draft.objects, 'c:c-escalation-rule@n-exception')
+    // The OT_RULE exception is not a function owner, so this control survives
+    // only as one unattached orphan rather than a per-owner satellite duplicate.
+    const rule = obj(draft.objects, 'c:c-escalation-rule')
     expect(rule.objectType).toBe('OT_BUSINESS_RULE')
     expect(rule.symbolType).toBe('ST_BUSINESS_RULE')
     expect(
-      rel(draft.relations, 're:c:c-escalation-rule@n-exception:xe:n-exception').connectionType
-    ).toBe('CT_IS_EVAL_BY_1')
+      draft.relations.some(
+        (relation) => relation.logicalId === 're:c:c-escalation-rule@n-exception:xe:n-exception'
+      )
+    ).toBe(false)
   })
 
   it('a requirement control -> OT_REQUIREMENT + CT_REFS_TO_2 (row completed)', () => {

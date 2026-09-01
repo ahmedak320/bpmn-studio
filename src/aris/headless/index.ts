@@ -30,3 +30,15 @@ export {
   type SvgSanitizerDom
 } from './sanitizeSvg'
 export { EPC_ENGINE_VERSION } from './version'
+export {
+  buildConventionAml,
+  type AmlDefaultLegendResult,
+  type AmlLegendBlockPlacement,
+  type AmlLegendHeaderPlacement,
+  type AmlLegendPlacement,
+  type ConventionAmlOptions,
+  type ConventionAmlParseFailure,
+  type ConventionAmlResult,
+  type ConventionAmlSuccess,
+  type ConventionAmlValidationFailure
+} from './amlConvention'

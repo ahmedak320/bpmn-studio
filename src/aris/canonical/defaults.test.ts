@@ -16,10 +16,27 @@ function mk(partial: {
   informationObjects?: readonly CanonicalInformationObject[]
   controls?: readonly CanonicalControl[]
 }): CanonicalProcessV1 {
+  const referencedNodeIds = new Set<string>()
+  for (const role of partial.roles ?? []) {
+    for (const nodeId of role.nodeIds) referencedNodeIds.add(nodeId)
+  }
+  for (const system of partial.systems ?? []) {
+    for (const nodeId of system.nodeIds) referencedNodeIds.add(nodeId)
+  }
+  for (const control of partial.controls ?? []) {
+    for (const nodeId of control.nodeIds) referencedNodeIds.add(nodeId)
+  }
+  for (const informationObject of partial.informationObjects ?? []) {
+    for (const nodeId of informationObject.inputToNodeIds) referencedNodeIds.add(nodeId)
+    for (const nodeId of informationObject.outputOfNodeIds) referencedNodeIds.add(nodeId)
+  }
+
   return {
     version: 1,
     identity: { id: 'p', names: { en: 'P' }, confidence: 'high' },
-    nodes: [],
+    nodes: [...referencedNodeIds]
+      .sort()
+      .map((id) => ({ id, kind: 'activity', names: { en: id }, confidence: 'high' })),
     decisions: [],
     edges: [],
     roles: partial.roles ?? [],

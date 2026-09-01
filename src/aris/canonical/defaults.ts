@@ -32,11 +32,11 @@
  *    → that entity. Two or more → NO default.
  *
  * With nothing declared, auto-fallback picks the MAJORITY: over the kind's
- * OWNER SET (the distinct owner-node ids referenced by ANY satellite of that
- * kind), the satellite referenced by the most owner-nodes wins IFF its count is
- * at least 60% of the owner set AND no other satellite ties that count. Below
- * 60%, or on a tie for the top, there is NO default for that kind — no legend
- * line, no suppression.
+ * OWNER SET (the distinct eligible function-node ids referenced by ANY
+ * satellite of that kind), the satellite referenced by the most owner-nodes
+ * wins IFF its count is at least 60% of the owner set AND no other satellite
+ * ties that count. Below 60%, or on a tie for the top, there is NO default for
+ * that kind — no legend line, no suppression.
  */
 
 import type {
@@ -101,40 +101,66 @@ function distinct(ids: readonly string[]): string[] {
   return out
 }
 
-function roleCandidates(roles: readonly CanonicalRole[]): Candidate[] {
+function eligibleFunctionOwnerNodeIds(
+  process: CanonicalProcessV1,
+  nodeIds: readonly string[]
+): string[] {
+  const functionNodeIds = new Set(
+    process.nodes
+      .filter(
+        (node) => node.kind === 'activity' || node.kind === 'decision' || node.kind === 'handoff'
+      )
+      .map((node) => node.id)
+  )
+  return distinct(nodeIds.filter((nodeId) => functionNodeIds.has(nodeId)))
+}
+
+function roleCandidates(process: CanonicalProcessV1, roles: readonly CanonicalRole[]): Candidate[] {
   return roles.map((role) => ({
     id: role.id,
     names: role.names,
-    ownerNodes: distinct(role.nodeIds),
+    ownerNodes: eligibleFunctionOwnerNodeIds(process, role.nodeIds),
     declared: role.owner === true
   }))
 }
 
-function systemCandidates(systems: readonly CanonicalSystem[]): Candidate[] {
+function systemCandidates(
+  process: CanonicalProcessV1,
+  systems: readonly CanonicalSystem[]
+): Candidate[] {
   return systems.map((system) => ({
     id: system.id,
     names: system.names,
-    ownerNodes: distinct(system.nodeIds),
+    ownerNodes: eligibleFunctionOwnerNodeIds(process, system.nodeIds),
     declared: system.default === true
   }))
 }
 
-function informationObjectCandidates(infos: readonly CanonicalInformationObject[]): Candidate[] {
+function informationObjectCandidates(
+  process: CanonicalProcessV1,
+  infos: readonly CanonicalInformationObject[]
+): Candidate[] {
   return infos.map((info) => ({
     id: info.id,
     names: info.names,
     // The projection emits ONE deduped duplicate per (info, owner-node) across
     // both input and output edges, so the owner set unions both here too.
-    ownerNodes: distinct([...info.inputToNodeIds, ...info.outputOfNodeIds]),
+    ownerNodes: eligibleFunctionOwnerNodeIds(process, [
+      ...info.inputToNodeIds,
+      ...info.outputOfNodeIds
+    ]),
     declared: info.default === true
   }))
 }
 
-function controlCandidates(controls: readonly CanonicalControl[]): Candidate[] {
+function controlCandidates(
+  process: CanonicalProcessV1,
+  controls: readonly CanonicalControl[]
+): Candidate[] {
   return controls.map((control) => ({
     id: control.id,
     names: control.names,
-    ownerNodes: distinct(control.nodeIds),
+    ownerNodes: eligibleFunctionOwnerNodeIds(process, control.nodeIds),
     declared: control.default === true
   }))
 }
@@ -142,13 +168,13 @@ function controlCandidates(controls: readonly CanonicalControl[]): Candidate[] {
 function candidatesFor(process: CanonicalProcessV1, kind: DefaultKind): Candidate[] {
   switch (kind) {
     case 'owner':
-      return roleCandidates(process.roles)
+      return roleCandidates(process, process.roles)
     case 'system':
-      return systemCandidates(process.systems)
+      return systemCandidates(process, process.systems)
     case 'informationObject':
-      return informationObjectCandidates(process.informationObjects)
+      return informationObjectCandidates(process, process.informationObjects)
     case 'control':
-      return controlCandidates(process.controls)
+      return controlCandidates(process, process.controls)
   }
 }
 

@@ -102,8 +102,7 @@ export function resolveSpacing(
   // Add ARROW_ALLOWANCE so the target block sits far enough along the flow axis
   // for the connection's chevron tip to land on its near edge while the chevron
   // base remains visible in the gap.
-  const rankGap =
-    overrides.rankGap ?? Math.max(40, Math.round(medianAlong * 0.8)) + ARROW_ALLOWANCE
+  const rankGap = overrides.rankGap ?? Math.max(40, Math.round(medianAlong * 0.8)) + ARROW_ALLOWANCE
   // crossGap tuned from 0.35 / floor 40 (too airy) down to 0.22 / floor 24
   // (too tight), now settled at 0.28 / floor 28 for a moderate ~30% increase.
   // Every dependent gap (componentGap, channelGap, corridorGap, satellite
@@ -435,13 +434,12 @@ export function placeControlFlow(
   orientation: ArisLayoutOrientation,
   spacing: ResolvedSpacing,
   /**
-   * Density-aware rank-gap expansion input (satellite cascade fix): the
-   * along-axis height each owner's satellite stack will occupy, keyed by the
-   * owner's control-node index (see `satelliteVerticalLoad`). When omitted or
-   * empty, band sizing is byte-identical to the pre-expansion engine, so the
-   * §13.2 invariant holds unchanged for any satellite-free graph.
+   * Density-aware rank-gap expansion input (satellite cascade fix), keyed by
+   * the owner's control-node index (see `satelliteVerticalLoad`).
    */
-  satelliteLoad?: ReadonlyMap<number, number>
+  satelliteLoad?: ReadonlyMap<number, number>,
+  /** Enables symmetric above/below reservation for centred convention clusters. */
+  satelliteClusterLimit?: number
 ): ControlPlacement {
   const nodeCount = controlNodes.length
   const boxes = controlNodes.map((node) => occupiedBoxOf(node, orientation, spacing.labelGap))
@@ -503,24 +501,41 @@ export function placeControlFlow(
     bandStart.push(along)
     bandEnd.push(along + height)
     // --- density-aware rank-gap expansion (satellite cascade fix) ----------
-    // An owner's satellites stack downward from the owner's along-top. When
-    // that stack is taller than the space to the next spine step, it cascades
-    // PAST that step and drags every later owner's stack down with it (the
-    // per-side stack cursor packs later owners below the previous stack). Grow
-    // ONLY the gap AFTER this rank by the largest per-owner DEFICIT, so each
-    // dense owner's stack still ends at or above the next step's top. This
-    // only ever ADDS space (never shrinks or moves sideways), downstream ranks
-    // keep the baseline gap, and the last rank has no next step so never grows.
     let extraGap = 0
     if (hasSatelliteLoad && rank < rankCount - 1) {
-      const bandCenter = along + height / 2
-      const nextStepTop = along + height + spacing.rankGap
-      for (const member of rankNodes[rank] as readonly number[]) {
-        const needed = (satelliteLoad as ReadonlyMap<number, number>).get(member) ?? 0
-        if (needed <= 0) continue
-        const ownerAlongTop = bandCenter - (boxes[member] as OccupiedBox).along / 2
-        const baseAvailable = nextStepTop - ownerAlongTop
-        extraGap = Math.max(extraGap, needed - baseAvailable)
+      if (satelliteClusterLimit === undefined) {
+        // Generic engine: preserve the original downstream-only reservation.
+        const bandCenter = along + height / 2
+        const nextStepTop = along + height + spacing.rankGap
+        for (const member of rankNodes[rank] as readonly number[]) {
+          const needed = (satelliteLoad as ReadonlyMap<number, number>).get(member) ?? 0
+          if (needed <= 0) continue
+          const ownerAlongTop = bandCenter - (boxes[member] as OccupiedBox).along / 2
+          const baseAvailable = nextStepTop - ownerAlongTop
+          extraGap = Math.max(extraGap, needed - baseAvailable)
+        }
+      } else {
+        // Convention engine: reserve both halves of every centred column.
+        const bandCenter = along + height / 2
+        const bandBottom = along + height
+        const nextBandTop = bandBottom + spacing.rankGap
+        for (const member of rankNodes[rank] as readonly number[]) {
+          const belowExtent = satelliteLoad?.get(member) ?? 0
+          if (belowExtent <= 0) continue
+          const availableBelow = nextBandTop - bandCenter
+          extraGap = Math.max(extraGap, belowExtent - availableBelow)
+        }
+        let nextHeight = 0
+        for (const member of rankNodes[rank + 1] as readonly number[]) {
+          nextHeight = Math.max(nextHeight, (boxes[member] as OccupiedBox).along)
+        }
+        const nextBandCenter = nextBandTop + nextHeight / 2
+        for (const member of rankNodes[rank + 1] as readonly number[]) {
+          const aboveExtent = satelliteLoad?.get(member) ?? 0
+          if (aboveExtent <= 0) continue
+          const availableAbove = nextBandCenter - bandBottom
+          extraGap = Math.max(extraGap, aboveExtent - availableAbove)
+        }
       }
       extraGap = Math.max(0, Math.round(extraGap))
     }

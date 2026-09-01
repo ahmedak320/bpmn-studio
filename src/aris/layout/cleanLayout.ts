@@ -138,7 +138,8 @@ function scaleSpacing(spacing: ResolvedSpacing, factor: number): ResolvedSpacing
 function buildDraft(
   graph: ArisLayoutGraphInput,
   spacing: ResolvedSpacing,
-  orientation: ArisLayoutOrientation
+  orientation: ArisLayoutOrientation,
+  satelliteClusterLimit?: number
 ): LayoutDraft {
   const separated = separateGraphs(graph)
   const adjacency = buildAdjacency(separated.controlNodes, separated.controlEdges)
@@ -156,7 +157,8 @@ function buildDraft(
     separated.satelliteEdges,
     adjacency.indexOf,
     orientation,
-    spacing
+    spacing,
+    satelliteClusterLimit
   )
   const placement = placeControlFlow(
     separated.controlNodes,
@@ -165,7 +167,8 @@ function buildDraft(
     components,
     orientation,
     spacing,
-    satelliteLoad
+    satelliteLoad,
+    satelliteClusterLimit
   )
   const geometry = buildFlowGeometry(
     placement,
@@ -233,7 +236,8 @@ function buildDraft(
     routeCrossMin - spacing.channelGap,
     adjacency.out,
     adjacency.in,
-    controlRoutes.map((route) => route.points)
+    controlRoutes.map((route) => route.points),
+    satelliteClusterLimit
   )
 
   // --- flow space -> screen space -----------------------------------------
@@ -503,7 +507,7 @@ function annotationNodes(draft: LayoutDraft): ArisLayoutNodePlacement[] {
   }))
 }
 
-function analyzeDraft(draft: LayoutDraft): LayoutAnalysis {
+function analyzeDraft(draft: LayoutDraft, satelliteClusterLimit?: number): LayoutAnalysis {
   return analyzeLayout({
     nodes: [...draft.nodes, ...annotationNodes(draft)],
     edges: draft.edges,
@@ -511,7 +515,8 @@ function analyzeDraft(draft: LayoutDraft): LayoutAnalysis {
     expectedEdgeIds: draft.expectedEdgeIds,
     coverageAllowance: draft.coverageAllowance,
     explainedBandsX: draft.explainedBandsX,
-    explainedBandsY: draft.explainedBandsY
+    explainedBandsY: draft.explainedBandsY,
+    satelliteClusterLimit
   })
 }
 
@@ -536,7 +541,8 @@ export function cleanLayout(
   const baseSpacing = resolveSpacing(separated.controlNodes, orientation, options.spacing ?? {})
   const maxIterations = Math.max(1, options.maxIterations ?? 6)
   const acceptanceOptions = {
-    maxEmptyBandRatio: options.maxEmptyBandRatio ?? DEFAULT_MAX_EMPTY_BAND_RATIO
+    maxEmptyBandRatio: options.maxEmptyBandRatio ?? DEFAULT_MAX_EMPTY_BAND_RATIO,
+    satelliteClusterLimit: options.satelliteClusterLimit
   }
 
   let best: {
@@ -551,8 +557,8 @@ export function cleanLayout(
   for (let iteration = 0; iteration < maxIterations; iteration += 1) {
     iterations = iteration + 1
     const spacing = iteration === 0 ? baseSpacing : scaleSpacing(baseSpacing, 1 + 0.35 * iteration)
-    const draft = buildDraft(graph, spacing, orientation)
-    const analysis = analyzeDraft(draft)
+    const draft = buildDraft(graph, spacing, orientation, options.satelliteClusterLimit)
+    const analysis = analyzeDraft(draft, options.satelliteClusterLimit)
     const acceptance = evaluateLayoutAcceptance(
       analysis.metrics,
       analysis.defects,
@@ -604,7 +610,15 @@ export function measureLayoutResult(
   edges: readonly ArisLayoutEdgeRoute[],
   canvas: ArisLayoutRect,
   expectedEdgeIds: readonly string[],
-  coverageAllowance = 0
+  coverageAllowance = 0,
+  satelliteClusterLimit?: number
 ): LayoutAnalysis {
-  return analyzeLayout({ nodes, edges, canvas, expectedEdgeIds, coverageAllowance })
+  return analyzeLayout({
+    nodes,
+    edges,
+    canvas,
+    expectedEdgeIds,
+    coverageAllowance,
+    satelliteClusterLimit
+  })
 }

@@ -2353,6 +2353,8 @@ export const en = {
   'aris.layout.rejection.duplicate-edge':
     'The produced layout has more than one identical connection between the same two nodes.',
   'aris.layout.rejection.zero-length-edge': 'A connection in the produced layout has zero length.',
+  'aris.layout.rejection.satellite-cluster-distance':
+    'A satellite lies outside the convention distance limit from its owner.',
   'aris.layout.rejection.extreme-whitespace':
     'The produced layout has an excessively large empty band, well beyond the canvas balance tolerance.',
 
@@ -5377,6 +5379,8 @@ export const ar: Record<keyof typeof en, string> = {
   'aris.layout.rejection.duplicate-edge':
     'يحتوي المخطط الناتج على أكثر من رابط متطابق بين العقدتين نفسيهما.',
   'aris.layout.rejection.zero-length-edge': 'طول أحد الروابط في المخطط الناتج يساوي صفرًا.',
+  'aris.layout.rejection.satellite-cluster-distance':
+    'يقع عنصر تابع خارج حد مسافة الاتفاقية عن العنصر المالك له.',
   'aris.layout.rejection.extreme-whitespace':
     'يحتوي المخطط الناتج على نطاق فارغ كبير جدًا يتجاوز حد توازن اللوحة.',
 

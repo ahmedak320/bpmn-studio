@@ -168,6 +168,11 @@ export interface ArisLayoutOptions {
   readonly maxIterations?: number
   /** Largest empty band tolerated before `extreme-whitespace` is reported. */
   readonly maxEmptyBandRatio?: number
+  /**
+   * When set, centre owner satellites within this centre-to-centre distance
+   * and reject any satellite whose owner distance is not strictly below it.
+   */
+  readonly satelliteClusterLimit?: number
 }
 
 export interface ArisLayoutNodePlacement {
@@ -256,6 +261,7 @@ export type ArisLayoutRejectionCode =
   | 'missing-edge'
   | 'duplicate-edge'
   | 'zero-length-edge'
+  | 'satellite-cluster-distance'
   | 'extreme-whitespace'
 
 export type ArisLayoutRejectionMessageKey = `aris.layout.rejection.${ArisLayoutRejectionCode}`

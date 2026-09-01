@@ -33,6 +33,7 @@ export const ARIS_LAYOUT_REJECTION_CODES = Object.freeze([
   'missing-edge',
   'duplicate-edge',
   'zero-length-edge',
+  'satellite-cluster-distance',
   'extreme-whitespace'
 ] as const satisfies readonly ArisLayoutRejectionCode[])
 
@@ -63,6 +64,8 @@ function finding(
 export interface AcceptanceOptions {
   /** Largest empty band tolerated, as a fraction of the canvas extent. */
   readonly maxEmptyBandRatio?: number
+  /** Opt-in centre-to-centre owner/satellite distance limit. */
+  readonly satelliteClusterLimit?: number
 }
 
 /**
@@ -135,6 +138,27 @@ export function evaluateLayoutAcceptance(
     findings.push(
       finding('zero-length-edge', defects.zeroLengthEdgeIds, {
         edges: defects.zeroLengthEdgeIds.length
+      })
+    )
+  }
+
+  if (
+    options.satelliteClusterLimit !== undefined &&
+    defects.satelliteClusterViolations.length > 0
+  ) {
+    const subjects = defects.satelliteClusterViolations.flatMap((entry) => [
+      entry.satelliteId,
+      entry.ownerId
+    ])
+    const maxDistance = defects.satelliteClusterViolations.reduce(
+      (highest, entry) => Math.max(highest, entry.distance),
+      0
+    )
+    findings.push(
+      finding('satellite-cluster-distance', subjects, {
+        violations: defects.satelliteClusterViolations.length,
+        maxDistance,
+        limit: options.satelliteClusterLimit
       })
     )
   }

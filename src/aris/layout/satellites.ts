@@ -10,10 +10,9 @@
  * far away. Nothing in this module can move a control-flow node, change a
  * rank band, or change the spacing that was derived from the control-flow
  * sizes alone — so the same process laid out with 0 and with 50 satellites has
- * a byte-identical backbone. Concretely, no satellite (and no satellite route)
- * ever reaches an along coordinate above its owner's top edge, so the layout's
- * `base.y` — and therefore the shift applied to every control-flow node — is
- * decided by the control flow alone.
+ * a byte-identical backbone. Generic layout keeps the historical downward
+ * stack. The opt-in convention layout centres each owner column; the finished
+ * canvas remains anchored to the control flow in either mode.
  *
  * Geometry
  * --------
@@ -24,9 +23,10 @@
  * owner by a crossing-aware scorer (Rule A): the side whose candidate satellite
  * routes cross fewer control-flow edges and overlap fewer sibling shapes wins,
  * falling back to an outer-side-vs-spine-centroid rule only when both sides tie
- * at zero. The owner's satellites stack downward from the owner's top edge, one
- * per row; a per-side along cursor keeps two same-side owners from overlapping
- * vertically. Every route leaves the owner at its near-side (bottom in
+ * at zero. Generic columns stack downward; convention columns centre on the
+ * owner's along coordinate. In convention mode, already-chosen satellite boxes
+ * participate in side scoring so overlapping columns fall back to the opposite
+ * side. Every route leaves the owner at its near-side (bottom in
  * top-to-bottom), turns once in the rank gap after the owner, turns into the
  * owner's LOCAL corridor (a thin channel between the owner and its cluster),
  * and enters the satellite from its near-side. Because clusters are local and
@@ -79,10 +79,41 @@ export function satelliteStackGap(spacing: ResolvedSpacing): number {
   return Math.max(spacing.labelGap * 2, Math.round(spacing.crossGap * 0.25))
 }
 
+interface CenteredClusterGeometry {
+  readonly alongCenters: readonly number[]
+  readonly span: number
+  readonly alongMin: number
+  readonly alongMax: number
+}
+
+/** Pure owner-centred along geometry shared by scoring and final placement. */
+function centeredClusterGeometry(
+  members: readonly number[],
+  ownerAlongCenter: number,
+  boxes: readonly OccupiedBox[],
+  gap: number
+): CenteredClusterGeometry {
+  const span = members.reduce(
+    (total, member, index) =>
+      total + (boxes[member] as OccupiedBox).along + (index === 0 ? 0 : gap),
+    0
+  )
+  const alongMin = ownerAlongCenter - span / 2
+  let cursor = alongMin
+  const alongCenters = members.map((member) => {
+    const box = boxes[member] as OccupiedBox
+    const center = cursor + box.along / 2
+    cursor += box.along + gap
+    return center
+  })
+  return { alongCenters, span, alongMin, alongMax: ownerAlongCenter + span / 2 }
+}
+
 /**
- * Density-expansion input for the rank-band sizing stage: the along-axis height
- * each owner's satellite stack will occupy, keyed by the owner's CONTROL-node
- * index. Mirrors `placeSatellites`' owner resolution EXACTLY — the first
+ * Density-expansion input for the rank-band sizing stage, keyed by the CONTROL-node
+ * index. Generic layout returns the original downward load; convention layout
+ * returns the equal above/below extent of a centred column. Mirrors
+ * `placeSatellites`' owner resolution EXACTLY — the first
  * control<->satellite edge claims the satellite, and a satellite that is both an
  * input and an output of the same owner is counted once — so the sizing pass
  * and the placement pass agree on which owners are dense and by how much. An
@@ -94,7 +125,8 @@ export function satelliteVerticalLoad(
   satelliteEdges: readonly ArisLayoutEdgeInput[],
   controlIndexOf: ReadonlyMap<string, number>,
   orientation: ArisLayoutOrientation,
-  spacing: ResolvedSpacing
+  spacing: ResolvedSpacing,
+  satelliteClusterLimit?: number
 ): Map<number, number> {
   const load = new Map<number, number>()
   if (satelliteNodes.length === 0) return load
@@ -103,6 +135,7 @@ export function satelliteVerticalLoad(
   const boxes = satelliteNodes.map((node) => occupiedBoxOf(node, orientation, spacing.labelGap))
   const gap = satelliteStackGap(spacing)
   const claimed = new Array<boolean>(satelliteNodes.length).fill(false)
+  const membersOf = new Map<number, number[]>()
   for (const edge of satelliteEdges) {
     const sourceControl = controlIndexOf.get(edge.source)
     const targetControl = controlIndexOf.get(edge.target)
@@ -120,7 +153,20 @@ export function satelliteVerticalLoad(
     if (owner < 0 || satellite < 0) continue
     if (claimed[satellite]) continue
     claimed[satellite] = true
-    load.set(owner, (load.get(owner) ?? 0) + (boxes[satellite] as OccupiedBox).along + gap)
+    if (satelliteClusterLimit === undefined) {
+      load.set(owner, (load.get(owner) ?? 0) + (boxes[satellite] as OccupiedBox).along + gap)
+    } else {
+      const members = membersOf.get(owner)
+      if (members) members.push(satellite)
+      else membersOf.set(owner, [satellite])
+    }
+  }
+  if (satelliteClusterLimit !== undefined) {
+    for (const [owner, unsortedMembers] of membersOf) {
+      const members = unsortedMembers.slice().sort((left, right) => left - right)
+      const geometry = centeredClusterGeometry(members, 0, boxes, gap)
+      load.set(owner, geometry.span / 2)
+    }
   }
   return load
 }
@@ -134,7 +180,8 @@ export function placeSatellites(
   reservedCrossMin: number,
   controlOut: readonly (readonly number[])[],
   controlIn: readonly (readonly number[])[],
-  controlRoutes: readonly (readonly FlowPoint[])[] = []
+  controlRoutes: readonly (readonly FlowPoint[])[] = [],
+  satelliteClusterLimit?: number
 ): SatellitePlacement {
   const { placement } = geometry
   const spacing = placement.spacing
@@ -154,6 +201,7 @@ export function placeSatellites(
   if (satelliteNodes.length === 0) {
     return { alongOf, crossOf, boxes, routes: [], crossMax, crossMin }
   }
+  const centered = satelliteClusterLimit !== undefined
 
   // --- group satellites by the first control-flow node they attach to ------
   // A satellite whose only connections are to other satellites has no owner
@@ -208,6 +256,13 @@ export function placeSatellites(
   // and is byte-identical.
   const smallGap = spacing.crossGap * 0.7
   const satelliteGap = satelliteStackGap(spacing)
+  const orderedMembersOf = (owner: number): number[] =>
+    (membersOf.get(owner) as number[]).slice().sort((left, right) => left - right)
+  const centeredClusterOf = (
+    owner: number,
+    members: readonly number[] = orderedMembersOf(owner)
+  ): CenteredClusterGeometry =>
+    centeredClusterGeometry(members, placement.alongOf[owner] as number, boxes, satelliteGap)
 
   const ownerBoxRightOf = (owner: number): number =>
     (placement.crossOf[owner] as number) + (placement.boxes[owner] as OccupiedBox).cross / 2
@@ -292,11 +347,11 @@ export function placeSatellites(
     waypoints: points.map((point) => ({ x: point.along, y: point.cross }))
   }))
 
-  // Build the owner's candidate satellite routes for `side`, using an
-  // owner-LOCAL along stack (from the owner's own top) so the score reflects
-  // this owner's geometry independently of the global stack cursor.
+  // Build the owner's candidate satellite routes for `side`. Generic layout
+  // uses the historical downward stack; the convention option uses the same
+  // owner-centred geometry as conflict scoring and final placement.
   const candidateRoutesFor = (owner: number, side: SatelliteSide): FlowPoint[][] => {
-    const members = (membersOf.get(owner) as number[]).slice().sort((left, right) => left - right)
+    const members = orderedMembersOf(owner)
     const ownerBox = placement.boxes[owner] as OccupiedBox
     const ownerAlongTop = (placement.alongOf[owner] as number) - ownerBox.along / 2
     const exitAlong = shapeAlongMax(geometry, owner)
@@ -310,12 +365,15 @@ export function placeSatellites(
     const gapAlong =
       ((placement.gapStart[gapIndex] as number) + (placement.gapEnd[gapIndex] as number)) / 2
     const routes: FlowPoint[][] = []
+    const cluster = centered ? centeredClusterOf(owner, members) : null
     let cursor = ownerAlongTop
-    for (const member of members) {
+    members.forEach((member, index) => {
       const box = boxes[member] as OccupiedBox
-      const satCross =
-        side === 'right' ? near + box.cross / 2 : near - box.cross / 2
-      const satAlong = cursor + box.along / 2 + box.nodeAlongOffset
+      const satCross = side === 'right' ? near + box.cross / 2 : near - box.cross / 2
+      const satAlong = centered
+        ? ((cluster as CenteredClusterGeometry).alongCenters[index] as number) +
+          box.nodeAlongOffset
+        : cursor + box.along / 2 + box.nodeAlongOffset
       const shapeCross = shapeCrossOf[member] as number
       const satNearCross =
         side === 'right'
@@ -331,7 +389,7 @@ export function placeSatellites(
         ])
       )
       cursor += box.along + satelliteGap
-    }
+    })
     return routes
   }
 
@@ -354,15 +412,44 @@ export function placeSatellites(
     return count
   }
 
+  interface PlacedSatelliteBox {
+    readonly alongMin: number
+    readonly alongMax: number
+    readonly crossMin: number
+    readonly crossMax: number
+  }
+  const placedSatelliteBoxes: PlacedSatelliteBox[] = []
+
+  const candidateSatelliteBoxes = (owner: number, side: SatelliteSide): PlacedSatelliteBox[] => {
+    const members = orderedMembersOf(owner)
+    const cluster = centeredClusterOf(owner, members)
+    const near = side === 'right' ? rightBaseOf(owner) : leftBaseOf(owner)
+    return members.map((member, index) => {
+      const box = boxes[member] as OccupiedBox
+      const alongCenter = cluster.alongCenters[index] as number
+      return {
+        alongMin: alongCenter - box.along / 2,
+        alongMax: alongCenter + box.along / 2,
+        crossMin: side === 'right' ? near : near - box.cross,
+        crossMax: side === 'right' ? near + box.cross : near
+      }
+    })
+  }
+
   const siblingConflicts = (owner: number, side: SatelliteSide): number => {
     const members = membersOf.get(owner) as number[]
     const ownerBox = placement.boxes[owner] as OccupiedBox
     const ownerAlongTop = (placement.alongOf[owner] as number) - ownerBox.along / 2
+    const cluster = centered ? centeredClusterOf(owner) : null
     const width = clusterWidthOf(owner)
     let along = 0
     for (const member of members) along += (boxes[member] as OccupiedBox).along + satelliteGap
-    const clusterAlongMin = ownerAlongTop
-    const clusterAlongMax = ownerAlongTop + along
+    const clusterAlongMin = centered
+      ? (cluster as CenteredClusterGeometry).alongMin
+      : ownerAlongTop
+    const clusterAlongMax = centered
+      ? (cluster as CenteredClusterGeometry).alongMax
+      : ownerAlongTop + along
     const near = side === 'right' ? rightBaseOf(owner) : leftBaseOf(owner)
     const clusterCrossMin = side === 'right' ? near : near - width
     const clusterCrossMax = side === 'right' ? near + width : near
@@ -388,6 +475,26 @@ export function placeSatellites(
       if (oc <= 0) continue
       overlap += oa * oc
     }
+    if (centered) {
+      for (const candidate of candidateSatelliteBoxes(owner, side)) {
+        for (const placed of placedSatelliteBoxes) {
+          const oa = overlap1d(
+            candidate.alongMin,
+            candidate.alongMax,
+            placed.alongMin,
+            placed.alongMax
+          )
+          if (oa <= 0) continue
+          const oc = overlap1d(
+            candidate.crossMin,
+            candidate.crossMax,
+            placed.crossMin,
+            placed.crossMax
+          )
+          if (oc > 0) return Number.POSITIVE_INFINITY
+        }
+      }
+    }
     return overlap
   }
 
@@ -398,45 +505,63 @@ export function placeSatellites(
   for (const owner of owners) {
     const right = scoreSide(owner, 'right')
     const left = scoreSide(owner, 'left')
+    let side: SatelliteSide
     if (right === 0 && left === 0) {
-      sideOf.set(owner, fallbackSideOfOwner(owner))
+      side = fallbackSideOfOwner(owner)
     } else if (left < right) {
-      sideOf.set(owner, 'left')
+      side = 'left'
     } else {
-      sideOf.set(owner, 'right') // ties resolve to RIGHT
+      side = 'right' // ties resolve to RIGHT
     }
+    sideOf.set(owner, side)
+    if (centered) placedSatelliteBoxes.push(...candidateSatelliteBoxes(owner, side))
   }
 
-  // --- place each owner's satellites stacked next to that owner ------------
-  // Each SIDE keeps a global along-stack cursor so a later owner's cluster is
-  // packed below the previous same-side cluster (no along overlap between any
-  // two same-side satellites). The clusters no longer share ONE cross column —
-  // each owner's cross is LOCAL to that owner — so a left-side and a right-side
-  // owner (or two owners at different cross positions) can share an along band
-  // without colliding. Owner iteration is in rank order (deterministic).
   let stackCursorRight = -Infinity
   let stackCursorLeft = -Infinity
-  for (const owner of owners) {
-    const members = (membersOf.get(owner) as number[]).slice().sort((left, right) => left - right)
-    const ownerBox = placement.boxes[owner] as OccupiedBox
-    const ownerAlongTop = (placement.alongOf[owner] as number) - ownerBox.along / 2
-    const side = sideOf.get(owner) as SatelliteSide
-    const near = side === 'right' ? rightBaseOf(owner) : leftBaseOf(owner)
-    let cursor = Math.max(side === 'right' ? stackCursorRight : stackCursorLeft, ownerAlongTop)
-    for (const member of members) {
-      const box = boxes[member] as OccupiedBox
-      if (side === 'right') {
-        crossOf[member] = near + box.cross / 2
-        crossMax = Math.max(crossMax, near + box.cross)
-      } else {
-        crossOf[member] = near - box.cross / 2
-        crossMin = Math.min(crossMin, near - box.cross)
+  if (!centered) {
+    // Generic engine: retain the original downward per-side stack exactly.
+    for (const owner of owners) {
+      const members = (membersOf.get(owner) as number[]).slice().sort((left, right) => left - right)
+      const ownerBox = placement.boxes[owner] as OccupiedBox
+      const ownerAlongTop = (placement.alongOf[owner] as number) - ownerBox.along / 2
+      const side = sideOf.get(owner) as SatelliteSide
+      const near = side === 'right' ? rightBaseOf(owner) : leftBaseOf(owner)
+      let cursor = Math.max(side === 'right' ? stackCursorRight : stackCursorLeft, ownerAlongTop)
+      for (const member of members) {
+        const box = boxes[member] as OccupiedBox
+        if (side === 'right') {
+          crossOf[member] = near + box.cross / 2
+          crossMax = Math.max(crossMax, near + box.cross)
+        } else {
+          crossOf[member] = near - box.cross / 2
+          crossMin = Math.min(crossMin, near - box.cross)
+        }
+        alongOf[member] = cursor + box.along / 2
+        cursor += box.along + satelliteGap
       }
-      alongOf[member] = cursor + box.along / 2
-      cursor += box.along + satelliteGap
+      if (side === 'right') stackCursorRight = cursor
+      else stackCursorLeft = cursor
     }
-    if (side === 'right') stackCursorRight = cursor
-    else stackCursorLeft = cursor
+  } else {
+    // Convention engine: centre every owner column independently.
+    for (const owner of owners) {
+      const members = orderedMembersOf(owner)
+      const cluster = centeredClusterOf(owner, members)
+      const side = sideOf.get(owner) as SatelliteSide
+      const near = side === 'right' ? rightBaseOf(owner) : leftBaseOf(owner)
+      members.forEach((member, index) => {
+        const box = boxes[member] as OccupiedBox
+        if (side === 'right') {
+          crossOf[member] = near + box.cross / 2
+          crossMax = Math.max(crossMax, near + box.cross)
+        } else {
+          crossOf[member] = near - box.cross / 2
+          crossMin = Math.min(crossMin, near - box.cross)
+        }
+        alongOf[member] = cluster.alongCenters[index] as number
+      })
+    }
   }
 
   // --- orphans stacked in the RIGHT column, after all owners --------------
@@ -451,8 +576,13 @@ export function placeSatellites(
     const orphanColumnStart = reservedCrossMax + spacing.crossGap
     const orphanTop =
       (placement.bandStart[0] as number | undefined) ?? spacing.margin + spacing.rankGap
-    // Stack orphans after the lowest right-side owner satellite.
-    let cursor = Math.max(orphanTop, stackCursorRight)
+    const rightOwnerBottom = centered
+      ? owners.reduce((lowest, owner) => {
+          if (sideOf.get(owner) !== 'right') return lowest
+          return Math.max(lowest, centeredClusterOf(owner).alongMax)
+        }, Number.NEGATIVE_INFINITY)
+      : stackCursorRight
+    let cursor = Math.max(orphanTop, centered ? rightOwnerBottom + satelliteGap : rightOwnerBottom)
     for (const orphan of orphans.slice().sort((left, right) => left - right)) {
       const box = boxes[orphan] as OccupiedBox
       alongOf[orphan] = cursor + box.along / 2

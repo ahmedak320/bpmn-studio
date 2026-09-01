@@ -489,6 +489,12 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
   const representativeObjectId = (nodeId: string): string =>
     exceptionNodeIds.has(nodeId) ? `xe:${nodeId}` : `n:${nodeId}`
 
+  // Satellites are only valid beside flow functions. The representative is
+  // deliberately consulted after Phase A has created every canonical node, so
+  // missing/unknown representatives are ineligible rather than guessed.
+  const isEligibleSatelliteOwnerNode = (nodeId: string): boolean =>
+    objectTypeById.get(representativeObjectId(nodeId)) === OT_FUNC
+
   const synthRelId = (source: string, target: string): string => `re:${source}:${target}`
 
   // --- primary model + placeholder handoff models -------------------------
@@ -657,10 +663,10 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
   // Satellite objects (roles / systems / info / controls): emit ONE object per
   // (satellite, owner) pair so each function gets its OWN local copy of every
   // satellite it uses. See the "Satellite duplication" note at the top for the
-  // uncertainty-resolution rationale. A satellite with an empty owner list
-  // (orphan) still emits a single dangling object with `representativeFor` so
-  // its behaviour is preserved verbatim; its unknowns still resolve to the
-  // object rather than the fallback model.
+  // uncertainty-resolution rationale. A satellite with no eligible function
+  // owner (including an empty owner list) still emits one orphan object with
+  // `representativeFor` so its behaviour is preserved verbatim; its unknowns
+  // still resolve to the object rather than the fallback model.
   //
   // symbolType note: without it, arisAiCreate.ts's DEFAULT_SYMBOLS table (which
   // only knows OT_FUNC/OT_EVT/OT_RULE at first) fell through to 'ST_FUNC' and
@@ -675,7 +681,8 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
     rememberRepresentative(canonicalId, primaryModelId)
   }
   for (const role of process.roles) {
-    if (role.nodeIds.length === 0) {
+    const ownerNodeIds = role.nodeIds.filter(isEligibleSatelliteOwnerNode)
+    if (ownerNodeIds.length === 0) {
       addObject({
         logicalId: `r:${role.id}`,
         cause: role.id,
@@ -688,7 +695,7 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
       })
     } else {
       pinDuplicatedSatellite(role.id)
-      for (const nodeId of role.nodeIds) {
+      for (const nodeId of ownerNodeIds) {
         addObject({
           logicalId: `r:${role.id}@${nodeId}`,
           cause: role.id,
@@ -702,7 +709,8 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
     }
   }
   for (const system of process.systems) {
-    if (system.nodeIds.length === 0) {
+    const ownerNodeIds = system.nodeIds.filter(isEligibleSatelliteOwnerNode)
+    if (ownerNodeIds.length === 0) {
       addObject({
         logicalId: `s:${system.id}`,
         cause: system.id,
@@ -715,7 +723,7 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
       })
     } else {
       pinDuplicatedSatellite(system.id)
-      for (const nodeId of system.nodeIds) {
+      for (const nodeId of ownerNodeIds) {
         addObject({
           logicalId: `s:${system.id}@${nodeId}`,
           cause: system.id,
@@ -740,7 +748,8 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
       seen.add(nodeId)
       ownerNodeIds.push(nodeId)
     }
-    if (ownerNodeIds.length === 0) {
+    const eligibleOwnerNodeIds = ownerNodeIds.filter(isEligibleSatelliteOwnerNode)
+    if (eligibleOwnerNodeIds.length === 0) {
       addObject({
         logicalId: `io:${info.id}`,
         cause: info.id,
@@ -753,7 +762,7 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
       })
     } else {
       pinDuplicatedSatellite(info.id)
-      for (const nodeId of ownerNodeIds) {
+      for (const nodeId of eligibleOwnerNodeIds) {
         addObject({
           logicalId: `io:${info.id}@${nodeId}`,
           cause: info.id,
@@ -767,7 +776,8 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
     }
   }
   for (const control of process.controls) {
-    if (control.nodeIds.length === 0) {
+    const ownerNodeIds = control.nodeIds.filter(isEligibleSatelliteOwnerNode)
+    if (ownerNodeIds.length === 0) {
       addObject({
         logicalId: `c:${control.id}`,
         cause: control.id,
@@ -780,7 +790,7 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
       })
     } else {
       pinDuplicatedSatellite(control.id)
-      for (const nodeId of control.nodeIds) {
+      for (const nodeId of ownerNodeIds) {
         addObject({
           logicalId: `c:${control.id}@${nodeId}`,
           cause: control.id,
@@ -952,6 +962,7 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
   // BOTH relations (input-to + output-of) to that owner.
   for (const role of process.roles) {
     for (const nodeId of role.nodeIds) {
+      if (!isEligibleSatelliteOwnerNode(nodeId)) continue
       const target = representativeObjectId(nodeId)
       const source = `r:${role.id}@${nodeId}`
       addSatelliteRelation({
@@ -966,6 +977,7 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
   }
   for (const system of process.systems) {
     for (const nodeId of system.nodeIds) {
+      if (!isEligibleSatelliteOwnerNode(nodeId)) continue
       const target = representativeObjectId(nodeId)
       const source = `s:${system.id}@${nodeId}`
       addSatelliteRelation({
@@ -980,6 +992,7 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
   }
   for (const info of process.informationObjects) {
     for (const nodeId of info.inputToNodeIds) {
+      if (!isEligibleSatelliteOwnerNode(nodeId)) continue
       const target = representativeObjectId(nodeId)
       const source = `io:${info.id}@${nodeId}`
       addSatelliteRelation({
@@ -992,6 +1005,7 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
       })
     }
     for (const nodeId of info.outputOfNodeIds) {
+      if (!isEligibleSatelliteOwnerNode(nodeId)) continue
       const source = representativeObjectId(nodeId)
       const target = `io:${info.id}@${nodeId}`
       addSatelliteRelation({
@@ -1006,6 +1020,7 @@ export function projectCanonicalToDraft(process: CanonicalProcessV1): CanonicalP
   }
   for (const control of process.controls) {
     for (const nodeId of control.nodeIds) {
+      if (!isEligibleSatelliteOwnerNode(nodeId)) continue
       const target = representativeObjectId(nodeId)
       const source = `c:${control.id}@${nodeId}`
       addSatelliteRelation({

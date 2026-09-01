@@ -85,8 +85,25 @@ export interface ArisAiAmlResult {
   readonly xml: string
   readonly modelCount: number
   readonly objectCount: number
+  readonly omittedOccurrenceCount: number
   readonly relationCount: number
   readonly uncertaintyCount: number
+}
+
+export interface ArisAiAmlConventionOptions {
+  /** logicalId -> integer rect; misses fall back to naive column geometry. */
+  readonly geometry?: ReadonlyMap<
+    string,
+    { x: number; y: number; width: number; height: number }
+  >
+  /** relation logicalId -> integer polyline; misses fall back to the 2-point line. */
+  readonly routes?: ReadonlyMap<string, readonly { x: number; y: number }[]>
+  /** Draft logicalIds whose ObjOcc (and every incident CxnOcc) is not emitted. */
+  readonly omitOccurrences?: ReadonlySet<string>
+  /** Pre-built ElementSpecs appended to the AML root (e.g. FFTextDef). */
+  readonly extraRootChildren?: readonly ElementSpec[]
+  /** Pre-built ElementSpecs appended to the (single) primary model. */
+  readonly extraModelChildren?: readonly ElementSpec[]
 }
 
 /**
@@ -98,7 +115,7 @@ export interface ArisAiAmlResult {
  */
 export function buildAmlFromArisAiDraft(
   draft: ArisAiDraftV1,
-  options: { readonly modelNameFallback?: string } = {}
+  options: ArisAiAmlConventionOptions & { readonly modelNameFallback?: string } = {}
 ): ArisAiAmlResult {
   const attributesByOwner = new Map<string, AttributeDefinitionSpec[]>()
   const pushAttribute = (ownerLogicalId: string, type: string, text: ArisAiLocalizedText): void => {
@@ -170,8 +187,9 @@ export function buildAmlFromArisAiDraft(
   const groupChildren: ElementSpec[] = [...definitionSpecs, ...connectionDefinitionSpecs]
 
   let objectCount = 0
+  let omittedOccurrenceCount = 0
   let relationCount = 0
-  for (const model of draft.models) {
+  for (const [modelIndex, model] of draft.models.entries()) {
     const objects = draft.objects
       .filter((object) => object.modelLogicalId === model.logicalId)
       .map((object, index) => ({ object, index }))
@@ -182,23 +200,46 @@ export function buildAmlFromArisAiDraft(
       })
       .map((entry) => entry.object)
 
-    const geometry = new Map<string, { readonly x: number; readonly y: number }>()
+    const geometry = new Map<
+      string,
+      { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
+    >()
     objects.forEach((object, index) => {
-      geometry.set(object.logicalId, { x: COLUMN_X, y: FIRST_Y + index * ROW_STEP })
+      geometry.set(
+        object.logicalId,
+        options.geometry?.get(object.logicalId) ?? {
+          x: COLUMN_X,
+          y: FIRST_Y + index * ROW_STEP,
+          width: WIDTH,
+          height: HEIGHT
+        }
+      )
     })
+
+    const occurrenceIsEmitted = (logicalId: string): boolean =>
+      geometry.has(logicalId) && options.omitOccurrences?.has(logicalId) !== true
+    const relationOccurrenceIsEmitted = (relation: (typeof draft.relations)[number]): boolean =>
+      relation.modelLogicalId === model.logicalId &&
+      occurrenceIsEmitted(relation.sourceLogicalId) &&
+      occurrenceIsEmitted(relation.targetLogicalId)
 
     const relationsBySource = new Map<string, (typeof draft.relations)[number][]>()
     for (const relation of draft.relations) {
-      if (relation.modelLogicalId !== model.logicalId) continue
-      if (!geometry.has(relation.sourceLogicalId) || !geometry.has(relation.targetLogicalId))
-        continue
+      if (!relationOccurrenceIsEmitted(relation)) continue
       const list = relationsBySource.get(relation.sourceLogicalId) ?? []
       list.push(relation)
       relationsBySource.set(relation.sourceLogicalId, list)
     }
 
-    const occurrences: ElementSpec[] = objects.map((object) => {
-      const from = geometry.get(object.logicalId) ?? { x: COLUMN_X, y: FIRST_Y }
+    const emittedObjects = objects.filter((object) => occurrenceIsEmitted(object.logicalId))
+    omittedOccurrenceCount += objects.length - emittedObjects.length
+    const occurrences: ElementSpec[] = emittedObjects.map((object) => {
+      const from = geometry.get(object.logicalId) ?? {
+        x: COLUMN_X,
+        y: FIRST_Y,
+        width: WIDTH,
+        height: HEIGHT
+      }
       const outgoing = relationsBySource.get(object.logicalId) ?? []
       const nested: ConnectionOccurrenceSpec[] = outgoing.map((relation) => {
         const to = geometry.get(relation.targetLogicalId) ?? from
@@ -206,9 +247,9 @@ export function buildAmlFromArisAiDraft(
           id: arisIdForLogicalId('CxnOcc', relation.logicalId),
           connectionDefinitionId: arisIdForLogicalId('CxnDef', relation.logicalId),
           targetObjectOccurrenceId: arisIdForLogicalId('ObjOcc', relation.targetLogicalId),
-          points: [
-            { x: from.x + WIDTH / 2, y: from.y + HEIGHT },
-            { x: to.x + WIDTH / 2, y: to.y }
+          points: options.routes?.get(relation.logicalId) ?? [
+            { x: from.x + from.width / 2, y: from.y + from.height },
+            { x: to.x + to.width / 2, y: to.y }
           ]
         }
       })
@@ -218,8 +259,8 @@ export function buildAmlFromArisAiDraft(
         id: arisIdForLogicalId('ObjOcc', object.logicalId),
         objectDefinitionId: arisIdForLogicalId('ObjDef', object.logicalId),
         symbolNum: object.symbolType ?? DEFAULT_SYMBOLS[object.objectType] ?? 'ST_FUNC',
-        position: from,
-        size: { dx: WIDTH, dy: HEIGHT },
+        position: { x: from.x, y: from.y },
+        size: { dx: from.width, dy: from.height },
         ...(outgoing.length > 0
           ? {
               connectionOccurrenceIds: outgoing.map((relation) =>
@@ -246,7 +287,11 @@ export function buildAmlFromArisAiDraft(
         { name: 'Model.ID', value: arisIdForLogicalId('Model', model.logicalId) },
         { name: 'Model.Type', value: model.modelType }
       ],
-      children: [...modelAttributes.map(attrDefSpec), ...occurrences]
+      children: [
+        ...modelAttributes.map(attrDefSpec),
+        ...occurrences,
+        ...(modelIndex === 0 ? (options.extraModelChildren ?? []) : [])
+      ]
     })
   }
 
@@ -267,7 +312,8 @@ export function buildAmlFromArisAiDraft(
           name: 'Group',
           attributes: [{ name: 'Group.ID', value: 'Group.Root' }],
           children: groupChildren
-        }
+        },
+        ...(options.extraRootChildren ?? [])
       ]
     }),
     ''
@@ -277,6 +323,7 @@ export function buildAmlFromArisAiDraft(
     xml,
     modelCount: draft.models.length,
     objectCount,
+    omittedOccurrenceCount,
     relationCount,
     uncertaintyCount: draft.uncertainties.length
   })

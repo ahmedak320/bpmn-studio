@@ -60,6 +60,8 @@ export interface LayoutMeasurementInput {
    */
   readonly explainedBandsX?: readonly Interval[]
   readonly explainedBandsY?: readonly Interval[]
+  /** Opt-in centre-to-centre owner/satellite distance limit. */
+  readonly satelliteClusterLimit?: number
 }
 
 export interface OverlapPair {
@@ -79,6 +81,12 @@ export interface DetachedEndpoint {
   readonly end: 'source' | 'target'
 }
 
+export interface SatelliteClusterViolation {
+  readonly satelliteId: string
+  readonly ownerId: string
+  readonly distance: number
+}
+
 export interface LayoutDefects {
   readonly shapeOverlaps: readonly OverlapPair[]
   readonly labelSatelliteOverlaps: readonly OverlapPair[]
@@ -87,6 +95,7 @@ export interface LayoutDefects {
   readonly missingEdgeIds: readonly string[]
   readonly duplicateEdgeIds: readonly string[]
   readonly zeroLengthEdgeIds: readonly string[]
+  readonly satelliteClusterViolations: readonly SatelliteClusterViolation[]
 }
 
 export interface LayoutAnalysis {
@@ -276,6 +285,38 @@ export function analyzeLayout(input: LayoutMeasurementInput): LayoutAnalysis {
   const drawn = new Set(edges.map((edge) => edge.id))
   const missingEdgeIds = input.expectedEdgeIds.filter((id) => !drawn.has(id))
 
+  // --- convention-only satellite cluster distance -------------------------
+  const satelliteClusterViolations: SatelliteClusterViolation[] = []
+  if (input.satelliteClusterLimit !== undefined) {
+    const ownerOf = new Map<string, string>()
+    for (const edge of edges) {
+      if (edge.kind !== 'satellite') continue
+      const source = nodeById.get(edge.source)
+      const target = nodeById.get(edge.target)
+      if (!source || !target) continue
+      if (source.kind === 'satellite' && target.kind !== 'satellite') {
+        if (!ownerOf.has(source.id)) ownerOf.set(source.id, target.id)
+      } else if (target.kind === 'satellite' && source.kind !== 'satellite') {
+        if (!ownerOf.has(target.id)) ownerOf.set(target.id, source.id)
+      }
+    }
+    for (const satellite of nodes) {
+      if (satellite.kind !== 'satellite') continue
+      const ownerId = ownerOf.get(satellite.id)
+      if (ownerId === undefined) continue
+      const owner = nodeById.get(ownerId)
+      if (!owner) continue
+      const satelliteX = satellite.rect.x + satellite.rect.width / 2
+      const satelliteY = satellite.rect.y + satellite.rect.height / 2
+      const ownerX = owner.rect.x + owner.rect.width / 2
+      const ownerY = owner.rect.y + owner.rect.height / 2
+      const distance = Math.hypot(satelliteX - ownerX, satelliteY - ownerY)
+      if (distance >= input.satelliteClusterLimit) {
+        satelliteClusterViolations.push({ satelliteId: satellite.id, ownerId, distance })
+      }
+    }
+  }
+
   // --- canvas and whitespace ----------------------------------------------
   const canvas = input.canvas
   const coveredX: Interval[] = []
@@ -334,7 +375,8 @@ export function analyzeLayout(input: LayoutMeasurementInput): LayoutAnalysis {
       detachedEndpoints,
       missingEdgeIds,
       duplicateEdgeIds,
-      zeroLengthEdgeIds
+      zeroLengthEdgeIds,
+      satelliteClusterViolations
     }
   }
 }

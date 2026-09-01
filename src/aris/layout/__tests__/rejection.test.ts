@@ -72,6 +72,7 @@ describe('message keys', () => {
       'missing-edge',
       'duplicate-edge',
       'zero-length-edge',
+      'satellite-cluster-distance',
       'extreme-whitespace'
     ])
     for (const code of ARIS_LAYOUT_REJECTION_CODES) {
@@ -224,6 +225,58 @@ describe('the gate rejects every forbidden condition', () => {
     expect(acceptance.accepted).toBe(true)
   })
 
+  it('rejects a satellite at or beyond the cluster limit only when the limit is enabled', () => {
+    const nodes: ArisLayoutNodePlacement[] = [
+      node('owner', { x: 0, y: 0, width: 100, height: 100 }),
+      {
+        ...node('satellite', { x: 200, y: 40, width: 20, height: 20 }),
+        kind: 'satellite',
+        role: 'satellite'
+      }
+    ]
+    const edges: ArisLayoutEdgeRoute[] = [
+      {
+        id: 'owner->satellite',
+        source: 'owner',
+        target: 'satellite',
+        kind: 'satellite',
+        classification: 'satellite',
+        points: [
+          { x: 100, y: 50 },
+          { x: 200, y: 50 }
+        ]
+      }
+    ]
+    const input = {
+      nodes,
+      edges,
+      canvas: { x: 0, y: 0, width: 220, height: 100 },
+      expectedEdgeIds: ['owner->satellite']
+    } as const
+
+    const generic = analyzeLayout(input)
+    expect(evaluateLayoutAcceptance(generic.metrics, generic.defects).accepted).toBe(true)
+    expect(generic.defects.satelliteClusterViolations).toEqual([])
+
+    const within = analyzeLayout({ ...input, satelliteClusterLimit: 161 })
+    expect(
+      evaluateLayoutAcceptance(within.metrics, within.defects, {
+        satelliteClusterLimit: 161
+      }).accepted
+    ).toBe(true)
+
+    const constrained = analyzeLayout({ ...input, satelliteClusterLimit: 160 })
+    const acceptance = evaluateLayoutAcceptance(constrained.metrics, constrained.defects, {
+      satelliteClusterLimit: 160
+    })
+    expect(acceptance.accepted).toBe(false)
+    expect(acceptance.findings.map((entry) => entry.code)).toEqual([
+      'satellite-cluster-distance'
+    ])
+    expect(acceptance.findings[0]?.subjects).toEqual(['owner', 'satellite'])
+    expect(acceptance.findings[0]?.values).toEqual({ violations: 1, maxDistance: 160, limit: 160 })
+  })
+
   it('honours a caller supplied whitespace limit', () => {
     const metrics: ArisLayoutMetrics = {
       shapeOverlaps: 0,
@@ -252,7 +305,8 @@ describe('the gate rejects every forbidden condition', () => {
       detachedEndpoints: [],
       missingEdgeIds: [],
       duplicateEdgeIds: [],
-      zeroLengthEdgeIds: []
+      zeroLengthEdgeIds: [],
+      satelliteClusterViolations: []
     }
     expect(evaluateLayoutAcceptance(metrics, empty).accepted).toBe(true)
     expect(evaluateLayoutAcceptance(metrics, empty, { maxEmptyBandRatio: 0.1 }).accepted).toBe(
