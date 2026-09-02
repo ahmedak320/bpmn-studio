@@ -20,6 +20,7 @@ import { ARIS_PRINT_FRAME_LAYER, ArisRenderer } from './renderer'
 import { buildPrintFrame, drawPrintFrame, printFrameModelAttributeText } from './printFrame'
 import { bootCanvas, type Harness } from './testing/harness'
 import { SVG_NS } from './svg'
+import { measureTextWidth } from './typography'
 
 /**
  * The print frame (plan Wave 6, V5+): header band with the Process Code /
@@ -548,6 +549,81 @@ describe('drawPrintFrame — SVG furniture', () => {
     expect(rect.getAttribute('stroke')).toBe('#000000')
     expect(rect.getAttribute('fill')).toBe('none')
     expect(frames[0]!.getAttribute('data-aris-graphic-frame-shape')).toBe('RoundedRectangle')
+  })
+})
+
+describe('drawHeader — measured two-column rows never overlap (Issue 1)', () => {
+  const LONG_TITLE = 'A Sufficiently Long Sample Process Title — Draft'
+  const OWNER = 'UNIT-EXAMPLE-DEPT-01'
+
+  function headerModel(contentWidth: number): ArisModel {
+    return modelWith({
+      names: localizedValue(LONG_TITLE),
+      attributes: Object.freeze([
+        Object.freeze({
+          type: 'AT_PERS_RESP',
+          values: Object.freeze([Object.freeze({ localeId: 'en-US', text: OWNER })])
+        })
+      ]),
+      occurrences: Object.freeze([
+        Object.freeze({
+          ...occurrence('ObjOcc.func', 'ObjDef.func', 0, 4000),
+          bounds: Object.freeze({ x: 0, y: 4000, width: contentWidth, height: 240 })
+        })
+      ])
+    })
+  }
+
+  function labelExtent(node: Element): { readonly left: number; readonly right: number } {
+    const x = Number(node.getAttribute('x'))
+    const font = Number(node.getAttribute('font-size'))
+    const width = measureTextWidth(node.textContent ?? '', font, 'bold')
+    return { left: x, right: x + width }
+  }
+
+  function valueExtent(node: Element): { readonly left: number; readonly right: number } {
+    const x = Number(node.getAttribute('x'))
+    const font = Number(node.getAttribute('font-size'))
+    const width = measureTextWidth(node.textContent ?? '', font)
+    return { left: x - width / 2, right: x + width / 2 }
+  }
+
+  function assertNoOverlap(contentWidth: number): void {
+    const frame = buildPrintFrame(headerModel(contentWidth))
+    const band = frame.header!.bounds
+    const parent = document.createElementNS(SVG_NS, 'g')
+    drawPrintFrame(parent, frame, { modelName: LONG_TITLE })
+    const group = parent.querySelector('[data-aris-print-frame-header]')!
+    const labels = [...group.querySelectorAll('[data-aris-print-frame-text="row-label"]')]
+    const values = [...group.querySelectorAll('[data-aris-print-frame-text="row-value"]')]
+    // Process Name + Organizational Owner both render.
+    expect(labels.length).toBe(2)
+    expect(values.length).toBeGreaterThanOrEqual(2)
+
+    // Every label and every value line lies inside the band.
+    for (const node of labels) {
+      const { left, right } = labelExtent(node)
+      expect(left).toBeGreaterThanOrEqual(band.x - 0.5)
+      expect(right).toBeLessThanOrEqual(band.x + band.width + 0.5)
+    }
+    for (const node of values) {
+      const { left, right } = valueExtent(node)
+      expect(left).toBeGreaterThanOrEqual(band.x - 0.5)
+      expect(right).toBeLessThanOrEqual(band.x + band.width + 0.5)
+    }
+    // Label column and value column are disjoint: the widest label right edge
+    // is left of the left-most value edge — no label types over its value.
+    const maxLabelRight = Math.max(...labels.map((node) => labelExtent(node).right))
+    const minValueLeft = Math.min(...values.map((node) => valueExtent(node).left))
+    expect(maxLabelRight).toBeLessThanOrEqual(minValueLeft)
+  }
+
+  it('holds for a narrow 614-unit band with a 48-char title', () => {
+    assertNoOverlap(614)
+  })
+
+  it('holds for a 30000-unit-wide band', () => {
+    assertNoOverlap(30000)
   })
 })
 

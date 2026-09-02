@@ -51,6 +51,7 @@ import type { ArisLabelFont } from './elements'
 import { buildArisLegend, drawArisLegend, type ArisLegendModel } from './legend'
 import { readLocalized } from './localization'
 import { decodeArisOleImage } from './oleImage'
+import { measureTextWidth, wrapLabelLines, type ArisTextWeight } from './typography'
 import { arisPrintFrameText } from './printFrameI18n'
 import { ARIS_PEN_UNIT } from './renderer'
 import { svgAppend, svgElement } from './svg'
@@ -149,6 +150,79 @@ const AUTHORED_ROW_PITCH = 110
 const AUTHORED_HEADER_INSET = 40
 /** Anchored header value size as a fraction of the band height (3 rows + margins). */
 const HEADER_VALUE_FONT_RATIO = 1 / 7
+/** Computed-row value/label font as a fraction of the row pitch. */
+const HEADER_ROW_FONT_RATIO = 0.42
+/** Gap between the label column and the value column of a computed header row. */
+const HEADER_LABEL_VALUE_GAP = 40
+/** Never shrink a computed value below this so it stays legible. */
+const HEADER_VALUE_FONT_FLOOR = 24
+/**
+ * Minimum width reserved for the value column of a computed row. With the
+ * label column and insets this fixes the band's minimum width so a narrow
+ * model (e.g. the 614-unit-wide generated processes) can never have its label
+ * and value type over each other — general, not a per-sample tweak.
+ */
+const HEADER_MIN_VALUE_COLUMN = 700
+/** Line spacing when a computed value wraps to a second line. */
+const HEADER_LINE_HEIGHT = 1.15
+
+/** Widest measured label across the computed rows, at the bold row font. */
+function headerLabelColumnWidth(
+  rows: readonly ArisPrintFrameHeaderRow[],
+  labelFont: number
+): number {
+  let widest = 0
+  for (const row of rows) {
+    const width = measureTextWidth(row.label, labelFont, 'bold')
+    if (width > widest) widest = width
+  }
+  return widest
+}
+
+/** Clip `text` with an ellipsis so its measured width fits `maxWidth`. */
+function truncateTextToWidth(
+  text: string,
+  maxWidth: number,
+  fontSize: number,
+  weight: ArisTextWeight = 'regular'
+): string {
+  if (maxWidth <= 0) return text
+  if (measureTextWidth(text, fontSize, weight) <= maxWidth) return text
+  const ellipsis = '…'
+  let clipped = text
+  while (clipped.length > 1 && measureTextWidth(clipped + ellipsis, fontSize, weight) > maxWidth) {
+    clipped = clipped.slice(0, -1)
+  }
+  return clipped + ellipsis
+}
+
+/**
+ * Fit a header value into its column: shrink the font (down to the floor) and,
+ * if still too wide, wrap to at most two measured lines — truncating only as a
+ * last resort. Never returns a line wider than `columnWidth`, so the value
+ * cannot overrun the band or cross into the label column.
+ */
+function fitHeaderValue(
+  text: string,
+  columnWidth: number,
+  maxFont: number
+): { readonly font: number; readonly lines: readonly string[] } {
+  const width = Math.max(1, columnWidth)
+  for (let font = maxFont; font >= HEADER_VALUE_FONT_FLOOR; font -= 2) {
+    const lines = wrapLabelLines(text, width, font)
+    if (lines.length <= 2 && lines.every((line) => measureTextWidth(line, font) <= width)) {
+      return { font, lines }
+    }
+  }
+  const font = HEADER_VALUE_FONT_FLOOR
+  const wrapped = wrapLabelLines(text, width, font)
+  const twoLines =
+    wrapped.length <= 2 ? wrapped : [wrapped[0] ?? '', wrapped.slice(1).join(' ')]
+  return {
+    font,
+    lines: twoLines.map((line) => truncateTextToWidth(line, width, font))
+  }
+}
 
 const HEADER_ROW_ATTRIBUTES: readonly {
   readonly attributeType: string
@@ -300,10 +374,23 @@ function buildHeader(
   } else if (content !== null) {
     const height =
       rows.length > 0 ? rows.length * AUTHORED_ROW_PITCH + AUTHORED_HEADER_INSET * 2 : 240
+    // Minimum band width so the measured label column and a readable value
+    // column never overlap on a narrow model. The band stays centred on the
+    // content so it still parks directly above the diagram. General: every
+    // generated (narrow) process gets a band wide enough for its rows.
+    let width = content.width
+    if (rows.length > 0) {
+      const rowPitch = (height - AUTHORED_HEADER_INSET * 2) / rows.length
+      const labelFont = Math.max(1, Math.round(rowPitch * HEADER_ROW_FONT_RATIO))
+      const labelColumn = headerLabelColumnWidth(rows, labelFont)
+      const minWidth =
+        AUTHORED_HEADER_INSET * 2 + labelColumn + HEADER_LABEL_VALUE_GAP + HEADER_MIN_VALUE_COLUMN
+      width = Math.max(content.width, minWidth)
+    }
     bounds = Object.freeze({
-      x: content.x,
+      x: Math.round(content.x + content.width / 2 - width / 2),
       y: content.y - height - AUTHORED_HEADER_INSET,
-      width: content.width,
+      width,
       height
     })
   } else {
@@ -523,26 +610,43 @@ function drawHeader(group: SVGElement, header: ArisPrintFrameHeader, modelName: 
   }
 
   // Computed label/value rows (models that anchor no header notes of their own).
+  // A measured two-column layout: the bold label starts at the left inset in a
+  // column sized to the widest label; the value is drawn centred in the
+  // remaining column, shrunk/wrapped so it never overruns the band or types
+  // over the label. Holds for every band width, narrow or wide.
   const rowPitch =
     header.rows.length === 0 ? 0 : (bounds.height - AUTHORED_HEADER_INSET * 2) / header.rows.length
-  header.rows.forEach((row, index) => {
-    const cy = bounds.y + AUTHORED_HEADER_INSET + rowPitch * (index + 0.5)
-    const fontSize = Math.max(1, Math.round(rowPitch * 0.42))
-    svgAppend(
-      headerGroup,
-      drawFrameText(row.label, bounds.x + AUTHORED_HEADER_INSET, cy, fontSize, {
-        anchor: 'start',
-        bold: true,
-        marker: 'row-label'
+  if (header.rows.length > 0) {
+    const labelFont = Math.max(1, Math.round(rowPitch * HEADER_ROW_FONT_RATIO))
+    const labelColumn = headerLabelColumnWidth(header.rows, labelFont)
+    const labelX = bounds.x + AUTHORED_HEADER_INSET
+    const valueColumnLeft = labelX + labelColumn + HEADER_LABEL_VALUE_GAP
+    const valueColumnRight = bounds.x + bounds.width - AUTHORED_HEADER_INSET
+    const valueColumnWidth = Math.max(1, valueColumnRight - valueColumnLeft)
+    const valueColumnCenter = (valueColumnLeft + valueColumnRight) / 2
+    header.rows.forEach((row, index) => {
+      const cy = bounds.y + AUTHORED_HEADER_INSET + rowPitch * (index + 0.5)
+      svgAppend(
+        headerGroup,
+        drawFrameText(row.label, labelX, cy, labelFont, {
+          anchor: 'start',
+          bold: true,
+          marker: 'row-label'
+        })
+      )
+      const { font, lines } = fitHeaderValue(row.value, valueColumnWidth, labelFont)
+      const lineHeight = font * HEADER_LINE_HEIGHT
+      const firstLineY = cy - ((lines.length - 1) * lineHeight) / 2
+      lines.forEach((line, lineIndex) => {
+        svgAppend(
+          headerGroup,
+          drawFrameText(line, valueColumnCenter, firstLineY + lineIndex * lineHeight, font, {
+            marker: 'row-value'
+          })
+        )
       })
-    )
-    svgAppend(
-      headerGroup,
-      drawFrameText(row.value, bounds.x + bounds.width / 2, cy, fontSize, {
-        marker: 'row-value'
-      })
-    )
-  })
+    })
+  }
 
   // Resolved live placeholders at their exact source anchors. The source
   // anchor is the note's horizontal centre / top edge (CENTER alignment).

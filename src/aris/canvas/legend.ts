@@ -29,6 +29,7 @@ import { isDmtSymbolDescriptor, resolveArisCatalogSymbol } from '../symbols'
 import type { ArisDrawingElement, ArisSymbolDescriptor } from '../symbols/types'
 import { arisPrintFrameText, type ArisPrintFrameMessageKey } from './printFrameI18n'
 import { svgAppend, svgElement } from './svg'
+import { measureTextWidth, type ArisTextWeight } from './typography'
 
 export interface PrintFrameRect {
   readonly x: number
@@ -334,6 +335,57 @@ function rtlAttrs(text: string): Readonly<Record<string, string>> {
   return /\p{Script=Arabic}/u.test(text) ? { direction: 'rtl', 'unicode-bidi': 'plaintext' } : {}
 }
 
+/**
+ * The `text-anchor` that pins `text` to a physical edge regardless of its
+ * base direction. SVG resolves `start`/`end` against the writing direction, so
+ * an Arabic (rtl) run flips them: to keep the text's RIGHT edge at the anchor
+ * point (and the run extending left, inside the box) an rtl label must use
+ * `start`, an ltr label `end`. This is the fix for the RACI labels rendering
+ * outside their box.
+ */
+function physicalAnchor(edge: 'left' | 'center' | 'right', text: string): 'start' | 'middle' | 'end' {
+  if (edge === 'center') return 'middle'
+  const rtl = /\p{Script=Arabic}/u.test(text)
+  if (edge === 'right') return rtl ? 'start' : 'end'
+  return rtl ? 'end' : 'start'
+}
+
+/** Clip `text` with an ellipsis so its measured width fits `maxWidth`. */
+function truncateTextToWidth(
+  text: string,
+  maxWidth: number,
+  fontSize: number,
+  weight: ArisTextWeight = 'regular'
+): string {
+  if (maxWidth <= 0) return text
+  if (measureTextWidth(text, fontSize, weight) <= maxWidth) return text
+  const ellipsis = '…'
+  let clipped = text
+  while (clipped.length > 1 && measureTextWidth(clipped + ellipsis, fontSize, weight) > maxWidth) {
+    clipped = clipped.slice(0, -1)
+  }
+  return clipped + ellipsis
+}
+
+/**
+ * Shrink `text` from `maxFont` down to `floorFont` until it fits `maxWidth`,
+ * truncating with an ellipsis only if the floor font still overflows — so a
+ * bilingual RACI label is always drawn fully inside its box.
+ */
+function fitTextToWidth(
+  text: string,
+  maxWidth: number,
+  maxFont: number,
+  floorFont: number
+): { readonly font: number; readonly text: string } {
+  let font = maxFont
+  while (font > floorFont && measureTextWidth(text, font) > maxWidth) {
+    font -= 1
+  }
+  if (measureTextWidth(text, font) <= maxWidth) return { font, text }
+  return { font, text: truncateTextToWidth(text, maxWidth, font) }
+}
+
 function drawText(
   text: string,
   x: number,
@@ -436,22 +488,36 @@ export function drawArisLegend(parent: SVGElement, legend: ArisLegendModel): voi
     })
   )
   const rowHeight = raci.bounds.height / (raci.rows.length + 1)
+  const titleText = ar['aris.printFrame.raci.title']
+  const titleFit = fitTextToWidth(
+    titleText,
+    Math.max(1, raci.bounds.width - rowHeight * 0.5),
+    rowHeight * 0.34,
+    rowHeight * 0.18
+  )
   svgAppend(
     raciGroup,
     drawText(
-      ar['aris.printFrame.raci.title'],
+      titleFit.text,
       raci.bounds.x + raci.bounds.width / 2,
       raci.bounds.y + rowHeight / 2,
-      rowHeight * 0.34,
+      titleFit.font,
       {
         bold: true,
         fill: LEGEND_RACI_STROKE
       }
     )
   )
-  // The printed legend end-anchors each bilingual «Arabic/English» row with
-  // the bold R/A/C/I badge at the right edge — an RTL reading order — rather
-  // than the LTR "letter, then label" layout an English-only key would use.
+  // The printed legend anchors each bilingual «Arabic/English» row with the
+  // bold R/A/C/I badge at the right edge — an RTL reading order. The label's
+  // physical right edge is pinned at `box.right − 1.05·rowHeight` and the run
+  // extends left; because the labels are Arabic (rtl) that means a `start`
+  // anchor, not `end` (which SVG would flip to the left edge and spill the
+  // text through the badge and out of the box). Each label is also shrunk to
+  // fit the interior width so it never crosses the box edge.
+  const labelRightX = raci.bounds.x + raci.bounds.width - rowHeight * 1.05
+  const labelLeftLimit = raci.bounds.x + rowHeight * 0.3
+  const labelMaxWidth = Math.max(1, labelRightX - labelLeftLimit)
   raci.rows.forEach((row, index) => {
     const cy = raci.bounds.y + rowHeight * (index + 1.5)
     svgAppend(
@@ -464,15 +530,13 @@ export function drawArisLegend(parent: SVGElement, legend: ArisLegendModel): voi
         { bold: true }
       )
     )
+    const labelText = `${row.labelAr}/${row.labelEn}`
+    const labelFit = fitTextToWidth(labelText, labelMaxWidth, rowHeight * 0.34, rowHeight * 0.18)
     svgAppend(
       raciGroup,
-      drawText(
-        `${row.labelAr}/${row.labelEn}`,
-        raci.bounds.x + raci.bounds.width - rowHeight * 1.05,
-        cy,
-        rowHeight * 0.34,
-        { anchor: 'end' }
-      )
+      drawText(labelFit.text, labelRightX, cy, labelFit.font, {
+        anchor: physicalAnchor('right', labelFit.text)
+      })
     )
   })
   svgAppend(group, raciGroup)

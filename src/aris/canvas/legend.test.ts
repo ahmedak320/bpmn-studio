@@ -6,6 +6,7 @@ import { ar, en } from '../../i18n/dictionaries'
 import { ARIS_CONVENTION_SYMBOLS, conventionDefaultFill } from '../conventions/catalog'
 import { buildArisLegend, drawArisLegend, drawLegendSymbol, type PrintFrameRect } from './legend'
 import { SVG_NS } from './svg'
+import { measureTextWidth } from './typography'
 
 /**
  * The DMT bottom legend: the lane's 22 catalog presentations in the reference
@@ -149,7 +150,7 @@ describe('drawArisLegend — SVG output', () => {
     }
   })
 
-  it('draws each RACI row bilingual and end-anchored with the letter on the right', () => {
+  it('draws each RACI row bilingual with the label right-pinned inside the box', () => {
     const legend = buildArisLegend(BOUNDS)
     const parent = document.createElementNS(SVG_NS, 'g')
     drawArisLegend(parent, legend)
@@ -164,13 +165,47 @@ describe('drawArisLegend — SVG output', () => {
       expect(labelNode.textContent).toBe(`${row.labelAr}/${row.labelEn}`)
       expect(labelNode.textContent).toContain('/')
       // RTL layout: the bold badge letter sits to the right of its
-      // end-anchored bilingual label, matching the printed legend.
+      // right-pinned bilingual label, matching the printed legend.
       expect(Number(letterNode.getAttribute('x'))).toBeGreaterThan(
         Number(labelNode.getAttribute('x'))
       )
-      expect(labelNode.getAttribute('text-anchor')).toBe('end')
+      // The label is Arabic (rtl); to pin its physical RIGHT edge at the anchor
+      // and let it extend LEFT into the box, SVG needs `start` — NOT `end`
+      // (which flips to the left edge under rtl and spills the text out).
+      expect(labelNode.getAttribute('text-anchor')).toBe('start')
       expect(labelNode.getAttribute('direction')).toBe('rtl')
     })
+  })
+
+  it('keeps every RACI label inside the red box for narrow and wide legends', () => {
+    // Issue 1B: the bilingual label extent must stay within the RACI box for a
+    // tiny box (the 614-unit generated processes) and a huge one alike.
+    for (const bounds of [
+      Object.freeze({ x: 0, y: 0, width: 614, height: 110 }),
+      Object.freeze({ x: 12, y: 40, width: 30657, height: 900 })
+    ] as const) {
+      const legend = buildArisLegend(bounds)
+      const parent = document.createElementNS(SVG_NS, 'g')
+      drawArisLegend(parent, legend)
+      const raci = parent.querySelector('[data-aris-print-frame-raci]')!
+      const box = legend.raci.bounds
+      const labels = [...raci.querySelectorAll('text')].slice(1).filter((_node, i) => i % 2 === 1)
+      expect(labels.length).toBe(legend.raci.rows.length)
+      for (const label of labels) {
+        const anchor = label.getAttribute('text-anchor')
+        const rtl = label.getAttribute('direction') === 'rtl'
+        const x = Number(label.getAttribute('x'))
+        const font = Number(label.getAttribute('font-size'))
+        const width = measureTextWidth(label.textContent ?? '', font)
+        // For an rtl label drawn with `start`, x is the RIGHT edge; the run
+        // extends left. Derive [left,right] from the anchor and assert the
+        // extent lies inside the box.
+        const right = anchor === 'start' && rtl ? x : anchor === 'end' ? x : x + width / 2
+        const left = anchor === 'start' && rtl ? x - width : anchor === 'end' ? x - width : x - width / 2
+        expect(left).toBeGreaterThanOrEqual(box.x - 0.5)
+        expect(right).toBeLessThanOrEqual(box.x + box.width + 0.5)
+      }
+    }
   })
 
   it('draws the bilingual RACI title sized to fit the box', () => {
