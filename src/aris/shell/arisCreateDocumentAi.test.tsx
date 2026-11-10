@@ -23,6 +23,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ArisGenerationPanel } from '../../ArisGenerationPanel'
 import { buildMinimalValidDraft } from '../ai/testFixtures'
+import { VALID_CANONICAL_FULL } from '../canonical/fixtures'
+
+const canonicalReplies = [JSON.stringify(VALID_CANONICAL_FULL)]
 import { resetSessionKeysForTests } from '../../ai/keys'
 import { resetProviderSelectionForTests } from '../../ai/providerSelection'
 import { firstLiteModelForAttachment, getLiteModelCapabilities } from '../../ai/providersLite'
@@ -80,7 +83,11 @@ function renderPanel(
       callProvider={async (request) => {
         harness.requests.push(request)
         if (options.hold) await options.hold()
-        const reply = replies[Math.min(index, replies.length - 1)]!
+        // Description-only runs ask for a canonical process; the rest keep the draft.
+        const pool =
+          options.replies ??
+          (request.system.includes('CanonicalProcessV1') ? canonicalReplies : replies)
+        const reply = pool[Math.min(index, pool.length - 1)]!
         index += 1
         return reply
       }}

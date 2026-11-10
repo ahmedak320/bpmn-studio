@@ -1,0 +1,597 @@
+{
+  "version": 1,
+  "identity": {
+    "id": "survey-process",
+    "names": {
+      "en": "Survey process"
+    },
+    "confidence": "high"
+  },
+  "nodes": [
+    {
+      "id": "start-year-planning",
+      "kind": "event",
+      "names": {
+        "en": "Start of year / survey need arises"
+      },
+      "confidence": "high"
+    },
+    {
+      "id": "determine-request-source",
+      "kind": "decision",
+      "names": {
+        "en": "Determine survey request source"
+      },
+      "description": {
+        "en": "Determine whether the survey originated from the yearly planning email to all sectors or a random request from a sector."
+      },
+      "confidence": "high"
+    },
+    {
+      "id": "add-to-plan",
+      "kind": "activity",
+      "names": {
+        "en": "Add survey to annual plan and prepare"
+      },
+      "confidence": "high"
+    },
+    {
+      "id": "receive-adhoc-request",
+      "kind": "activity",
+      "names": {
+        "en": "Receive ad-hoc survey request from sector"
+      },
+      "confidence": "high"
+    },
+    {
+      "id": "check-duplication",
+      "kind": "decision",
+      "names": {
+        "en": "Check duplication with other surveys"
+      },
+      "description": {
+        "en": "Check whether the survey is duplicated or close to any other survey."
+      },
+      "confidence": "high"
+    },
+    {
+      "id": "reject-survey",
+      "kind": "activity",
+      "names": {
+        "en": "Reject new survey request"
+      },
+      "confidence": "high"
+    },
+    {
+      "id": "reject-end",
+      "kind": "event",
+      "names": {
+        "en": "Survey request rejected"
+      },
+      "confidence": "high"
+    },
+    {
+      "id": "request-questions",
+      "kind": "activity",
+      "names": {
+        "en": "Ask sector to provide survey questions"
+      },
+      "confidence": "high"
+    },
+    {
+      "id": "review-modify-questions",
+      "kind": "activity",
+      "names": {
+        "en": "Review and modify questions with sector"
+      },
+      "confidence": "high"
+    },
+    {
+      "id": "get-final-approval-questions",
+      "kind": "activity",
+      "names": {
+        "en": "Obtain sector final approval on questions"
+      },
+      "confidence": "high"
+    },
+    {
+      "id": "create-survey-hub",
+      "kind": "activity",
+      "names": {
+        "en": "Create survey on Survey Hub"
+      },
+      "confidence": "high"
+    },
+    {
+      "id": "share-link-sector-check",
+      "kind": "activity",
+      "names": {
+        "en": "Share link with sector for final check and approval"
+      },
+      "confidence": "high"
+    },
+    {
+      "id": "determine-audience",
+      "kind": "decision",
+      "names": {
+        "en": "Determine target participants"
+      },
+      "description": {
+        "en": "Decide whether the survey targets specific desired participants or the whole DMT."
+      },
+      "confidence": "high"
+    },
+    {
+      "id": "sector-shares-link",
+      "kind": "activity",
+      "names": {
+        "en": "Sector shares link with specific participants"
+      },
+      "confidence": "high"
+    },
+    {
+      "id": "operations-shares-link",
+      "kind": "activity",
+      "names": {
+        "en": "Operations section distributes survey to whole DMT"
+      },
+      "confidence": "high"
+    },
+    {
+      "id": "monitor-participation",
+      "kind": "activity",
+      "names": {
+        "en": "Monitor participation until enough participants"
+      },
+      "confidence": "medium"
+    },
+    {
+      "id": "close-survey-share-results",
+      "kind": "activity",
+      "names": {
+        "en": "Close survey and share results with sector"
+      },
+      "confidence": "high"
+    },
+    {
+      "id": "assess-results",
+      "kind": "decision",
+      "names": {
+        "en": "Assess results for negative findings"
+      },
+      "description": {
+        "en": "Assess whether the survey results contained anything negative."
+      },
+      "confidence": "high"
+    },
+    {
+      "id": "create-improvement-plan",
+      "kind": "activity",
+      "names": {
+        "en": "Create improvement plan with sector"
+      },
+      "confidence": "high"
+    },
+    {
+      "id": "follow-up-improvement",
+      "kind": "activity",
+      "names": {
+        "en": "Follow up improvement plan through next year"
+      },
+      "confidence": "high"
+    },
+    {
+      "id": "end-improvement",
+      "kind": "event",
+      "names": {
+        "en": "Improvement plan tracked"
+      },
+      "confidence": "high"
+    },
+    {
+      "id": "end-completed",
+      "kind": "event",
+      "names": {
+        "en": "Survey completed and results shared"
+      },
+      "confidence": "high"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "dec-request-source",
+      "nodeId": "determine-request-source",
+      "criteria": {
+        "en": "Origin of the survey request"
+      },
+      "outcomes": [
+        {
+          "id": "outcome-planned-survey",
+          "names": {
+            "en": "Planned via yearly planning email"
+          },
+          "targetNodeId": "add-to-plan"
+        },
+        {
+          "id": "outcome-adhoc-request",
+          "names": {
+            "en": "Random request from a sector"
+          },
+          "targetNodeId": "receive-adhoc-request"
+        }
+      ],
+      "confidence": "high"
+    },
+    {
+      "id": "dec-duplication",
+      "nodeId": "check-duplication",
+      "criteria": {
+        "en": "Is the survey duplicated or close to another existing survey?"
+      },
+      "outcomes": [
+        {
+          "id": "outcome-duplicated",
+          "names": {
+            "en": "Duplicated or close to another survey"
+          },
+          "targetNodeId": "reject-survey"
+        },
+        {
+          "id": "outcome-not-duplicated",
+          "names": {
+            "en": "No duplication found"
+          },
+          "targetNodeId": "request-questions"
+        }
+      ],
+      "confidence": "high"
+    },
+    {
+      "id": "dec-audience",
+      "nodeId": "determine-audience",
+      "criteria": {
+        "en": "Are there specific desired participants, or should the survey go to the whole DMT?"
+      },
+      "outcomes": [
+        {
+          "id": "outcome-specific-participants",
+          "names": {
+            "en": "Specific desired participants"
+          },
+          "targetNodeId": "sector-shares-link"
+        },
+        {
+          "id": "outcome-whole-dmt",
+          "names": {
+            "en": "Whole DMT"
+          },
+          "targetNodeId": "operations-shares-link"
+        }
+      ],
+      "confidence": "high"
+    },
+    {
+      "id": "dec-negative-results",
+      "nodeId": "assess-results",
+      "criteria": {
+        "en": "Do the results contain anything negative?"
+      },
+      "outcomes": [
+        {
+          "id": "outcome-negative-findings",
+          "names": {
+            "en": "Negative findings present"
+          },
+          "targetNodeId": "create-improvement-plan"
+        },
+        {
+          "id": "outcome-no-negative-findings",
+          "names": {
+            "en": "No negative findings"
+          },
+          "targetNodeId": "end-completed"
+        }
+      ],
+      "confidence": "high"
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-start-dec-src",
+      "kind": "sequence",
+      "sourceNodeId": "start-year-planning",
+      "targetNodeId": "determine-request-source",
+      "confidence": "high"
+    },
+    {
+      "id": "e-plan-dup",
+      "kind": "sequence",
+      "sourceNodeId": "add-to-plan",
+      "targetNodeId": "check-duplication",
+      "confidence": "high"
+    },
+    {
+      "id": "e-adhoc-dup",
+      "kind": "sequence",
+      "sourceNodeId": "receive-adhoc-request",
+      "targetNodeId": "check-duplication",
+      "confidence": "high"
+    },
+    {
+      "id": "e-reject-end",
+      "kind": "sequence",
+      "sourceNodeId": "reject-survey",
+      "targetNodeId": "reject-end",
+      "confidence": "high"
+    },
+    {
+      "id": "e-questions-review",
+      "kind": "sequence",
+      "sourceNodeId": "request-questions",
+      "targetNodeId": "review-modify-questions",
+      "confidence": "high"
+    },
+    {
+      "id": "e-review-approval",
+      "kind": "sequence",
+      "sourceNodeId": "review-modify-questions",
+      "targetNodeId": "get-final-approval-questions",
+      "confidence": "high"
+    },
+    {
+      "id": "e-approval-create",
+      "kind": "sequence",
+      "sourceNodeId": "get-final-approval-questions",
+      "targetNodeId": "create-survey-hub",
+      "confidence": "high"
+    },
+    {
+      "id": "e-create-share",
+      "kind": "sequence",
+      "sourceNodeId": "create-survey-hub",
+      "targetNodeId": "share-link-sector-check",
+      "confidence": "high"
+    },
+    {
+      "id": "e-share-dec-aud",
+      "kind": "sequence",
+      "sourceNodeId": "share-link-sector-check",
+      "targetNodeId": "determine-audience",
+      "confidence": "high"
+    },
+    {
+      "id": "e-monitor-close",
+      "kind": "sequence",
+      "sourceNodeId": "monitor-participation",
+      "targetNodeId": "close-survey-share-results",
+      "confidence": "high"
+    },
+    {
+      "id": "e-close-assess",
+      "kind": "sequence",
+      "sourceNodeId": "close-survey-share-results",
+      "targetNodeId": "assess-results",
+      "confidence": "high"
+    },
+    {
+      "id": "e-improve-followup",
+      "kind": "sequence",
+      "sourceNodeId": "create-improvement-plan",
+      "targetNodeId": "follow-up-improvement",
+      "confidence": "high"
+    },
+    {
+      "id": "e-followup-end",
+      "kind": "sequence",
+      "sourceNodeId": "follow-up-improvement",
+      "targetNodeId": "end-improvement",
+      "confidence": "high"
+    },
+    {
+      "id": "e-sector-dist-monitor",
+      "kind": "sequence",
+      "sourceNodeId": "sector-shares-link",
+      "targetNodeId": "monitor-participation",
+      "confidence": "high"
+    },
+    {
+      "id": "e-ops-dist-monitor",
+      "kind": "sequence",
+      "sourceNodeId": "operations-shares-link",
+      "targetNodeId": "monitor-participation",
+      "confidence": "high"
+    }
+  ],
+  "roles": [
+    {
+      "id": "role-operations-section",
+      "names": {
+        "en": "Operations Section"
+      },
+      "kind": "org-unit",
+      "nodeIds": [
+        "add-to-plan",
+        "request-questions",
+        "review-modify-questions",
+        "create-survey-hub",
+        "share-link-sector-check",
+        "operations-shares-link",
+        "monitor-participation",
+        "close-survey-share-results",
+        "create-improvement-plan",
+        "follow-up-improvement"
+      ],
+      "owner": true,
+      "confidence": "high"
+    },
+    {
+      "id": "role-sector",
+      "names": {
+        "en": "Relevant Sector"
+      },
+      "kind": "org-unit",
+      "nodeIds": [
+        "receive-adhoc-request",
+        "request-questions",
+        "review-modify-questions",
+        "get-final-approval-questions",
+        "share-link-sector-check",
+        "sector-shares-link",
+        "create-improvement-plan"
+      ],
+      "confidence": "high"
+    }
+  ],
+  "systems": [
+    {
+      "id": "sys-survey-hub",
+      "names": {
+        "en": "Survey Hub"
+      },
+      "kind": "application",
+      "nodeIds": [
+        "create-survey-hub",
+        "share-link-sector-check",
+        "monitor-participation"
+      ],
+      "confidence": "high"
+    }
+  ],
+  "informationObjects": [
+    {
+      "id": "obj-survey-plan-input-email",
+      "names": {
+        "en": "Annual survey planning email"
+      },
+      "kind": "email",
+      "inputToNodeIds": [
+        "determine-request-source"
+      ],
+      "outputOfNodeIds": [],
+      "confidence": "medium"
+    },
+    {
+      "id": "obj-annual-survey-plan",
+      "names": {
+        "en": "Annual survey plan"
+      },
+      "kind": "document",
+      "inputToNodeIds": [],
+      "outputOfNodeIds": [
+        "add-to-plan"
+      ],
+      "confidence": "medium"
+    },
+    {
+      "id": "obj-sector-questions",
+      "names": {
+        "en": "Survey questions from sector"
+      },
+      "kind": "document",
+      "inputToNodeIds": [
+        "review-modify-questions",
+        "get-final-approval-questions"
+      ],
+      "outputOfNodeIds": [
+        "request-questions"
+      ],
+      "confidence": "high"
+    },
+    {
+      "id": "obj-survey-link",
+      "names": {
+        "en": "Survey Hub link"
+      },
+      "kind": "generic",
+      "inputToNodeIds": [
+        "share-link-sector-check",
+        "sector-shares-link",
+        "operations-shares-link"
+      ],
+      "outputOfNodeIds": [
+        "create-survey-hub"
+      ],
+      "confidence": "high"
+    },
+    {
+      "id": "obj-survey-results",
+      "names": {
+        "en": "Survey results"
+      },
+      "kind": "document",
+      "inputToNodeIds": [
+        "assess-results"
+      ],
+      "outputOfNodeIds": [
+        "close-survey-share-results"
+      ],
+      "confidence": "high"
+    },
+    {
+      "id": "obj-improvement-plan",
+      "names": {
+        "en": "Improvement plan"
+      },
+      "kind": "document",
+      "inputToNodeIds": [
+        "follow-up-improvement"
+      ],
+      "outputOfNodeIds": [
+        "create-improvement-plan"
+      ],
+      "confidence": "high"
+    }
+  ],
+  "controls": [
+    {
+      "id": "ctrl-no-duplicate-surveys",
+      "names": {
+        "en": "New surveys must not duplicate or closely overlap existing surveys"
+      },
+      "kind": "business-rule",
+      "nodeIds": [
+        "check-duplication"
+      ],
+      "confidence": "high"
+    },
+    {
+      "id": "ctrl-min-participants",
+      "names": {
+        "en": "Survey closes only once it has enough participants"
+      },
+      "kind": "requirement",
+      "nodeIds": [
+        "monitor-participation",
+        "close-survey-share-results"
+      ],
+      "confidence": "medium"
+    }
+  ],
+  "facts": [
+    {
+      "id": "fact-survey-hub-platform",
+      "statement": {
+        "en": "Surveys are created on the Survey Hub platform and distributed via a shared link."
+      },
+      "evidenceRefs": [],
+      "confidence": "high"
+    },
+    {
+      "id": "fact-two-entry-paths",
+      "statement": {
+        "en": "The process has two entry paths: the annual planning email to all sectors and random sector requests."
+      },
+      "evidenceRefs": [],
+      "confidence": "high"
+    },
+    {
+      "id": "fact-improvement-followup",
+      "statement": {
+        "en": "Negative survey results trigger an improvement plan followed up throughout the next year."
+      },
+      "evidenceRefs": [],
+      "confidence": "high"
+    }
+  ],
+  "unknowns": []
+}

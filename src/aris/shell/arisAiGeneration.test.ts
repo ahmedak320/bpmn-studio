@@ -217,6 +217,25 @@ describe('§16.6 steps 6-9 — bounded parse, draft, types, EPC semantics', () =
     expect(parseArisAiResponseJson('```json\n{"a":1}\n```')).toEqual({ a: 1 })
   })
 
+  it('tolerates trailing commas before a closing brace or bracket (GLM output)', () => {
+    expect(parseArisAiResponseJson('{"a":[1,2,],"b":{"c":"d",},}')).toEqual({
+      a: [1, 2],
+      b: { c: 'd' }
+    })
+  })
+
+  it('keeps commas that sit inside string values when repairing trailing commas', () => {
+    expect(parseArisAiResponseJson('{"a":"x,}","b":1,}')).toEqual({ a: 'x,}', b: 1 })
+  })
+
+  it('extracts the JSON object when prose surrounds it', () => {
+    expect(parseArisAiResponseJson('Here is the draft:\n{"a":1}\nThanks.')).toEqual({ a: 1 })
+  })
+
+  it('still rejects text that is not JSON after repair', () => {
+    expect(() => parseArisAiResponseJson('{"a":')).toThrow()
+  })
+
   it('refuses a response beyond the character bound instead of parsing it', () => {
     expect(() => parseArisAiResponseJson('x'.repeat(400_001))).toThrow(/character bound/u)
   })

@@ -51,7 +51,7 @@ vi.mock('./workspace/adapters/opfs', async () => {
 
 import ArisApp, { downloadBytes } from './ArisApp'
 import { ArisGenerationPanel } from './ArisGenerationPanel'
-import { buildMinimalValidDraft } from './aris/ai/testFixtures'
+import { VALID_CANONICAL_FULL } from './aris/canonical/fixtures'
 import { buildLegacyBpmnWorkbook, buildValidFixtureWorkbook } from './aris/excel/testFixtures'
 import type { FileSnapshot, WorkspaceAdapter, WorkspaceEntry } from './workspace/adapters/types'
 
@@ -1811,65 +1811,37 @@ describe('ArisGenerationPanel — create with AI (plan section 16)', () => {
     fireEvent.click(document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-create-submit]')!)
   }
 
-  it('turns a valid ArisAiDraftV1 into canonical AML, never asking the model for AML', async () => {
+  it('turns a valid canonical process into convention AML, never asking the model for AML', async () => {
     const created: { name: string; xml: string }[] = []
-    const { calls } = renderPanel(JSON.stringify(buildMinimalValidDraft()), created)
+    const { calls } = renderPanel(JSON.stringify(VALID_CANONICAL_FULL), created)
 
     fillAndSubmit()
 
     await waitFor(() => expect(created.length).toBe(1))
-    // Section 16.5: the prompt forbids AML/XML/ids/coordinates outright, and the
-    // request that actually went out is the one the user could review.
     expect(calls.length).toBe(1)
-    expect(calls[0]!.system).toContain('Use logical ids only.')
-    expect(calls[0]!.system).toContain('strict JSON only')
-    // The only mention of AML is the instruction never to emit it.
-    expect(calls[0]!.system).toContain(
-      'Never emit a real ARIS source id, raw AML, raw XML, coordinates'
-    )
-
-    // The AML is built locally, from the draft's logical ids.
+    // The model writes the process, never AML: the prompt forbids geometry and XML.
+    expect(calls[0]!.system).toContain('CanonicalProcessV1')
+    expect(calls[0]!.system).toContain('Do not emit coordinates, XML, geometry, layout, AML')
+    // The AML and its layout are built locally by the convention pipeline.
     const xml = created[0]!.xml
     expect(xml).toContain('Model.Type="MT_EEPC"')
-    expect(xml).toContain('ObjDef.ID="ObjDef.evt-start"')
-    expect(xml).toContain('ObjOcc.ID="ObjOcc.evt-start"')
-    // Coordinates never came from the model — they are shell-generated.
-    expect(xml).toContain('<Position Pos.X="240"')
+    expect(xml).toContain('FFTextDef.legend.defaults')
   })
 
-  it("surfaces the validator's rejections verbatim and creates nothing", async () => {
+  it('reports an invalid canonical process after its repair turns and creates nothing', async () => {
     const created: { name: string; xml: string }[] = []
-    const draft = buildMinimalValidDraft()
-    const poisoned = {
-      ...draft,
-      objects: draft.objects.map((object, index) =>
-        index === 0
-          ? { ...object, names: { en: '<AML><ObjDef ObjDef.ID="ObjDef.real"/></AML>' } }
-          : object
-      )
-    }
-    const { calls } = renderPanel(JSON.stringify(poisoned), created)
+    const { calls } = renderPanel(JSON.stringify({ version: 1 }), created)
 
     fillAndSubmit()
 
-    const rejections = await waitFor(() => {
-      const node = document.querySelector<HTMLElement>('[data-orbitpm-aris-create-rejections]')
-      if (!node) throw new Error('no rejections rendered')
-      return node
-    })
-    expect(rejections.querySelectorAll('li').length).toBeGreaterThan(0)
-    expect(rejections.textContent).toContain('forbidden')
-    expect(created.length).toBe(0)
-    // Section 16.6 step 10: an invalid draft earns up to three semantic repair
-    // turns (first attempt + three repairs = four requests) before the run is
-    // abandoned. A provider that keeps returning the same forbidden content
-    // exhausts them and still creates nothing.
-    expect(calls.length).toBe(4)
-    expect(
-      screen.getByText(
-        'The provider still returned an invalid draft after 3 repair turns; nothing was created.'
+    await waitFor(() =>
+      expect(document.body.textContent).toContain(
+        'The provider still returned an invalid process after 2 repair turns; nothing was created.'
       )
-    ).not.toBeNull()
+    )
+    expect(created.length).toBe(0)
+    // First attempt plus two repair turns, then the run is abandoned.
+    expect(calls.length).toBe(3)
   })
 })
 

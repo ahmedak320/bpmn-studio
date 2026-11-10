@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ArisGenerationPanel } from '../../ArisGenerationPanel'
 import { buildMinimalValidDraft } from '../ai/testFixtures'
+import { VALID_CANONICAL_FULL } from '../canonical/fixtures'
 import { resetSessionKeysForTests, setKey } from '../../ai/keys'
 import { resetProviderSelectionForTests } from '../../ai/providerSelection'
 import type { GenAttachment } from '../../ai/pdf'
@@ -51,7 +52,10 @@ function renderPanel(
   } = {}
 ): Harness & { rerenderWorkspace: (workspaceId: string | null) => void } {
   const harness: Harness = { created: [], downloads: [], requests: [], encoded: [] }
-  const replies = options.replies ?? [JSON.stringify(buildMinimalValidDraft())]
+  // Description-only runs ask for a canonical process; attachment and document
+  // runs keep the draft. An explicit `replies` list overrides both.
+  const draftReplies = [JSON.stringify(buildMinimalValidDraft())]
+  const canonicalReplies = [JSON.stringify(VALID_CANONICAL_FULL)]
   let index = 0
 
   const props = (workspaceId: string | null | undefined): JSX.Element => (
@@ -81,7 +85,10 @@ function renderPanel(
         harness.requests.push(request)
         options.onSend?.(request)
         if (options.hold) await options.hold()
-        const reply = replies[Math.min(index, replies.length - 1)]!
+        const pool =
+          options.replies ??
+          (request.system.includes('CanonicalProcessV1') ? canonicalReplies : draftReplies)
+        const reply = pool[Math.min(index, pool.length - 1)]!
         index += 1
         return reply
       }}
@@ -374,15 +381,16 @@ describe('authorized product change #1 — the create path has no consent gate',
   })
 })
 
-describe('authorized product change #2 — generation always uses auto-detect', () => {
-  it('sends the auto-detect model type and no workspace context in the prompt', async () => {
+describe('authorized product change #2 — description generation sends no model-type choice', () => {
+  it('sends the fenced description as the canonical prompt, with no workspace context', async () => {
     const harness = renderPanel()
     typeDescription('A permit request is received and reviewed.')
     submit()
     await waitFor(() => expect(harness.created.length).toBe(1))
 
     const request = harness.requests[0]!
-    expect(request.user).toContain('auto-detect the most fitting supported model type')
+    expect(request.system).toContain('CanonicalProcessV1')
+    expect(request.user).toContain('A permit request is received and reviewed.')
     expect(request.user).not.toContain('Workspace context')
   })
 })

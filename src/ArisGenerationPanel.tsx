@@ -48,6 +48,8 @@ import {
   type ArisWorkbookParseResult
 } from './aris/excel'
 import { buildAmlFromArisAiDraft } from './aris/shell/arisAiCreate'
+import { buildCanonicalAiPrompt } from './aris/canonical/aiPrompt'
+import { runCanonicalCreate } from './aris/shell/arisCanonicalCreate'
 import {
   checkArisAiAttachment,
   classifyArisAiAttachmentFile,
@@ -58,6 +60,7 @@ import {
   type ArisAiDocxParser
 } from './aris/shell/arisAiAttachments'
 import {
+  isArisAiTransportFailure,
   runArisAiGeneration,
   type ArisAiGenerationRequest,
   type ArisAiSend
@@ -615,13 +618,15 @@ export function ArisGenerationPanel({
   // --- the §16.6 sequence ---------------------------------------------------
 
   const buildSend = useCallback(
-    (hasAttachment: boolean): ArisAiSend =>
+    (hasAttachment: boolean, canonical = false): ArisAiSend =>
       async (request, signal) => {
         if (callProvider) return callProvider(request, signal)
         // Enum-locked json_schema on structured-output OpenRouter routes (M5):
         // CT_FLOW becomes unrepresentable. Every other route keeps json_object.
         // The effective (P13-locked for PDFs) route is what actually goes out.
+        // A canonical process has its own shape, so the draft schema never applies.
         const responseSchema =
+          !canonical &&
           effectiveProviderId === 'openrouter' &&
           OPENROUTER_STRUCTURED_OUTPUT_MODELS.has(effectiveModelId.trim())
             ? { name: 'aris_ai_draft_v1', schema: buildArisAiDraftJsonSchema() }
@@ -645,7 +650,7 @@ export function ArisGenerationPanel({
           // A larger budget for the whole run when an attachment is in play —
           // repair turns re-emit the full draft, so keying on request.attachment
           // (present on the first turn only) would starve turns 2+ (M6).
-          { maxTokens: hasAttachment ? MAX_ATTACHMENT_TOKENS : MAX_TOKENS }
+          { maxTokens: hasAttachment || canonical ? MAX_ATTACHMENT_TOKENS : MAX_TOKENS }
         )
         return typeof result === 'string' ? result : JSON.stringify(result)
       },
@@ -689,6 +694,117 @@ export function ArisGenerationPanel({
         encoded = await (encodeAttachment
           ? encodeAttachment(attachment.file, recheck, controller.signal)
           : encodeArisAiAttachment(attachment.file, recheck, controller.signal))
+      }
+
+      // §16.7 placement, shared by both create paths: one call, one document.
+      const placeCreatedModel = async (created: {
+        readonly xml: string
+        readonly modelCount: number
+        readonly objectCount: number
+        readonly relationCount: number
+        readonly uncertaintyCount: number
+      }): Promise<void> => {
+        // §16.7: never write into a stale destination, and never lose the AML.
+        const placement = resolveArisAiPlacement({
+          requestedWorkspaceId,
+          currentWorkspaceId: workspaceIdRef.current,
+          aborted: controller.signal.aborted
+        })
+        if (placement.status === 'discarded') {
+          setRecovery(arisAiRecoveryArtifact(name.trim(), created.xml, placement.reason))
+          setStatus(
+            placement.reason === 'cancelled'
+              ? tk(
+                  'aris.create.placement.cancelled',
+                  'The request was cancelled before placement; nothing was written. The generated AML can still be downloaded below.'
+                )
+              : tk(
+                  'aris.create.placement.stale',
+                  'The workspace changed while the model was being generated, so nothing was written to it. Download the generated AML below to keep it.'
+                )
+          )
+          return
+        }
+
+        await onCreateModel({ name: name.trim(), xml: created.xml })
+        setAiCreated(true)
+        setStatus(
+          tk(
+            'aris.ai.created',
+            'Created {models} models, {objects} objects, {relations} relations; {uncertainties} uncertainties reported.',
+            {
+              models: created.modelCount,
+              objects: created.objectCount,
+              relations: created.relationCount,
+              uncertainties: created.uncertaintyCount
+            }
+          )
+        )
+        if (tab === 'description') setDescription('')
+      }
+
+      // Description mode without an attachment: the model writes a canonical process
+      // and the convention pipeline lays it out (owners, inputs/outputs, default-owner
+      // legend, branches side by side). PDF/image attachments and the document tab
+      // keep the draft path below, whose PDF route is locked to its own model.
+      if (tab === 'description' && encoded === undefined) {
+        const canonicalPrompt = buildCanonicalAiPrompt({
+          processName: name.trim() === '' ? t('aris.generated.fallbackName') : name.trim(),
+          description: [trimmedDescription, docx?.text ?? '']
+            .filter((part) => part !== '')
+            .join('\n\n')
+        })
+        const sendTurn = buildSend(false, true)
+        let canonical: Awaited<ReturnType<typeof runCanonicalCreate>>
+        try {
+          canonical = await runCanonicalCreate({
+            system: canonicalPrompt.system,
+            user: canonicalPrompt.user,
+            send: (messages, signal) =>
+              sendTurn(
+                {
+                  attemptNumber: 1,
+                  system: canonicalPrompt.system,
+                  user: canonicalPrompt.user,
+                  messages: [...messages]
+                },
+                signal
+              ),
+            signal: controller.signal
+          })
+        } catch (error) {
+          if (isArisAiTransportFailure(error)) {
+            setStatus(
+              tk(
+                'aris.create.transportFailed',
+                'The provider request failed before any draft came back, so no repair attempt was used: {error}',
+                { error: errorText(error) }
+              )
+            )
+            return
+          }
+          throw error
+        }
+        if (!canonical.ok) {
+          setStatus(
+            tk(
+              'aris.create.canonicalExhausted',
+              'The provider still returned an invalid process after {attempts} repair turns; nothing was created. {detail}',
+              { attempts: canonical.repairTurns, detail: canonical.detail }
+            )
+          )
+          return
+        }
+        if (!canonical.layoutAccepted) {
+          setWarnings([
+            tk(
+              'aris.create.layoutNotAccepted',
+              'The automatic layout did not pass its checks; run Clean Layout on the new model.'
+            )
+          ])
+        }
+        await placeCreatedModel(canonical)
+        return
       }
 
       const result = await runArisAiGeneration({
@@ -739,45 +855,13 @@ export function ArisGenerationPanel({
       const aml = buildAmlFromArisAiDraft(result.draft, {
         ...(name.trim() === '' ? {} : { modelNameFallback: name.trim() })
       })
-
-      // §16.7: never write into a stale destination, and never lose the AML.
-      const placement = resolveArisAiPlacement({
-        requestedWorkspaceId,
-        currentWorkspaceId: workspaceIdRef.current,
-        aborted: controller.signal.aborted
+      await placeCreatedModel({
+        xml: aml.xml,
+        modelCount: aml.modelCount,
+        objectCount: aml.objectCount,
+        relationCount: aml.relationCount,
+        uncertaintyCount: aml.uncertaintyCount
       })
-      if (placement.status === 'discarded') {
-        setRecovery(arisAiRecoveryArtifact(name.trim(), aml.xml, placement.reason))
-        setStatus(
-          placement.reason === 'cancelled'
-            ? tk(
-                'aris.create.placement.cancelled',
-                'The request was cancelled before placement; nothing was written. The generated AML can still be downloaded below.'
-              )
-            : tk(
-                'aris.create.placement.stale',
-                'The workspace changed while the model was being generated, so nothing was written to it. Download the generated AML below to keep it.'
-              )
-        )
-        return
-      }
-
-      // One call, one document: a multi-model draft is never placed in pieces.
-      await onCreateModel({ name: name.trim(), xml: aml.xml })
-      setAiCreated(true)
-      setStatus(
-        tk(
-          'aris.ai.created',
-          'Created {models} models, {objects} objects, {relations} relations; {uncertainties} uncertainties reported.',
-          {
-            models: aml.modelCount,
-            objects: aml.objectCount,
-            relations: aml.relationCount,
-            uncertainties: aml.uncertaintyCount
-          }
-        )
-      )
-      if (tab === 'description') setDescription('')
     } catch (error) {
       setStatus(tk('aris.ai.failed', 'The request failed: {error}', { error: errorText(error) }))
     } finally {
@@ -788,6 +872,7 @@ export function ArisGenerationPanel({
     attachment,
     busy,
     buildSend,
+    docx,
     documentFile,
     effectiveModelId,
     effectiveProviderId,

@@ -64,6 +64,8 @@ export interface LiteModelCapabilities {
 // by fit for multilingual / Arabic BPMN extraction. The free-text field below
 // covers anything not listed (OpenRouter renames/retires ids frequently).
 const OPENROUTER_MODELS: ModelSpec[] = [
+  // First entry = the OpenRouter default (defaultLiteModelId returns models[0]).
+  { id: 'z-ai/glm-5.3-flash', label: 'GLM-5.3 Flash (Z.ai) — fast' },
   { id: 'z-ai/glm-5.2', label: 'GLM-5.2 (Z.ai) — strong Arabic' },
   { id: 'moonshotai/kimi-k3', label: 'Kimi K3 (Moonshot)' },
   { id: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },

@@ -149,7 +149,53 @@ export function parseArisAiResponseJson(text: string): unknown {
   const trimmed = text.trim()
   const fenced = /```(?:json)?\s*([\s\S]*?)```/u.exec(trimmed)
   const candidate = fenced?.[1]?.trim() ?? trimmed
-  return JSON.parse(candidate) as unknown
+  try {
+    return JSON.parse(candidate) as unknown
+  } catch (strictError) {
+    // Repair only the two defects seen in practice: a trailing comma before a
+    // closing brace/bracket, and prose wrapped around the object. Anything else
+    // still fails with the original strict-parse error. The validator after
+    // this step stays strict, so repair can never admit an invalid draft.
+    const span = firstJsonObjectSpan(candidate) ?? candidate
+    try {
+      return JSON.parse(stripTrailingCommas(span)) as unknown
+    } catch {
+      throw strictError
+    }
+  }
+}
+
+function firstJsonObjectSpan(text: string): string | null {
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  return start !== -1 && end > start ? text.slice(start, end + 1) : null
+}
+
+/** Drop commas that directly precede `}` or `]`, leaving string contents intact. */
+function stripTrailingCommas(source: string): string {
+  let out = ''
+  let inString = false
+  let escaped = false
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source.charAt(i)
+    if (inString) {
+      out += ch
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+    } else if (ch === ',') {
+      let j = i + 1
+      while (j < source.length && /\s/u.test(source.charAt(j))) j += 1
+      const next = source.charAt(j)
+      if (next === '}' || next === ']') continue
+    }
+    out += ch
+  }
+  return out
 }
 
 function boundedEcho(text: string): string {

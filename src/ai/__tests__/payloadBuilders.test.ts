@@ -196,6 +196,26 @@ describe('OpenRouter payload', () => {
     expect(req.body.usage).toEqual({ include: true })
   })
 
+  it('gives GLM-5.x a low reasoning effort and an output budget that reasoning cannot eat', () => {
+    const req = buildOpenRouterRequest(
+      cfg({ providerId: 'openrouter', model: 'z-ai/glm-5.3-flash' }),
+      TEXT_MSGS,
+      { maxTokens: 8000, jsonMode: true }
+    )
+    expect(req.body.reasoning).toEqual({ effort: 'low', exclude: true })
+    expect(req.body.max_tokens).toBeGreaterThanOrEqual(32_000)
+  })
+
+  it('does not add reasoning controls or inflate the budget for non-GLM routes', () => {
+    const req = buildOpenRouterRequest(
+      cfg({ providerId: 'openrouter', model: 'google/gemini-3.6-flash' }),
+      TEXT_MSGS,
+      { maxTokens: 8000, jsonMode: true }
+    )
+    expect(req.body.reasoning).toBeUndefined()
+    expect(req.body.max_tokens).toBe(8000)
+  })
+
   it('emits an enum-locked json_schema response_format when a responseSchema is given (M5)', () => {
     const req = buildOpenRouterRequest(
       cfg({ providerId: 'openrouter', model: 'google/gemini-3.5-flash-lite' }),

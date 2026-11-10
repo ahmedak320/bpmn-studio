@@ -1482,6 +1482,8 @@ const PRICES: Record<string, ModelPrice> = {
   // glm-5.2, gemini-3.5-flash-lite and qwen3-vl route prices live-verified
   // against GET https://openrouter.ai/api/v1/models on 2026-07-31.
   'z-ai/glm-5.2': { in: 1.12, out: 3.52 },
+  // Live-verified on the same catalog pass (2026-11-11): $0.0399 in / $0.0784 out per 1M.
+  'z-ai/glm-5.3-flash': { in: 0.0399, out: 0.0784 },
   'moonshotai/kimi-k3': { in: 3, out: 15 },
   'deepseek/deepseek-v4-pro': { in: 0.435, out: 0.87 },
   'deepseek/deepseek-v4-flash': { in: 0.14, out: 0.28 },

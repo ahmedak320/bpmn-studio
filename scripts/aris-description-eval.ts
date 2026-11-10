@@ -410,7 +410,9 @@ async function main(): Promise<void> {
     send = async () => mockResponseText
     costNote = 'mock transport — no network call, $0.00'
   } else {
-    const apiKey = loadEnvFile(OPENROUTER_ENV_PATH).OPENROUTER_API_KEY
+    // The key file is the documented source; the environment variable is a
+    // fallback so a run never has to write a secret into the reference tree.
+    const apiKey = loadEnvFile(OPENROUTER_ENV_PATH).OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEY
     if (!apiKey) {
       fail(
         `OPENROUTER_API_KEY not found in ${OPENROUTER_ENV_PATH} (required for a live run; pass --mock <draftFile> for an offline proof)`

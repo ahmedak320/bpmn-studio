@@ -71,8 +71,8 @@ describe('Lite model capability registry', () => {
   })
 
   describe('Wave 8 — curated vision routes', () => {
-    it('keeps z-ai/glm-5.2 as the OpenRouter text default after appending vision routes', () => {
-      expect(defaultLiteModelId('openrouter')).toBe('z-ai/glm-5.2')
+    it('keeps z-ai/glm-5.3-flash as the OpenRouter text default after appending vision routes', () => {
+      expect(defaultLiteModelId('openrouter')).toBe('z-ai/glm-5.3-flash')
     })
 
     it('grants gemini-3.5-flash-lite native PDF + images (google/ prefix rule)', () => {

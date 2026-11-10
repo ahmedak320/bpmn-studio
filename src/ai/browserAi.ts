@@ -586,6 +586,14 @@ export function buildGeminiRequest(
   }
 }
 
+/** Output floor for GLM-5.x routes; every GLM-5 route allows at least 131k. */
+const GLM_MIN_OUTPUT_TOKENS = 32_000
+
+/** GLM-5.x slugs on OpenRouter (glm-5.2, glm-5.3-flash, ...) reason by default. */
+function isGlmReasoningRoute(model: string): boolean {
+  return /^z-ai\/glm-5/u.test(model)
+}
+
 export function buildOpenRouterRequest(
   cfg: ProviderConfig,
   messages: LlmMessage[],
@@ -621,6 +629,15 @@ export function buildOpenRouterRequest(
     }
   } else if (opts.jsonMode) {
     body.response_format = { type: 'json_object' }
+  }
+  if (isGlmReasoningRoute(cfg.model)) {
+    // GLM-5.x reasons by default, and that reasoning is billed against
+    // max_tokens. At the 8k text cap the reasoning consumed the budget and the
+    // JSON came back cut off, so the draft could not be parsed. Low effort keeps
+    // latency down, `exclude` keeps reasoning out of the content, and the floor
+    // leaves room for a full EPC draft after reasoning.
+    body.reasoning = { effort: 'low', exclude: true }
+    body.max_tokens = Math.max(opts.maxTokens, GLM_MIN_OUTPUT_TOKENS)
   }
   if (opts.attachment?.kind === 'pdf') {
     // Attach the file-parser plugin — for PDF `file` parts ONLY. Images are

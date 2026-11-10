@@ -210,9 +210,12 @@ describe('Wave 7 Seq-2 — create-from-PDF pipeline (mocked transport)', () => {
     expect(request.headers.authorization).toBe('Bearer seq2-mocked-key')
     expect(request.body.model).toBe(SEQ2_OPENROUTER_MODEL_ID)
     // glm-5.2 is not a structured-output route → plain json_object (M5); the
-    // attachment budget is 16k (M6); usage accounting is always requested (M5).
+    // attachment budget is 16k (M6), raised to the 32k GLM-5.x floor because
+    // GLM reasoning is billed against max_tokens; usage accounting is always
+    // requested (M5). The GLM route also sends low reasoning effort.
     expect(request.body.response_format).toEqual({ type: 'json_object' })
-    expect(request.body.max_tokens).toBe(SEQ2_MAX_TOKENS)
+    expect(request.body.max_tokens).toBe(32_000)
+    expect(request.body.reasoning).toEqual({ effort: 'low', exclude: true })
     expect(request.body.usage).toEqual({ include: true })
     // The PDF rides as a provider-native file part with the file-parser plugin.
     expect(request.body.plugins).toEqual([{ id: 'file-parser' }])
