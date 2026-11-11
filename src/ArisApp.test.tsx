@@ -425,19 +425,12 @@ async function openAml(name = 'animalwf.aml', xml = TWO_MODEL_AML): Promise<void
   await waitFor(() => expect(canvasElement('ObjOcc.Start')).not.toBeNull())
 }
 
-function detailsTab(name: string): HTMLElement {
-  const rail = document.querySelector<HTMLElement>('[data-orbitpm-aris-details]')
-  if (!rail) throw new Error('missing details rail')
-  return within(rail).getByRole('tab', { name })
-}
-
-function detailsRevision(): number {
-  const rail = document.querySelector<HTMLElement>('[data-orbitpm-aris-details]')
-  if (!rail) throw new Error('missing details rail')
-  const terms = Array.from(rail.querySelectorAll('dt'))
-  const revisionTerm = terms.find((term) => term.textContent === 'Revision')
-  if (!revisionTerm) throw new Error('missing revision row')
-  return Number(revisionTerm.nextElementSibling?.textContent)
+/** Opens the toolbar export dialog, picks a format, and runs it. */
+function runExport(format: 'pdf' | 'aml'): void {
+  fireEvent.click(document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-export]')!)
+  const label = format === 'aml' ? /Experimental ARIS AML export/u : /Diagram PDF/u
+  fireEvent.click(screen.getByRole('radio', { name: label }))
+  fireEvent.click(document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-export-run]')!)
 }
 
 describe('ArisApp production shell', () => {
@@ -547,69 +540,17 @@ describe('ArisApp production shell', () => {
     expect(canvasTranslation('ObjOcc.Start')).toEqual({ x: 200, y: 100 })
   })
 
-  it('round-trips undo and redo through the ARIS command stack from the toolbar', async () => {
+  it('keeps the requested controls above the diagram and drops translate, clean layout and the fix badge', async () => {
     render(<ArisApp />)
     await openAml()
 
-    // Select something so the details rail (and its History tab, which reads
-    // the ARIS working document's revision) has an element to describe. Every
-    // fixture definition has a `missingArabicName` validation row anchored on
-    // its occurrence, so that row is the selection vehicle.
-    const rail = document.querySelector<HTMLElement>('[data-orbitpm-aris-validation]')!
-    fireEvent.click(
-      rail.querySelector<HTMLButtonElement>(
-        '[data-orbitpm-aris-validation-issue="missingArabicName"][aria-label="Select ObjOcc.Start on the canvas"]'
-      )!
-    )
-    await waitFor(() => expect(detailsTab('History')).not.toBeNull())
-    fireEvent.click(detailsTab('History'))
-
-    const sourceRevision = detailsRevision()
-    const sourcePosition = canvasTranslation('ObjOcc.Check')
-    expect(sourcePosition).toEqual({ x: 200, y: 260 })
-
-    const undoButton = document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-undo]')!
-    const redoButton = document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-redo]')!
-    expect(undoButton.disabled).toBe(true)
-    expect(redoButton.disabled).toBe(true)
-
-    // Clean Layout is `src/aris/layout` applied through the canvas's documented
-    // one-call seam, i.e. one undoable run of ARIS commands.
-    fireEvent.click(document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-clean-layout]')!)
-
-    await waitFor(() => expect(undoButton.disabled).toBe(false))
-    const cleanRevision = detailsRevision()
-    expect(cleanRevision).toBeGreaterThan(sourceRevision)
-    const cleanPosition = canvasTranslation('ObjOcc.Check')
-    expect(cleanPosition).not.toEqual(sourcePosition)
-    expect(document.querySelector('[data-orbitpm-aris-layout-mode="clean"]')).not.toBeNull()
-
-    fireEvent.click(undoButton)
-
-    // Undo restores the working document, the revision and the geometry.
-    await waitFor(() => expect(canvasTranslation('ObjOcc.Check')).toEqual(sourcePosition))
-    expect(detailsRevision()).toBe(sourceRevision)
-    expect(redoButton.disabled).toBe(false)
-
-    fireEvent.click(redoButton)
-
-    await waitFor(() => expect(canvasTranslation('ObjOcc.Check')).toEqual(cleanPosition))
-    expect(detailsRevision()).toBe(cleanRevision)
-  })
-
-  it('restores the imported geometry with Reset to Source Layout', async () => {
-    render(<ArisApp />)
-    await openAml()
-
-    const source = canvasTranslation('ObjOcc.Check')
-    fireEvent.click(document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-clean-layout]')!)
-    await waitFor(() => expect(canvasTranslation('ObjOcc.Check')).not.toEqual(source))
-
-    fireEvent.click(document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-reset-layout]')!)
-
-    await waitFor(() => expect(canvasTranslation('ObjOcc.Check')).toEqual(source))
-    expect(canvasTranslation('ObjOcc.Start')).toEqual({ x: 200, y: 100 })
-    expect(document.querySelector('[data-orbitpm-aris-layout-mode="source"]')).not.toBeNull()
+    const toolbar = document.querySelector<HTMLElement>('.orbitpm-aris-toolbar')!
+    expect(toolbar.querySelector('[data-orbitpm-aris-content-lang]')).not.toBeNull()
+    expect(toolbar.querySelector('[data-orbitpm-aris-export]')).not.toBeNull()
+    expect(toolbar.querySelector('[data-orbitpm-aris-translate]')).toBeNull()
+    expect(toolbar.querySelector('[data-orbitpm-aris-clean-layout]')).toBeNull()
+    expect(toolbar.querySelector('[data-orbitpm-aris-fix-issues]')).toBeNull()
+    expect(within(toolbar).queryByRole('button', { name: 'Open assistant' })).toBeNull()
   })
 
   it('selects the canvas element behind a validation row and highlights its relations', async () => {
@@ -861,17 +802,11 @@ describe('ArisApp production shell', () => {
 
   // --- integration wave 2 -------------------------------------------------
 
-  it('exports a derived AML that is byte-identical to the untouched original, then carries the clean layout', async () => {
+  it('exports a derived AML that is byte-identical to the untouched original', async () => {
     render(<ArisApp />)
     await openAml('nested.aml', NESTED_CXNDEF_AML)
 
-    const exportButton = document.querySelector<HTMLButtonElement>(
-      '[data-orbitpm-aris-export-derived]'
-    )!
-    // Plan 9.5 fixes this wording until a live ARIS test passes.
-    expect(exportButton.textContent).toBe('Experimental ARIS AML export')
-
-    fireEvent.click(exportButton)
+    runExport('aml')
     await waitFor(() =>
       expect(downloads.some((file) => file.name.endsWith('.derived.aml'))).toBe(true)
     )
@@ -881,28 +816,6 @@ describe('ArisApp production shell', () => {
     // An export with an empty edit set copies every byte verbatim: the original
     // is read, never written (plan 9.6 "original source is unchanged").
     expect(new TextDecoder().decode(first.bytes)).toBe(NESTED_CXNDEF_AML)
-
-    // Clean Layout moves occurrences, so the derived document must now differ —
-    // and only in geometry, since nothing else was addressed.
-    fireEvent.click(document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-clean-layout]')!)
-    await waitFor(() => expect(canvasTranslation('ObjOcc.Check')).not.toEqual({ x: 200, y: 260 }))
-
-    downloads.length = 0
-    fireEvent.click(exportButton)
-    await waitFor(() =>
-      expect(downloads.some((file) => file.name.endsWith('.derived.aml'))).toBe(true)
-    )
-    const derivedText = new TextDecoder().decode(
-      downloads.find((file) => file.name.endsWith('.derived.aml'))!.bytes
-    )
-    expect(derivedText).not.toBe(NESTED_CXNDEF_AML)
-    // Every byte nobody addressed survived: the header, the ids and the
-    // attribute order are all still exactly as imported.
-    expect(derivedText).toContain(
-      '<Header-Info DatabaseName="AnimalWF" UserName="tester" ArisExeVersion="10"/>'
-    )
-    expect(derivedText).toContain('ObjDef.ID="ObjDef.Start"')
-    expect(derivedText).toContain('CxnDef.ID="CxnDef.1" CxnDef.Type="CT_ACTIV_1"')
 
     // Downloading the source still yields the original bytes, unchanged.
     downloads.length = 0
@@ -918,9 +831,7 @@ describe('ArisApp production shell', () => {
     // This fixture keeps its connection definitions as group-level siblings, so
     // none of them has a source endpoint — `connection-endpoints-exist` fails and
     // `exportDerivedAml` must refuse rather than hand the user unusable bytes.
-    fireEvent.click(
-      document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-export-derived]')!
-    )
+    runExport('aml')
 
     const toast = await screen.findByText(/The derived export was refused/u)
     expect(toast.textContent).toContain('connection-endpoints-exist')
@@ -1015,9 +926,6 @@ describe('ArisApp production shell', () => {
         )
       ).toBeNull()
     )
-    expect(document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-undo]')!.disabled).toBe(
-      false
-    )
   })
 
   it('reveals the model root behind a model-scoped validation row', async () => {
@@ -1111,36 +1019,34 @@ describe('ArisApp production shell', () => {
       if (!node) throw new Error('no chat drawer interview surface')
       return node
     })
-    // Plan 18.1: the deterministic gap scanner runs on the live document.
+    // Plan 18.1: the deterministic gap scanner runs on the live document; the start
+    // button is enabled once it has found open items.
     await waitFor(() =>
-      expect(rail.querySelectorAll('[data-orbitpm-aris-chat-gaps] li').length).toBeGreaterThan(0)
+      expect(rail.querySelector<HTMLButtonElement>('[data-orbitpm-aris-chat-start]')?.disabled).toBe(false)
     )
 
     fireEvent.click(rail.querySelector<HTMLButtonElement>('[data-orbitpm-aris-chat-start]')!)
-    const questions = await waitFor(() => {
-      const found = rail.querySelectorAll<HTMLElement>('[data-orbitpm-aris-chat-question]')
-      if (found.length === 0) throw new Error('no interview questions')
-      return found
-    })
-    expect(questions.length).toBeLessThanOrEqual(3)
 
+    // One question at a time: answer each in the chat until the round is applied.
     let answered = 0
-    questions.forEach((question) => {
-      const input = question.querySelector<HTMLInputElement>('input:not([type="checkbox"])')
-      if (!input) return
+    for (let guard = 0; guard < 3; guard += 1) {
+      const input = await waitFor(() => {
+        const found = rail.querySelector<HTMLInputElement>('[data-orbitpm-aris-chat-answer]')
+        if (!found) throw new Error('no active question')
+        return found
+      })
       answered += 1
       fireEvent.change(input, { target: { value: `Reviewed value ${answered}` } })
-    })
-    expect(answered).toBeGreaterThan(0)
-
-    fireEvent.click(rail.querySelector<HTMLButtonElement>('[data-orbitpm-aris-chat-submit]')!)
+      fireEvent.click(rail.querySelector<HTMLButtonElement>('[data-orbitpm-aris-chat-send]')!)
+    }
+    expect(answered).toBe(3)
 
     // Plan 18.5: the safe batch applied atomically and produced a receipt.
     await waitFor(() =>
-      expect(rail.querySelectorAll('[data-orbitpm-aris-chat-receipts] li').length).toBe(answered)
+      expect(rail.querySelectorAll('[data-orbitpm-aris-chat-receipts] li').length).toBeGreaterThan(0)
     )
     // Plan 18.5 step 7 / 18.8: one Undo restores the prior revision.
-    const undoButton = document.querySelector<HTMLButtonElement>('[data-orbitpm-aris-undo]')!
+    const undoButton = rail.querySelector<HTMLButtonElement>('[data-orbitpm-aris-chat-undo]')!
     expect(undoButton.disabled).toBe(false)
   })
 

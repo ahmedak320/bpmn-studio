@@ -138,9 +138,58 @@ export type ArisChatInterviewEvent =
   | { readonly type: 'finish' }
   | { readonly type: 'cancel' }
 
-function deriveQuestions(gaps: readonly ArisChatGap[]): readonly ArisChatQuestion[] {
+/**
+ * Question order, lower first: structural and semantic errors that break the process,
+ * then content that is missing from a step, then simple naming and translation gaps.
+ */
+export const GAP_PRIORITY: Readonly<Record<ArisChatGap['kind'], number>> = Object.freeze({
+  danglingObjectOrConnection: 0,
+  invalidSequence: 0,
+  missingStartOrEndEvent: 0,
+  missingXorOutcomes: 0,
+  missingReturnTarget: 0,
+  missingDecisionBasis: 0,
+  missingOwner: 1,
+  missingInputsOutputsSystems: 1,
+  missingProcessCode: 1,
+  missingLinkedModel: 1,
+  missingAttachment: 1,
+  unusedDefinition: 1,
+  unaccountedSourceContent: 1,
+  missingEnglishName: 2,
+  missingArabicName: 2
+})
+
+/**
+ * Gaps on the focused targets (a step the user clicked) come first; the rest are ordered by
+ * {@link GAP_PRIORITY}, keeping the scanner's own order within a priority.
+ */
+export function prioritizeGaps(
+  gaps: readonly ArisChatGap[],
+  focusTargetIds: readonly string[] = []
+): readonly ArisChatGap[] {
+  const focus = new Set(focusTargetIds)
+  return gaps
+    .map((gap, index) => ({
+      gap,
+      index,
+      focused: gap.targetIds.some((id) => focus.has(id)) ? 0 : 1
+    }))
+    .sort(
+      (a, b) =>
+        a.focused - b.focused ||
+        GAP_PRIORITY[a.gap.kind] - GAP_PRIORITY[b.gap.kind] ||
+        a.index - b.index
+    )
+    .map((entry) => entry.gap)
+}
+
+function deriveQuestions(
+  gaps: readonly ArisChatGap[],
+  focusTargetIds: readonly string[] = []
+): readonly ArisChatQuestion[] {
   return Object.freeze(
-    gaps.slice(0, MAX_QUESTIONS_PER_ROUND).map((gap) =>
+    prioritizeGaps(gaps, focusTargetIds).slice(0, MAX_QUESTIONS_PER_ROUND).map((gap) =>
       Object.freeze({
         id: `${gap.kind}:${gap.targetIds.join(',')}`,
         messageKey: gap.messageKey,
@@ -158,7 +207,8 @@ function beginRound<TDocument>(
   answers: Readonly<Record<string, string>>,
   suggestions: readonly ArisChatCommand[],
   receipts: readonly ArisChatApplyReceipt[],
-  gaps: readonly ArisChatGap[]
+  gaps: readonly ArisChatGap[],
+  focusTargetIds: readonly string[] = []
 ): ArisChatInterviewState<TDocument> {
   return {
     status: 'awaitingAnswers',
@@ -168,14 +218,15 @@ function beginRound<TDocument>(
     suggestions,
     receipts,
     gaps,
-    questions: deriveQuestions(gaps)
+    questions: deriveQuestions(gaps, focusTargetIds)
   }
 }
 
 /** Plan 18.2 steps 1-3: read the document, scan gaps, ask the first round's questions. */
 export function startArisChatInterview<TDocument>(
   document: TDocument,
-  host: ArisChatInterviewHost<TDocument>
+  host: ArisChatInterviewHost<TDocument>,
+  focusTargetIds: readonly string[] = []
 ): ArisChatInterviewState<TDocument> {
   const gaps = host.scanGaps(document)
   if (gaps.length === 0) {
@@ -189,7 +240,7 @@ export function startArisChatInterview<TDocument>(
       gaps: []
     }
   }
-  return beginRound(document, 1, {}, [], [], gaps)
+  return beginRound(document, 1, {}, [], [], gaps, focusTargetIds)
 }
 
 function completeRound<TDocument>(

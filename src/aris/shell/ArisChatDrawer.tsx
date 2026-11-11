@@ -39,12 +39,13 @@ import {
   type ProviderSelection
 } from '../../ai/providerSelection'
 import { getLiteProvider } from '../../ai/providersLite'
+import { makeFreeTranslateTexts } from '../../ai/freeTranslate'
 import { TechnicalErrorDetail } from '../../ai/TechnicalErrorDetail'
 import type { ArisAnswerChip } from '../assistant/answer'
 import { formatAnswer, type ArisFormattedAnswerLine } from '../assistant/formatAnswer'
 import { routeQuestion } from '../assistant/questionRouter'
 import type { ArisProcessDigest } from '../assistant/types'
-import { TERMINAL_INTERVIEW_STATUSES } from '../chat/interviewLoop'
+import { TERMINAL_INTERVIEW_STATUSES, type ArisChatQuestion } from '../chat/interviewLoop'
 import { ArisAssistantAiSection } from './ArisAssistantAiSection'
 import type { ArisAssistantAiTurn } from './arisAssistantAi'
 import {
@@ -59,6 +60,14 @@ import {
 } from './arisChatDrawerSession'
 import type { ArisChatDrawerTarget, ArisChatInterviewRequest } from './arisChatDrawerTypes'
 import { ARIS_CHAT_REMOVE_ANSWER } from './arisChatProposal'
+import {
+  countInterviewBands,
+  isTranslationQuestion,
+  questionAsk,
+  questionStepLabel,
+  stepNameFor,
+  translationSource
+} from './arisInterviewChatView'
 import { scanArisGaps } from './arisChatHost'
 import { tk } from './shellI18n'
 
@@ -88,6 +97,12 @@ interface Message {
   lines?: readonly ArisFormattedAnswerLine[]
   aiQuestion?: string
 }
+
+/** A machine translation offered for a missing-name question, to confirm or edit. */
+type InterviewSuggestion =
+  | { readonly status: 'loading' }
+  | { readonly status: 'ready'; readonly text: string }
+  | { readonly status: 'failed' }
 
 /** The one provider/model explicitly selected, only when its key is present. */
 interface ChosenProvider {
@@ -142,6 +157,14 @@ export function ArisChatDrawer({
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [selected, setSelected] = useState<Record<string, boolean>>({})
   const [gapVersion, setGapVersion] = useState(0)
+  // The chat asks one question at a time; the round is submitted after the last one.
+  const [activeIndex, setActiveIndex] = useState(0)
+  const [draft, setDraft] = useState('')
+  const [formOpen, setFormOpen] = useState(false)
+  const [focusIds, setFocusIds] = useState<readonly string[]>([])
+  const [suggestions, setSuggestions] = useState<Record<string, InterviewSuggestion>>({})
+  const suggestionsRef = useRef(suggestions)
+  suggestionsRef.current = suggestions
 
   const libraryListRef = useRef<HTMLDivElement | null>(null)
   const ivListRef = useRef<HTMLDivElement | null>(null)
@@ -283,11 +306,15 @@ export function ArisChatDrawer({
     )
   })
 
-  const startInterview = (): void => {
+  const startInterview = (focusTargetIds: readonly string[] = []): void => {
     const target = getActiveChatTarget()
     setChatTarget(target)
     setAnswers({})
     setSelected({})
+    setActiveIndex(0)
+    setDraft('')
+    setFormOpen(false)
+    setFocusIds(focusTargetIds)
     setGapVersion((current) => current + 1)
     const document = target?.host.getDocument() ?? null
     if (!target || !document) {
@@ -298,19 +325,46 @@ export function ArisChatDrawer({
     }
     const host = createDrawerInterviewHost()
     interviewHostRef.current = host
-    const { interview: begun, events } = beginDrawerInterview(host, document)
+    const { interview: begun, events } = beginDrawerInterview(host, document, focusTargetIds)
     setInterview(begun)
     setIvMessages(eventsToMessages(events))
   }
 
-  const applyAnswers = (): void => {
+  /** Submits one round of answers (blank = skipped) and reports what happened. */
+  const submitRound = (roundAnswers: Readonly<Record<string, string>>): void => {
     const host = interviewHostRef.current
     if (!host || !interview || !chatTarget) return
-    const result = submitDrawerAnswers(host, interview, chatTarget.host, answers)
+    const result = submitDrawerAnswers(host, interview, chatTarget.host, roundAnswers)
     setInterview(result.interview)
     setIvMessages((prev) => [...prev, ...eventsToMessages(result.events)])
+    setAnswers({})
     setSelected({})
+    setActiveIndex(0)
+    setDraft('')
+    setFormOpen(false)
     setGapVersion((current) => current + 1)
+  }
+
+  /**
+   * Records the answer to the question being asked in the chat. The round is
+   * submitted once its last question is answered, so each round still applies as
+   * one undoable step.
+   */
+  const answerActiveQuestion = (
+    question: ArisChatQuestion,
+    value: string,
+    shown: string,
+    questionCount: number
+  ): void => {
+    const nextAnswers = { ...answers, [question.id]: value }
+    setAnswers(nextAnswers)
+    setIvMessages((prev) => [...prev, { role: 'user', kind: 'chat', text: shown }])
+    setDraft('')
+    if (activeIndex + 1 < questionCount) {
+      setActiveIndex(activeIndex + 1)
+      return
+    }
+    submitRound(nextAnswers)
   }
 
   const confirmSelected = (): void => {
@@ -335,17 +389,53 @@ export function ArisChatDrawer({
     setGapVersion((current) => current + 1)
   }
 
-  // App fired an interview request: open, switch to the interview tab, and start
-  // a fresh session for the active target.
+  // App fired an interview request (a warning click or "complete this process"):
+  // open, switch to the interview tab, and start a fresh session for the active target.
   useEffect(() => {
     if (!interviewRequest) return
     if (lastRequestTokenRef.current === interviewRequest.token) return
     lastRequestTokenRef.current = interviewRequest.token
     onOpen()
     setTab('interview')
-    startInterview()
+    startInterview(interviewRequest.focusTargetIds ?? [])
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [interviewRequest])
+
+  // Translate the active missing-name question once, so the chat can offer the
+  // translation to confirm instead of asking the user to type it.
+  useEffect(() => {
+    const liveState = interview?.state ?? null
+    if (!liveState || liveState.status !== 'awaitingAnswers') return
+    const question = liveState.questions[activeIndex]
+    if (!question || !isTranslationQuestion(question) || !chatTarget) return
+    const known = suggestionsRef.current[question.id]
+    if (known?.status === 'ready' || known?.status === 'failed') return
+    const source = translationSource(chatTarget.host.getDocument(), question)
+    if (!source) return
+    const controller = new AbortController()
+    setSuggestions((prev) => ({ ...prev, [question.id]: { status: 'loading' } }))
+    void makeFreeTranslateTexts({ signal: controller.signal })(
+      [source.text],
+      source.from,
+      source.to,
+      controller.signal
+    )
+      .then(([text]) => {
+        if (controller.signal.aborted) return
+        const translated = text?.trim() ?? ''
+        setSuggestions((prev) => ({
+          ...prev,
+          [question.id]:
+            translated === '' ? { status: 'failed' } : { status: 'ready', text: translated }
+        }))
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return
+        setSuggestions((prev) => ({ ...prev, [question.id]: { status: 'failed' } }))
+      })
+    return () => controller.abort()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [interview?.state?.status, activeIndex, chatTarget])
 
   // --- shared chrome ---------------------------------------------------------
 
@@ -553,6 +643,171 @@ export function ArisChatDrawer({
   const terminal = interviewState !== null && TERMINAL_INTERVIEW_STATUSES.has(interviewState.status)
   const appliedCount = interview?.appliedCount ?? 0
   const canUndo = (chatTarget?.host.getCanUndo() ?? false) && appliedCount > 0
+  const questions = interviewState?.status === 'awaitingAnswers' ? interviewState.questions : []
+  const activeQuestion = questions[activeIndex] ?? null
+  const activeDocument = chatTarget ? chatTarget.host.getDocument() : null
+  const bandCounts = countInterviewBands(gaps)
+  const focusLabel = stepNameFor(activeDocument, focusIds[0])
+
+  const renderQuestionCard = (question: ArisChatQuestion, index: number, count: number): JSX.Element => {
+    const stepLabel = questionStepLabel(activeDocument, question)
+    const suggestion = suggestions[question.id]
+    const isActive = question.id === activeQuestion?.id
+    return (
+      <div key={`${question.id}:${index}`} style={{ display: 'grid', gap: 6 }} data-orbitpm-aris-chat-question={question.gapKind}>
+        <div style={BUBBLE_ASSISTANT}>
+          {stepLabel && <strong style={{ fontSize: 12.5 }}>{tk('aris.chat.step', 'Step: {name}', { name: stepLabel })}</strong>}
+          <div style={{ fontSize: 12.5 }}>{t(question.messageKey as Key, question.messageParams)}</div>
+          <div style={{ fontSize: 12.5 }}>{questionAsk(question)}</div>
+          <div style={{ fontSize: 11, color: 'var(--orbitpm-muted)' }}>
+            {tk('aris.chat.progress', 'Question {index} of {count}', { index: index + 1, count })}
+          </div>
+        </div>
+        {isActive && isTranslationQuestion(question) && suggestion && (
+          <div style={{ ...BUBBLE_STATUS, display: 'grid', gap: 6 }} data-orbitpm-aris-chat-suggestion={suggestion.status}>
+            {suggestion.status === 'loading' && <span>{tk('aris.chat.translating', 'Translating…')}</span>}
+            {suggestion.status === 'failed' && (
+              <span>{tk('aris.chat.translateFailed', 'No automatic translation. Type it below.')}</span>
+            )}
+            {suggestion.status === 'ready' && (
+              <>
+                <span>
+                  {tk('aris.chat.suggested', 'Suggested translation: {text}', { text: suggestion.text })}
+                </span>
+                <span style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    type="button"
+                    className="orbitpm-lite-primary"
+                    data-orbitpm-aris-chat-accept=""
+                    onClick={() => answerActiveQuestion(question, suggestion.text, suggestion.text, count)}
+                  >
+                    {tk('aris.chat.accept', 'Accept')}
+                  </button>
+                  <button
+                    type="button"
+                    className="orbitpm-lite-chrome-btn"
+                    onClick={() => setDraft(suggestion.text)}
+                  >
+                    {tk('aris.chat.edit', 'Edit')}
+                  </button>
+                </span>
+              </>
+            )}
+          </div>
+        )}
+        {isActive && question.gapKind === 'unusedDefinition' && (
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button
+              type="button"
+              className="orbitpm-lite-primary"
+              onClick={() => answerActiveQuestion(question, ARIS_CHAT_REMOVE_ANSWER, tk('aris.chat.proposeRemoval', 'Propose removing it'), count)}
+            >
+              {tk('aris.chat.proposeRemoval', 'Propose removing it')}
+            </button>
+            <button
+              type="button"
+              className="orbitpm-lite-chrome-btn"
+              onClick={() => answerActiveQuestion(question, '', tk('aris.chat.skip', 'Skip'), count)}
+            >
+              {tk('aris.chat.skip', 'Skip')}
+            </button>
+          </div>
+        )}
+        {isActive && question.gapKind !== 'unusedDefinition' && (
+          <form
+            style={{ display: 'flex', gap: 6 }}
+            onSubmit={(event) => {
+              event.preventDefault()
+              const value = draft.trim()
+              answerActiveQuestion(question, value, value === '' ? tk('aris.chat.skip', 'Skip') : value, count)
+            }}
+          >
+            <input
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              aria-label={questionAsk(question)}
+              data-orbitpm-aris-chat-answer=""
+              style={{
+                flex: 1,
+                font: 'inherit',
+                padding: '0.3rem 0.45rem',
+                borderRadius: 6,
+                border: '1px solid var(--orbitpm-border)',
+                background: 'transparent',
+                color: 'inherit'
+              }}
+            />
+            <button type="submit" className="orbitpm-lite-primary" data-orbitpm-aris-chat-send="">
+              {tk('aris.chat.send', 'Send')}
+            </button>
+            <button
+              type="button"
+              className="orbitpm-lite-chrome-btn"
+              onClick={() => answerActiveQuestion(question, '', tk('aris.chat.skip', 'Skip'), count)}
+            >
+              {tk('aris.chat.skip', 'Skip')}
+            </button>
+          </form>
+        )}
+      </div>
+    )
+  }
+
+  const renderFormBlock = (question: ArisChatQuestion, index: number): JSX.Element => {
+    const stepLabel = questionStepLabel(activeDocument, question)
+    const suggestion = suggestions[question.id]
+    const value = answers[question.id] ?? ''
+    const inputId = `aris-chat-form-${index}`
+    return (
+      <>
+        {stepLabel && <strong style={{ fontSize: 12.5 }}>{tk('aris.chat.step', 'Step: {name}', { name: stepLabel })}</strong>}
+        <span style={{ fontSize: 12.5 }}>{t(question.messageKey as Key, question.messageParams)}</span>
+        <label htmlFor={inputId} style={{ fontSize: 12.5 }}>{questionAsk(question)}</label>
+        {question.gapKind === 'unusedDefinition' ? (
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12.5 }}>
+            <input
+              id={inputId}
+              type="checkbox"
+              checked={value === ARIS_CHAT_REMOVE_ANSWER}
+              onChange={(event) =>
+                setAnswers((current) => ({
+                  ...current,
+                  [question.id]: event.target.checked ? ARIS_CHAT_REMOVE_ANSWER : ''
+                }))
+              }
+            />
+            <span>{tk('aris.chat.proposeRemoval', 'Propose removing it')}</span>
+          </label>
+        ) : (
+          <input
+            id={inputId}
+            value={value}
+            onChange={(event) =>
+              setAnswers((current) => ({ ...current, [question.id]: event.target.value }))
+            }
+            style={{
+              font: 'inherit',
+              padding: '0.3rem 0.45rem',
+              borderRadius: 6,
+              border: '1px solid var(--orbitpm-border)',
+              background: 'transparent',
+              color: 'inherit'
+            }}
+          />
+        )}
+        {isTranslationQuestion(question) && suggestion?.status === 'ready' && (
+          <button
+            type="button"
+            className="orbitpm-lite-chrome-btn"
+            style={{ justifySelf: 'start' }}
+            onClick={() => setAnswers((current) => ({ ...current, [question.id]: suggestion.text }))}
+          >
+            {tk('aris.chat.useSuggestion', 'Use suggested translation: {text}', { text: suggestion.text })}
+          </button>
+        )}
+      </>
+    )
+  }
 
   const interviewContent = (
     <>
@@ -588,34 +843,26 @@ export function ArisChatDrawer({
           </p>
         ) : (
           <>
-            <p
-              style={{ margin: 0, fontSize: 12.5, color: 'var(--orbitpm-muted)', lineHeight: 1.5 }}
-            >
-              {tk(
-                'aris.chatDrawer.interview.intro',
-                'I scanned {name} and found {count} gap(s). Answer up to 3 questions per round; safe changes apply as one undoable step.',
-                { name: chatTarget.title, count: gaps.length }
+            <p style={{ margin: 0, fontSize: 12.5, color: 'var(--orbitpm-muted)', lineHeight: 1.5 }}>
+              {gaps.length === 0
+                ? tk('aris.chatDrawer.interview.clean', 'No gaps found — this model looks complete.')
+                : tk(
+                    'aris.chatDrawer.interview.summary',
+                    'Open items for {name}: {critical} critical, {content} to complete, {simple} simple. I ask the critical ones first.',
+                    {
+                      name: chatTarget.title,
+                      critical: bandCounts.critical,
+                      content: bandCounts.content,
+                      simple: bandCounts.simple
+                    }
+                  )}
+              {focusLabel && (
+                <>
+                  {' '}
+                  {tk('aris.chat.focus', 'Starting with {name}.', { name: focusLabel })}
+                </>
               )}
             </p>
-
-            {gaps.length > 0 && (
-              <ul
-                data-orbitpm-aris-chat-gaps=""
-                style={{
-                  margin: 0,
-                  paddingInlineStart: '1.1rem',
-                  fontSize: 12,
-                  maxHeight: 160,
-                  overflow: 'auto'
-                }}
-              >
-                {gaps.slice(0, 25).map((gap, index) => (
-                  <li key={`${gap.kind}:${gap.targetIds.join(',')}:${index}`}>
-                    {t(gap.messageKey as Key, gap.messageParams)}
-                  </li>
-                ))}
-              </ul>
-            )}
 
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               <button
@@ -623,10 +870,20 @@ export function ArisChatDrawer({
                 className="orbitpm-lite-chrome-btn"
                 data-orbitpm-aris-chat-start=""
                 disabled={gaps.length === 0}
-                onClick={startInterview}
+                onClick={() => startInterview()}
               >
                 {tk('aris.chat.start', 'Start completion interview')}
               </button>
+              {interviewState?.status === 'awaitingAnswers' && (
+                <button
+                  type="button"
+                  className="orbitpm-lite-chrome-btn"
+                  data-orbitpm-aris-chat-form=""
+                  onClick={() => setFormOpen(true)}
+                >
+                  {tk('aris.chat.openForm', 'Open full form')}
+                </button>
+              )}
               <button
                 type="button"
                 className="orbitpm-lite-chrome-btn"
@@ -638,58 +895,11 @@ export function ArisChatDrawer({
               </button>
             </div>
 
-            {interviewState?.status === 'awaitingAnswers' && (
-              <div style={{ display: 'grid', gap: 8 }}>
-                {interviewState.questions.map((question) => (
-                  <label
-                    key={question.id}
-                    style={{ display: 'grid', gap: 4, fontSize: 12.5 }}
-                    data-orbitpm-aris-chat-question={question.gapKind}
-                  >
-                    <span>{t(question.messageKey as Key, question.messageParams)}</span>
-                    {question.gapKind === 'unusedDefinition' ? (
-                      <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                        <input
-                          type="checkbox"
-                          checked={answers[question.id] === ARIS_CHAT_REMOVE_ANSWER}
-                          onChange={(event) =>
-                            setAnswers((current) => ({
-                              ...current,
-                              [question.id]: event.target.checked ? ARIS_CHAT_REMOVE_ANSWER : ''
-                            }))
-                          }
-                        />
-                        <span>{tk('aris.chat.proposeRemoval', 'Propose removing it')}</span>
-                      </span>
-                    ) : (
-                      <input
-                        value={answers[question.id] ?? ''}
-                        onChange={(event) =>
-                          setAnswers((current) => ({
-                            ...current,
-                            [question.id]: event.target.value
-                          }))
-                        }
-                        style={{
-                          font: 'inherit',
-                          padding: '0.25rem 0.4rem',
-                          borderRadius: 6,
-                          border: '1px solid var(--orbitpm-border)',
-                          background: 'transparent',
-                          color: 'inherit'
-                        }}
-                      />
-                    )}
-                  </label>
-                ))}
-                <button
-                  type="button"
-                  className="orbitpm-lite-primary"
-                  data-orbitpm-aris-chat-submit=""
-                  onClick={applyAnswers}
-                >
-                  {tk('aris.chat.apply', 'Apply answers')}
-                </button>
+            {questions.length > 0 && (
+              <div style={{ display: 'grid', gap: 8 }} data-orbitpm-aris-chat-active="">
+                {questions.slice(0, activeIndex + 1).map((question, index) =>
+                  renderQuestionCard(question, index, questions.length)
+                )}
               </div>
             )}
 
@@ -775,6 +985,46 @@ export function ArisChatDrawer({
           </>
         )}
       </div>
+
+      {formOpen && questions.length > 0 && (
+        <AccessibleDialog
+          ariaLabel={tk('aris.chat.form.title', 'Complete this process — all questions')}
+          onClose={() => setFormOpen(false)}
+          closeOnEscape
+          backdropStyle={BACKDROP_STYLE}
+          dialogStyle={FULL_FORM_STYLE}
+          dir={direction}
+        >
+          <header style={HEADER_STYLE}>
+            <strong style={{ fontSize: 15 }}>
+              {tk('aris.chat.form.title', 'Complete this process — all questions')}
+            </strong>
+            <button type="button" className="orbitpm-lite-chrome-btn" onClick={() => setFormOpen(false)}>
+              {t('assist.close')}
+            </button>
+          </header>
+          <div style={{ ...LIST_STYLE, display: 'grid', gap: 14, padding: 16 }}>
+            {questions.map((question, index) => (
+              <div key={question.id} style={{ display: 'grid', gap: 6 }} data-orbitpm-aris-chat-form-question={question.gapKind}>
+                {renderFormBlock(question, index)}
+              </div>
+            ))}
+          </div>
+          <footer style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', padding: 12 }}>
+            <button type="button" className="orbitpm-lite-chrome-btn" onClick={() => setFormOpen(false)}>
+              {tk('aris.chat.cancel', 'Cancel')}
+            </button>
+            <button
+              type="button"
+              className="orbitpm-lite-primary"
+              data-orbitpm-aris-chat-form-apply=""
+              onClick={() => submitRound(answers)}
+            >
+              {tk('aris.chat.apply', 'Apply answers')}
+            </button>
+          </footer>
+        </AccessibleDialog>
+      )}
 
       <div style={FOOTER_STYLE}>{footer}</div>
     </>
@@ -1023,6 +1273,15 @@ const BUBBLE_ASSISTANT: CSSProperties = {
 }
 
 /** Muted, italic bubble for status notes (applied/clean/no-target). */
+const FULL_FORM_STYLE: CSSProperties = Object.freeze({
+  ...PANEL_STYLE,
+  width: '100vw',
+  height: '100vh',
+  maxWidth: '100vw',
+  maxHeight: '100vh',
+  borderRadius: 0
+}) as CSSProperties
+
 const BUBBLE_STATUS: CSSProperties = {
   ...BUBBLE_ASSISTANT,
   background: 'transparent',

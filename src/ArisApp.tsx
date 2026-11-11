@@ -354,11 +354,19 @@ export default function ArisApp(): JSX.Element {
     const tab = tabsRef.current.find((candidate) => candidate.key === key)
     return host && tab ? { tabKey: key, title: tab.title, host } : null
   }, [])
-  const handleContinueInChat = useCallback(() => {
+  const handleContinueInChat = useCallback((focusTargetIds?: unknown) => {
     const tabKey = activeKeyRef.current
     if (!tabKey) return
+    // Click handlers pass an event here, so only a real id list narrows the focus.
+    const focus = Array.isArray(focusTargetIds)
+      ? focusTargetIds.filter((id): id is string => typeof id === 'string')
+      : []
     interviewTokenRef.current += 1
-    setInterviewRequest({ token: interviewTokenRef.current, tabKey })
+    setInterviewRequest({
+      token: interviewTokenRef.current,
+      tabKey,
+      ...(focus.length > 0 ? { focusTargetIds: focus } : {})
+    })
     setAssistantOpen(true)
   }, [])
 

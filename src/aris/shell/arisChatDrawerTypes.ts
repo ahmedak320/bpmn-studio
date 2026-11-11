@@ -36,4 +36,6 @@ export interface ArisChatDrawerTarget {
 export interface ArisChatInterviewRequest {
   readonly token: number
   readonly tabKey: string
+  /** Definition or model ids of the step the user clicked; their gaps are asked first. */
+  readonly focusTargetIds?: readonly string[]
 }

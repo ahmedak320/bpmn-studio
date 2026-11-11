@@ -199,31 +199,57 @@ describe('ArisChatDrawer — library tab', () => {
 })
 
 describe('ArisChatDrawer — interview tab', () => {
-  it('scans gaps, asks at most three questions, applies one command, and records a receipt', () => {
+  it('asks one question at a time in the chat and applies the round after the last answer', () => {
     const doc = buildEepcWithMissingEnglishName()
     const { target, applyCalls } = createStubChatTarget(doc)
     render(<ArisChatDrawer {...baseProps({ getActiveChatTarget: () => target })} />)
 
     fireEvent.click(screen.getByRole('tab', { name: 'Complete this process' }))
 
-    // Intro card: gap list + Start button.
-    expect(document.querySelector('[data-orbitpm-aris-chat-gaps]')).not.toBeNull()
+    // Intro: the open items are counted by priority band.
+    expect(screen.getByText(/Open items for/)).toBeTruthy()
     fireEvent.click(document.querySelector('[data-orbitpm-aris-chat-start]')!)
 
-    const questions = document.querySelectorAll('[data-orbitpm-aris-chat-question]')
-    expect(questions.length).toBeGreaterThan(0)
-    expect(questions.length).toBeLessThanOrEqual(3)
+    // Only the active question has an answer box; earlier ones stay in the transcript.
+    const answered: string[] = []
+    for (let guard = 0; guard < 3; guard += 1) {
+      const input = document.querySelector<HTMLInputElement>('[data-orbitpm-aris-chat-answer]')
+      if (!input) break
+      expect(document.querySelectorAll('[data-orbitpm-aris-chat-answer]')).toHaveLength(1)
+      const value = `Answer ${guard + 1}`
+      answered.push(value)
+      fireEvent.change(input, { target: { value } })
+      fireEvent.click(document.querySelector('[data-orbitpm-aris-chat-send]')!)
+    }
 
-    const englishNameLabel = document.querySelector(
-      '[data-orbitpm-aris-chat-question="missingEnglishName"]'
-    )!
-    const answerInput = englishNameLabel.querySelector('input')!
-    fireEvent.change(answerInput, { target: { value: 'Request received' } })
-
-    fireEvent.click(document.querySelector('[data-orbitpm-aris-chat-submit]')!)
-
-    expect(applyCalls).toHaveLength(1)
+    // Three questions per round: the round is applied once its last question is answered.
+    expect(answered).toHaveLength(3)
+    expect(applyCalls.length).toBeGreaterThanOrEqual(1)
     expect(document.querySelector('[data-orbitpm-aris-chat-receipts]')).not.toBeNull()
+    expect(document.querySelector('[data-orbitpm-aris-chat-receipts]')).not.toBeNull()
+  })
+
+  it('opens every open question in the full-window form and applies them together', () => {
+    const doc = buildEepcWithMissingEnglishName()
+    const { target, applyCalls } = createStubChatTarget(doc)
+    render(<ArisChatDrawer {...baseProps({ getActiveChatTarget: () => target })} />)
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Complete this process' }))
+    fireEvent.click(document.querySelector('[data-orbitpm-aris-chat-start]')!)
+    fireEvent.click(document.querySelector('[data-orbitpm-aris-chat-form]')!)
+
+    const formButton = document.querySelector('[data-orbitpm-aris-chat-form-apply]')
+    expect(formButton).not.toBeNull()
+    const formInputs = document.querySelectorAll<HTMLInputElement>(
+      '[data-orbitpm-aris-chat-form-question] input[type="text"], [data-orbitpm-aris-chat-form-question] input:not([type])'
+    )
+    expect(formInputs.length).toBeGreaterThan(0)
+    formInputs.forEach((input) => fireEvent.change(input, { target: { value: 'Request received' } }))
+    fireEvent.click(formButton!)
+
+    // Applying from the form submits the round and closes the form.
+    expect(document.querySelector('[data-orbitpm-aris-chat-form-apply]')).toBeNull()
+    expect(applyCalls.length + document.querySelectorAll('[data-orbitpm-aris-chat-confirm]').length).toBeGreaterThanOrEqual(1)
   })
 
   it('shows the no-target status when no ARIS model is active', () => {

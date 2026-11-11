@@ -248,7 +248,10 @@ function ArisTranslateControllerInner(
   const [acceptedValues, setAcceptedValues] = useState<readonly TranslationOutputProposal[]>([])
 
   const abortRef = useRef<AbortController | null>(null)
-  const autoRanRef = useRef(false)
+  // The automatic run is keyed by the set of models in the document, so every
+  // process that appears (generated or imported later in the same tab) is translated
+  // once, while edits to labels do not re-trigger it.
+  const autoRanKeysRef = useRef(new Set<string>())
   const autoControllerRef = useRef<AbortController | null>(null)
 
   // The imperative seam always calls the latest closure, so the handle can be
@@ -530,14 +533,15 @@ function ArisTranslateControllerInner(
   // --- automatic translation for every opened model ----------------------------
   useEffect(() => {
     if (!autoTranslateEligible) return
-    if (autoRanRef.current) return
+    const runKey = [...liveDocument.models.keys()].sort().join('|')
+    if (autoRanKeysRef.current.has(runKey)) return
     if (getPref('arisAutoTranslate') === 'off') {
       onAutoTranslateState?.('off')
       return
     }
     const canvas = getCanvas()
     if (!canvas) return
-    autoRanRef.current = true
+    autoRanKeysRef.current.add(runKey)
 
     const controller = new AbortController()
     autoControllerRef.current = controller
@@ -660,7 +664,8 @@ function ArisTranslateControllerInner(
     resources,
     onToast,
     onAcceptedPair,
-    onAutoTranslateState
+    onAutoTranslateState,
+    liveDocument
   ])
 
   if (!open || !session) return null

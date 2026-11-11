@@ -39,9 +39,10 @@ export function createDrawerInterviewHost(): ArisChatInterviewHost<ArisWorkingDo
 
 export function beginDrawerInterview(
   host: ArisChatInterviewHost<ArisWorkingDocument>,
-  document: ArisWorkingDocument
+  document: ArisWorkingDocument,
+  focusTargetIds: readonly string[] = []
 ): { interview: ArisChatDrawerInterview; events: readonly ArisChatDrawerEvent[] } {
-  const state = startArisChatInterview(document, host)
+  const state = startArisChatInterview(document, host, focusTargetIds)
   const interview: ArisChatDrawerInterview = {
     state,
     appliedCount: 0,

@@ -12,8 +12,8 @@
  * active model, and unmount removes every overlay.
  */
 
-import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { act, cleanup, render, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ArisStudioTab } from './ArisStudioTab'
 import { buildArisStudioDocument, type ArisStudioDocument } from './arisStudioDocument'
@@ -141,7 +141,11 @@ interface Mounted {
   readonly unmount: () => void
 }
 
-function mountStudio(studio: ArisStudioDocument, modelId: string): Mounted {
+function mountStudio(
+  studio: ArisStudioDocument,
+  modelId: string,
+  onOpenInterview: (focusTargetIds?: readonly string[]) => void = noop
+): Mounted {
   const view = (id: string): JSX.Element => (
     <ArisStudioTab
       title="Two-model source"
@@ -160,6 +164,7 @@ function mountStudio(studio: ArisStudioDocument, modelId: string): Mounted {
       onOpenAssistant={noop}
       onOpenSettings={noop}
       onContinueInChat={noop}
+      onOpenInterview={onOpenInterview}
       onImportPackage={noop}
       onToast={noop}
     />
@@ -200,10 +205,11 @@ describe('per-element canvas warning markers', () => {
     expect(container.querySelector('[data-orbitpm-aris-warning="ObjOcc.Start"]')).not.toBeNull()
   })
 
-  it('clicking a marker reveals the element and opens the details field to fix', async () => {
+  it('clicking a marker opens the completion chat focused on that step', async () => {
     installCanvasGeometry()
     const studio = await buildStudio()
-    const { container } = mountStudio(studio, 'Model.Intake')
+    const openInterview = vi.fn()
+    const { container } = mountStudio(studio, 'Model.Intake', openInterview)
 
     let marker: HTMLButtonElement | null = null
     await waitFor(() => {
@@ -217,58 +223,33 @@ describe('per-element canvas warning markers', () => {
       ;(marker as unknown as HTMLButtonElement).click()
     })
 
-    await waitFor(() => {
-      const namesTab = container.querySelector('[data-orbitpm-aris-details-tab="names"]')
-      expect(namesTab?.getAttribute('aria-selected')).toBe('true')
-      const panel = container.querySelector('[data-orbitpm-aris-highlight-field="name:ar"]')
-      expect(panel).not.toBeNull()
-      const input = container.querySelector('[data-orbitpm-aris-name-input="definition:ar"]')
-      expect(input?.classList.contains('orbitpm-aris-field-flash')).toBe(true)
-    })
+    expect(openInterview).toHaveBeenCalledTimes(1)
+    const focus = openInterview.mock.calls[0]?.[0] as readonly string[]
+    expect(focus).toContain('ObjOcc.Check')
   })
 
-  it('re-syncs markers when a finding is fixed through the rail', async () => {
+  it('keeps the markers in place and reopens the chat on each click', async () => {
     installCanvasGeometry()
     const studio = await buildStudio()
-    const { container } = mountStudio(studio, 'Model.Intake')
+    const openInterview = vi.fn()
+    const { container } = mountStudio(studio, 'Model.Intake', openInterview)
 
-    let before = 0
     let marker: HTMLButtonElement | null = null
     await waitFor(() => {
       marker = container.querySelector<HTMLButtonElement>(
         '[data-orbitpm-aris-warning="ObjOcc.Check"]'
       )
       expect(marker).not.toBeNull()
-      before = Number(marker?.getAttribute('data-orbitpm-aris-warning-count'))
-      expect(before).toBeGreaterThanOrEqual(2)
+      expect(Number(marker?.getAttribute('data-orbitpm-aris-warning-count'))).toBeGreaterThanOrEqual(2)
     })
 
-    // Marker click opens the names tab focused on the Arabic name input.
     act(() => {
       ;(marker as unknown as HTMLButtonElement).click()
     })
-    let input: HTMLInputElement | null = null
-    await waitFor(() => {
-      input = container.querySelector<HTMLInputElement>(
-        '[data-orbitpm-aris-name-input="definition:ar"]'
-      )
-      expect(input).not.toBeNull()
+    act(() => {
+      ;(marker as unknown as HTMLButtonElement).click()
     })
-
-    // Recording an Arabic name clears the missingArabicName finding; the live
-    // document re-scan drives an ARIS_DOCUMENT_CHANGED → overlay resync.
-    const arInput = input as unknown as HTMLInputElement
-    fireEvent.change(arInput, { target: { value: 'فحص الطلب' } })
-    fireEvent.blur(arInput)
-
-    await waitFor(() => {
-      const updated = container.querySelector<HTMLElement>(
-        '[data-orbitpm-aris-warning="ObjOcc.Check"]'
-      )
-      expect(updated).not.toBeNull()
-      const after = Number(updated?.getAttribute('data-orbitpm-aris-warning-count'))
-      expect(after).toBe(before - 1)
-    })
+    expect(openInterview).toHaveBeenCalledTimes(2)
   })
 
   it('scopes markers to the active model and re-scopes on a model switch', async () => {

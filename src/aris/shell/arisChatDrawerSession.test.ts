@@ -247,7 +247,7 @@ describe('submitDrawerAnswers', () => {
     const document = buildRealEepcFixture({ missingEnglishDefinitionId: 'ObjDef.START' })
     const host = createDrawerInterviewHost()
     const target = createStubChatHost(document)
-    const { interview: started } = beginDrawerInterview(host, document)
+    const { interview: started } = beginDrawerInterview(host, document, ['ObjDef.START'])
 
     expect(started.state?.status).toBe('awaitingAnswers')
     if (started.state?.status !== 'awaitingAnswers') return
@@ -274,7 +274,7 @@ describe('submitDrawerAnswers', () => {
     const document = buildRealEepcFixture({ missingEnglishDefinitionId: 'ObjDef.START' })
     const host = createDrawerInterviewHost()
     const target = createStubChatHost(document)
-    const { interview: started } = beginDrawerInterview(host, document)
+    const { interview: started } = beginDrawerInterview(host, document, ['ObjDef.START'])
 
     expect(started.state?.status).toBe('awaitingAnswers')
     if (started.state?.status !== 'awaitingAnswers') return
@@ -297,7 +297,7 @@ describe('submitDrawerAnswers', () => {
     const document = buildRealEepcFixture({ missingEnglishDefinitionId: 'ObjDef.START' })
     const host = createDrawerInterviewHost()
     const target = createStubChatHost(document, { rejectNext: true })
-    const { interview: started } = beginDrawerInterview(host, document)
+    const { interview: started } = beginDrawerInterview(host, document, ['ObjDef.START'])
 
     expect(started.state?.status).toBe('awaitingAnswers')
     if (started.state?.status !== 'awaitingAnswers') return
@@ -338,7 +338,7 @@ describe('confirm-classified commands', () => {
       getCanUndo: () => false
     }
 
-    const { interview: started } = beginDrawerInterview(host, document)
+    const { interview: started } = beginDrawerInterview(host, document, ['ObjDef.START'])
     expect(started.state?.status).toBe('awaitingAnswers')
     if (started.state?.status !== 'awaitingAnswers') return
     const question = started.state.questions.find(
@@ -384,7 +384,7 @@ describe('confirm-classified commands', () => {
     const document = buildRealDocumentWithUnusedDefinition()
     const host = createDrawerInterviewHost()
     const target = createStubChatHost(document)
-    const { interview: started } = beginDrawerInterview(host, document)
+    const { interview: started } = beginDrawerInterview(host, document, ['ObjDef.START'])
     expect(started.state?.status).toBe('awaitingAnswers')
     if (started.state?.status !== 'awaitingAnswers') return
     const question = started.state.questions.find(
@@ -411,7 +411,7 @@ describe('terminal statuses', () => {
     const document = asWorkingDocument(buildCleanEepcDocument())
     const host = createDrawerInterviewHost()
     const target = createStubChatHost(document)
-    const { interview: started } = beginDrawerInterview(host, document)
+    const { interview: started } = beginDrawerInterview(host, document, ['ObjDef.START'])
 
     expect(started.state?.status).toBe('clean')
     // A clean state is terminal; submitting answers should be a no-op.

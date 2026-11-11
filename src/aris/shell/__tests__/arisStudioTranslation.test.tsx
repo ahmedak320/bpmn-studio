@@ -105,10 +105,8 @@ describe('ArisStudioTab translation composition', () => {
       expect(container.querySelector('[data-orbitpm-aris-auto-translate="done"]')).not.toBeNull()
     )
     expect(controllerCalls.at(-1)?.autoTranslateEligible).toBe(true)
-    expect(
-      container
-        .querySelector('[data-orbitpm-aris-translate-missing]')
-        ?.getAttribute('data-orbitpm-aris-translate-missing')
-    ).toBe(String(expectedMissing))
+    // The toolbar carries no translate button or badge: the run is automatic and its
+    // result is kept with the process.
+    expect(container.querySelector('[data-orbitpm-aris-translate]')).toBeNull()
   })
 })
