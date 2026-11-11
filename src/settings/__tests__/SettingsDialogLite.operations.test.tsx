@@ -7,6 +7,7 @@ import { getKey, resetSessionKeysForTests, setKey } from '../../ai/keys'
 import { resetProviderSelectionForTests } from '../../ai/providerSelection'
 import { setLang, t } from '../../i18n'
 import { SettingsDialogLite } from '../SettingsDialogLite'
+import { installFakeIndexedDb } from '../../ai/__tests__/fakeIndexedDb'
 
 vi.mock('../LocalizationResourcesEditor', () => ({
   LocalizationResourcesEditor: () => null
@@ -170,6 +171,8 @@ describe('SettingsDialogLite async operation ordering', () => {
     resetProviderSelectionForTests()
     setLang('en')
     storage = installMemoryStorage()
+    // Saves now also remember the key on this browser, which needs IndexedDB.
+    installFakeIndexedDb()
   })
 
   afterEach(() => {
@@ -437,7 +440,8 @@ describe('SettingsDialogLite async operation ordering', () => {
     expect(requests[1]?.signal.aborted).toBe(true)
     expect(screen.getByText(t('ai.credits.refreshHint'))).toBeTruthy()
     expect(screen.queryByText(t('ai.credits.remaining', { amount: '7.00' }))).toBeNull()
-    expect(onKeysChanged).toHaveBeenCalledTimes(1)
+    // The save finishes after the device-key step, which is async.
+    await vi.waitFor(() => expect(onKeysChanged).toHaveBeenCalledTimes(1))
 
     await act(async () => {
       requests[1]!.response.resolve(creditsResponse(100, 0))

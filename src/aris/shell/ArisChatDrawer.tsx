@@ -29,7 +29,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent
 } from 'react'
 
-import { getLang, t, type Key } from '../../i18n'
+import { getLang, t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
 import { AccessibleDialog } from '../../common/AccessibleDialog'
 import { hasKey } from '../../ai/keys'
@@ -64,7 +64,8 @@ import {
   countInterviewBands,
   isTranslationQuestion,
   questionAsk,
-  questionStepLabel,
+  describeQuestionContext,
+  type InterviewQuestionContext,
   stepNameFor,
   translationSource
 } from './arisInterviewChatView'
@@ -128,6 +129,26 @@ const STATUS_FALLBACKS: Readonly<Record<string, string>> = Object.freeze({
 })
 
 const useClientLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect
+
+/** The process, step and preceding step a question is about, one line each. */
+function ContextLines({ context }: { readonly context: InterviewQuestionContext }): JSX.Element | null {
+  if (context.process === null && context.step === null) return null
+  return (
+    <div data-orbitpm-aris-chat-context="" style={{ display: 'grid', gap: 2, fontSize: 12 }}>
+      {context.process !== null && (
+        <span>{tk('aris.chat.context.process', 'Process: {name}', { name: context.process })}</span>
+      )}
+      {context.step !== null && (
+        <strong style={{ fontSize: 12.5 }}>{tk('aris.chat.step', 'Step: {name}', { name: context.step })}</strong>
+      )}
+      {context.previous !== null && (
+        <span style={{ color: 'var(--orbitpm-muted)' }}>
+          {tk('aris.chat.context.previous', 'Comes after: {name}', { name: context.previous })}
+        </span>
+      )}
+    </div>
+  )
+}
 
 export function ArisChatDrawer({
   open,
@@ -650,15 +671,14 @@ export function ArisChatDrawer({
   const focusLabel = stepNameFor(activeDocument, focusIds[0])
 
   const renderQuestionCard = (question: ArisChatQuestion, index: number, count: number): JSX.Element => {
-    const stepLabel = questionStepLabel(activeDocument, question)
+    const context = describeQuestionContext(activeDocument, question)
     const suggestion = suggestions[question.id]
     const isActive = question.id === activeQuestion?.id
     return (
       <div key={`${question.id}:${index}`} style={{ display: 'grid', gap: 6 }} data-orbitpm-aris-chat-question={question.gapKind}>
         <div style={BUBBLE_ASSISTANT}>
-          {stepLabel && <strong style={{ fontSize: 12.5 }}>{tk('aris.chat.step', 'Step: {name}', { name: stepLabel })}</strong>}
-          <div style={{ fontSize: 12.5 }}>{t(question.messageKey as Key, question.messageParams)}</div>
-          <div style={{ fontSize: 12.5 }}>{questionAsk(question)}</div>
+          <ContextLines context={context} />
+          <div style={{ fontSize: 12.5 }}>{questionAsk(question, activeDocument)}</div>
           <div style={{ fontSize: 11, color: 'var(--orbitpm-muted)' }}>
             {tk('aris.chat.progress', 'Question {index} of {count}', { index: index + 1, count })}
           </div>
@@ -725,7 +745,7 @@ export function ArisChatDrawer({
             <input
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
-              aria-label={questionAsk(question)}
+              aria-label={questionAsk(question, activeDocument)}
               data-orbitpm-aris-chat-answer=""
               style={{
                 flex: 1,
@@ -754,15 +774,14 @@ export function ArisChatDrawer({
   }
 
   const renderFormBlock = (question: ArisChatQuestion, index: number): JSX.Element => {
-    const stepLabel = questionStepLabel(activeDocument, question)
+    const context = describeQuestionContext(activeDocument, question)
     const suggestion = suggestions[question.id]
     const value = answers[question.id] ?? ''
     const inputId = `aris-chat-form-${index}`
     return (
       <>
-        {stepLabel && <strong style={{ fontSize: 12.5 }}>{tk('aris.chat.step', 'Step: {name}', { name: stepLabel })}</strong>}
-        <span style={{ fontSize: 12.5 }}>{t(question.messageKey as Key, question.messageParams)}</span>
-        <label htmlFor={inputId} style={{ fontSize: 12.5 }}>{questionAsk(question)}</label>
+        <ContextLines context={context} />
+        <label htmlFor={inputId} style={{ fontSize: 12.5 }}>{questionAsk(question, activeDocument)}</label>
         {question.gapKind === 'unusedDefinition' ? (
           <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12.5 }}>
             <input

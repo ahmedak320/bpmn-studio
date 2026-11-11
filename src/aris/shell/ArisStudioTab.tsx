@@ -341,6 +341,13 @@ export function ArisStudioTab({
     return canvasRef.current
   }, [canvasTick])
 
+  // Project the canvas captions into the chosen content language (view only,
+  // off the undo stack). Re-runs on a language change and on canvas (re)ready.
+  // Lost in the toolbar cut, which made the Labels EN/AR button do nothing.
+  useEffect(() => {
+    canvasRef.current?.setContentLanguage(contentLang)
+  }, [contentLang, canvasTick])
+
   useEffect(() => {
     const canvas = canvasRef.current
     setCanvasContextMenu(null)

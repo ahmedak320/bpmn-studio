@@ -151,6 +151,69 @@ function compact(points: readonly ArisPoint[]): readonly ArisPoint[] {
 }
 
 /**
+ * The shortest horizontal/vertical route between two boxes, used once a block has
+ * been moved (its stored route no longer matches the geometry).
+ *
+ * - Boxes that share a horizontal span: one straight vertical line, at the middle
+ *   of the shared span, from the facing bottom/top edges.
+ * - Boxes that share a vertical span: one straight horizontal line, at the middle
+ *   of the shared span, from the facing right/left edges.
+ * - Otherwise one elbow: leave the source at its centre height (or centre column)
+ *   toward the target, then enter the target's top/bottom (or left/right) edge.
+ *   The longer centre-to-centre axis decides which way to leave first.
+ *
+ * Every segment is horizontal or vertical; there are no diagonals and no interior
+ * guides, so a moved block always gets the clean connection, not a stale detour.
+ */
+export function cleanConnectionWaypoints(source: Rect, target: Rect): readonly ArisPoint[] {
+  const sourceRight = source.x + source.width
+  const sourceBottom = source.y + source.height
+  const targetRight = target.x + target.width
+  const targetBottom = target.y + target.height
+
+  const sharedX0 = Math.max(source.x, target.x)
+  const sharedX1 = Math.min(sourceRight, targetRight)
+  const sharedY0 = Math.max(source.y, target.y)
+  const sharedY1 = Math.min(sourceBottom, targetBottom)
+
+  if (sharedX1 > sharedX0) {
+    const x = (sharedX0 + sharedX1) / 2
+    if (target.y >= sourceBottom) return Object.freeze([{ x, y: sourceBottom }, { x, y: target.y }])
+    if (targetBottom <= source.y) return Object.freeze([{ x, y: source.y }, { x, y: targetBottom }])
+  }
+  if (sharedY1 > sharedY0) {
+    const y = (sharedY0 + sharedY1) / 2
+    if (target.x >= sourceRight) return Object.freeze([{ x: sourceRight, y }, { x: target.x, y }])
+    if (targetRight <= source.x) return Object.freeze([{ x: source.x, y }, { x: targetRight, y }])
+  }
+
+  const sourceCx = source.x + source.width / 2
+  const sourceCy = source.y + source.height / 2
+  const targetCx = target.x + target.width / 2
+  const targetCy = target.y + target.height / 2
+  const dx = targetCx - sourceCx
+  const dy = targetCy - sourceCy
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    // Leave sideways at the source's centre height, then drop/rise into the target.
+    const startX = dx >= 0 ? sourceRight : source.x
+    const enterY = target.y >= sourceCy ? target.y : targetBottom
+    return Object.freeze([
+      { x: startX, y: sourceCy },
+      { x: targetCx, y: sourceCy },
+      { x: targetCx, y: enterY }
+    ])
+  }
+  // Leave vertically at the source's centre column, then run sideways into the target.
+  const startY = dy >= 0 ? sourceBottom : source.y
+  const enterX = target.x >= sourceCx ? target.x : targetRight
+  return Object.freeze([
+    { x: sourceCx, y: startY },
+    { x: sourceCx, y: targetCy },
+    { x: enterX, y: targetCy }
+  ])
+}
+
+/**
  * Compute the waypoints diagram-js should render for a connection.
  *
  * `route` is the ARIS-stored route. Untouched imported routes are immutable
@@ -166,6 +229,7 @@ export function connectionWaypoints(
   options: {
     readonly selfLoop?: boolean
     readonly preserveRoute?: boolean
+    readonly reroute?: boolean
     readonly sourcePorts?: readonly ConnectionPort[]
     readonly targetPorts?: readonly ConnectionPort[]
   } = {}
@@ -176,6 +240,11 @@ export function connectionWaypoints(
   if (options.selfLoop) {
     return selfLoopWaypoints(source, 40, options.sourcePorts)
   }
+
+  // The caller marks a stored route that still belongs to the imported geometry
+  // while a block has moved. Its points describe the old positions, so the clean
+  // route replaces it. Authored routes are not marked and keep their guides.
+  if (options.reroute) return cleanConnectionWaypoints(source, target)
 
   const interior = route.length > 2 ? route.slice(1, -1) : []
   const sourceTowards = interior[0] ?? route[1] ?? center(target)

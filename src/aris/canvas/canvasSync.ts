@@ -833,9 +833,19 @@ export class ArisCanvasSync {
     target: ArisObjectOccurrence,
     sourceGeometry: SourceGeometryIndex
   ): readonly ArisPoint[] {
+    // A block moved after import while the connection's stored route is still the
+    // imported one: that route belongs to the old positions, so it is re-routed
+    // cleanly. An authored reroute (route changed) keeps its points as guides.
+    const storedRouteIsImported =
+      connection.route.length > 0 &&
+      sameRoute(connection.route, sourceGeometry.routeByConnectionId.get(connection.id))
+    const endpointMoved =
+      !sameBounds(source.bounds, sourceGeometry.boundsByOccurrenceId.get(source.id)) ||
+      !sameBounds(target.bounds, sourceGeometry.boundsByOccurrenceId.get(target.id))
     return connectionWaypoints(source.bounds, target.bounds, connection.route, {
       selfLoop: source.id === target.id,
       preserveRoute: isUntouchedSourceConnection(connection, source, target, sourceGeometry),
+      reroute: storedRouteIsImported && endpointMoved,
       sourcePorts: this.descriptorPorts(model, source),
       targetPorts: this.descriptorPorts(model, target)
     })

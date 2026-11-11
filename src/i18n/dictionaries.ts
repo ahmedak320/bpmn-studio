@@ -289,6 +289,7 @@ export const en = {
     'This explicit choice is shared by generation, assistant, interview, and translation.',
   'settings.encryption.title': 'Credential storage',
   'settings.encryption.persist': 'Encrypt newly entered keys and persist them in this browser',
+  'settings.device.remember': 'Remember each key on this browser, encrypted, so it loads again without a passphrase',
   'settings.encryption.passphrase': 'Encryption passphrase',
   'settings.encryption.unlock': 'Unlock encrypted keys for this session',
   'settings.encryption.hint':
@@ -3431,6 +3432,7 @@ export const ar: Record<keyof typeof en, string> = {
     'يُستخدم هذا الاختيار الصريح في الإنشاء والمساعد والمقابلة والترجمة.',
   'settings.encryption.title': 'تخزين بيانات الاعتماد',
   'settings.encryption.persist': 'تشفير المفاتيح المُدخلة حديثًا وحفظها في هذا المتصفح',
+  'settings.device.remember': 'حفظ كل مفتاح في هذا المتصفح مشفّرًا ليُحمَّل مرة أخرى دون عبارة مرور',
   'settings.encryption.passphrase': 'عبارة مرور التشفير',
   'settings.encryption.unlock': 'فتح المفاتيح المشفّرة لهذه الجلسة',
   'settings.encryption.hint':

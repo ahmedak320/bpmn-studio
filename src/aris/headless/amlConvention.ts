@@ -32,7 +32,9 @@ import { pruneSuppressedOccurrences } from './suppression'
 const OBJECT_OCCURRENCE_PREFIX = 'ObjOcc.'
 const CONNECTION_OCCURRENCE_PREFIX = 'CxnOcc.'
 
-const LEGEND_GAP_X = 120
+// The legend sits one block gap right of the flow's real right edge, not the
+// canvas margin, so it does not float far from the process it documents.
+const LEGEND_GAP_X = 40
 const HEADER_BAND = 56
 const BLOCK_GAP = 40
 const DMT_BLOCK_WIDTH = 180
@@ -130,9 +132,10 @@ export function computeAmlDefaultLegend(
   _canonical: CanonicalProcessV1,
   defaults: DefaultsByKind,
   projection: CanonicalProjectionResult,
-  canvasRect: ArisLayoutRect
+  canvasRect: ArisLayoutRect,
+  contentRight: number = canvasRect.x + canvasRect.width
 ): AmlDefaultLegendResult {
-  const legendX = Math.round(canvasRect.x + canvasRect.width) + LEGEND_GAP_X
+  const legendX = Math.round(contentRight) + LEGEND_GAP_X
   const y0 = Math.round(canvasRect.y)
 
   const rootChildren: ElementSpec[] = [
@@ -296,7 +299,19 @@ export async function buildConventionAml(
     )
   }
 
-  const legend = computeAmlDefaultLegend(canonical, defaults, projection, layout.canvas)
+  // Right edge of the placed flow (nodes and their labels), without the canvas margin.
+  const contentRight = layout.nodes.reduce((right, node) => {
+    const nodeRight = node.rect.x + node.rect.width
+    const labelRight = node.labelRect ? node.labelRect.x + node.labelRect.width : nodeRight
+    return Math.max(right, nodeRight, labelRight)
+  }, Number.NEGATIVE_INFINITY)
+  const legend = computeAmlDefaultLegend(
+    canonical,
+    defaults,
+    projection,
+    layout.canvas,
+    Number.isFinite(contentRight) ? contentRight : undefined
+  )
   // Orphan definitions remain available for legend/default lookup and source
   // fidelity, but an unconnected orphan must never be rendered in the model.
   // Defaults represented by the legend are included too; their normal

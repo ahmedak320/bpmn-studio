@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { connectionWaypoints, dockDescriptorPort } from './waypoints'
+import { cleanConnectionWaypoints, connectionWaypoints, dockDescriptorPort } from './waypoints'
 
 const CARD_PORTS = Object.freeze([
   Object.freeze({ name: 'N', nx: 0.5, ny: 0 }),
@@ -64,5 +64,85 @@ describe('connectionWaypoints source-layout contract', () => {
         chevronPorts
       )
     ).toEqual({ name: 'E', point: { x: 278, y: 250 } })
+  })
+
+  it('re-routes an imported route once a block has moved, dropping its stale guides', () => {
+    const source = { x: 0, y: 0, width: 100, height: 60 }
+    const target = { x: 0, y: 300, width: 100, height: 60 }
+    const staleRoute = Object.freeze([
+      Object.freeze({ x: 50, y: 60 }),
+      Object.freeze({ x: 400, y: 60 }),
+      Object.freeze({ x: 400, y: 330 }),
+      Object.freeze({ x: 50, y: 330 })
+    ])
+    const projected = connectionWaypoints(source, target, staleRoute, {
+      preserveRoute: false,
+      reroute: true,
+      sourcePorts: CARD_PORTS,
+      targetPorts: CARD_PORTS
+    })
+    expect(projected).toEqual([
+      { x: 50, y: 60 },
+      { x: 50, y: 300 }
+    ])
+  })
+
+  it('keeps the guides of an authored route that was not marked for re-routing', () => {
+    const source = { x: 0, y: 0, width: 100, height: 60 }
+    const target = { x: 0, y: 300, width: 100, height: 60 }
+    const authored = Object.freeze([
+      Object.freeze({ x: 20, y: 30 }),
+      Object.freeze({ x: 400, y: 30 }),
+      Object.freeze({ x: 400, y: 330 }),
+      Object.freeze({ x: 20, y: 330 })
+    ])
+    const projected = connectionWaypoints(source, target, authored, {
+      preserveRoute: false,
+      sourcePorts: CARD_PORTS,
+      targetPorts: CARD_PORTS
+    })
+    expect(projected).toContainEqual({ x: 400, y: 30 })
+    expect(projected).toContainEqual({ x: 400, y: 330 })
+  })
+})
+
+describe('cleanConnectionWaypoints', () => {
+  it('draws one vertical line through the shared horizontal span', () => {
+    const a = { x: 0, y: 0, width: 100, height: 60 }
+    const b = { x: 40, y: 200, width: 100, height: 60 }
+    expect(cleanConnectionWaypoints(a, b)).toEqual([
+      { x: 70, y: 60 },
+      { x: 70, y: 200 }
+    ])
+  })
+
+  it('draws one horizontal line through the shared vertical span, right or left', () => {
+    const a = { x: 0, y: 0, width: 100, height: 60 }
+    const right = { x: 300, y: 20, width: 100, height: 60 }
+    expect(cleanConnectionWaypoints(a, right)).toEqual([
+      { x: 100, y: 40 },
+      { x: 300, y: 40 }
+    ])
+    const left = { x: -300, y: 20, width: 100, height: 60 }
+    expect(cleanConnectionWaypoints(a, left)).toEqual([
+      { x: 0, y: 40 },
+      { x: -200, y: 40 }
+    ])
+  })
+
+  it('never produces a diagonal segment for any pair of positions', () => {
+    const base = { x: 0, y: 0, width: 100, height: 60 }
+    const offsets = [-400, -150, -20, 0, 30, 150, 400]
+    for (const dx of offsets) {
+      for (const dy of offsets) {
+        const target = { x: dx, y: dy, width: 80, height: 50 }
+        const points = cleanConnectionWaypoints(base, target)
+        for (let index = 1; index < points.length; index += 1) {
+          const from = points[index - 1]!
+          const to = points[index]!
+          expect(from.x === to.x || from.y === to.y).toBe(true)
+        }
+      }
+    }
   })
 })

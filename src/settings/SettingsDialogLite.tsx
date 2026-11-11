@@ -13,6 +13,7 @@ import {
   type KeyStorageResult
 } from '../ai/keys'
 import { keyStorageErrorMessage } from '../ai/keyStorageErrorMessage'
+import { forgetDeviceKey, rememberKeyOnDevice } from '../ai/deviceKeys'
 import { getProviderSelection, setProviderSelection } from '../ai/providerSelection'
 import { defaultLiteModelId, getLiteProvider } from '../ai/providersLite'
 import {
@@ -160,6 +161,8 @@ export function SettingsDialogLite({
   const openRef = useRef(open)
   openRef.current = open
   const [persistEncrypted, setPersistEncrypted] = useState(false)
+  // Default on: a key is entered once and loads again on this browser, no passphrase.
+  const [rememberOnDevice, setRememberOnDevice] = useState(true)
   const [passphrase, setPassphrase] = useState('')
   const initialSelection = getProviderSelection()
   const [selectedProvider, setSelectedProvider] = useState<LiteProviderId | ''>(
@@ -326,6 +329,7 @@ export function SettingsDialogLite({
     const operation = beginCredentialOperation('save')
     const draftSnapshot = { ...drafts }
     const encryptSnapshot = persistEncrypted
+    const rememberSnapshot = rememberOnDevice
     const passphraseSnapshot = passphrase
     const providerSnapshot = selectedProvider
     const modelSnapshot = selectedModel
@@ -335,18 +339,27 @@ export function SettingsDialogLite({
     for (const p of LITE_PROVIDERS) {
       const draft = draftSnapshot[p.id]
       if (draft !== undefined && draft.trim().length > 0) {
-        const result = encryptSnapshot
+        let result = encryptSnapshot
           ? await persistEncryptedKey(p.id, draft, passphraseSnapshot, operation.controller.signal)
           : setKey(p.id, draft)
         if (!credentialOperationIsCurrent(operation)) return
-        if (!result.ok) failures.push(storageFailure(result, 'key-save', p.label))
-        else if (p.id === 'openrouter') {
+        if (result.ok && p.id === 'openrouter') {
           // A refresh may have started against the old key while an encrypted
           // save was pending. Invalidate it at commit and discard its cache.
           cancelCreditsRefresh(true)
           setCredits(null)
           setCreditsError(null)
         }
+        // The key is in this session either way; remembering it on the device is a
+        // separate step, reported on its own if it fails.
+        if (result.ok && !encryptSnapshot && rememberSnapshot) {
+          const remembered = await rememberKeyOnDevice(p.id, draft)
+          if (!credentialOperationIsCurrent(operation)) return
+          if (!remembered.ok) {
+            result = { ok: false, code: 'storage-failed', error: remembered.error }
+          }
+        }
+        if (!result.ok) failures.push(storageFailure(result, 'key-save', p.label))
       }
     }
     if (!credentialOperationIsCurrent(operation)) return
@@ -493,7 +506,9 @@ export function SettingsDialogLite({
       setCredits(null)
       setCreditsError(null)
     }
-    const result = clearKey(providerId)
+    const cleared = clearKey(providerId)
+    const forgotten = forgetDeviceKey(providerId)
+    const result = cleared.ok && !forgotten.ok ? { ok: false as const, code: 'storage-failed' as const, error: forgotten.error } : cleared
     setDrafts((current) => {
       const next = { ...current }
       delete next[providerId]
@@ -681,6 +696,15 @@ export function SettingsDialogLite({
           style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
         >
           <span style={{ fontWeight: 600, fontSize: 14 }}>{t('settings.encryption.title')}</span>
+          <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+            <input
+              type="checkbox"
+              checked={rememberOnDevice}
+              disabled={persistEncrypted}
+              onChange={(event) => setRememberOnDevice(event.target.checked)}
+            />
+            <span>{t('settings.device.remember')}</span>
+          </label>
           <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
             <input
               type="checkbox"

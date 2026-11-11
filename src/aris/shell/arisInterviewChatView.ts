@@ -10,7 +10,12 @@
 import { DEFAULT_ARABIC_LOCALE_IDS, DEFAULT_ENGLISH_LOCALE_IDS } from '../chat/locale'
 import { GAP_PRIORITY, type ArisChatQuestion } from '../chat/interviewLoop'
 import type { ArisChatGap } from '../chat/gapScanner'
-import type { ArisLocalizedValue, ArisWorkingDocument } from '../model/types'
+import type {
+  ArisLocalizedValue,
+  ArisModel,
+  ArisObjectOccurrence,
+  ArisWorkingDocument
+} from '../model/types'
 import { tk } from './shellI18n'
 
 export type InterviewPriorityBand = 'critical' | 'content' | 'simple'
@@ -62,27 +67,114 @@ export function questionStepLabel(
   return stepNameFor(document, question.targetIds[0])
 }
 
+/** Where a question points: the process, the step inside it, and the step before that step. */
+export interface InterviewQuestionContext {
+  readonly process: string | null
+  readonly step: string | null
+  /** Name of the step that connects into `step`, when the document has one. */
+  readonly previous: string | null
+}
+
+function nameOrNull(value: ArisLocalizedValue | undefined): string | null {
+  return localizedText(value, DEFAULT_ENGLISH_LOCALE_IDS) ?? localizedText(value, DEFAULT_ARABIC_LOCALE_IDS)
+}
+
+/**
+ * Resolves a question's target id (a model, object definition, occurrence,
+ * connection or decision node) into the process it sits in, the step inside it,
+ * and the step that flows into that step. Unknown ids resolve to nothing.
+ */
+export function describeQuestionContext(
+  document: ArisWorkingDocument | null,
+  question: ArisChatQuestion
+): InterviewQuestionContext {
+  const empty: InterviewQuestionContext = { process: null, step: null, previous: null }
+  const id = question.targetIds[0]
+  if (!document || id === undefined) return empty
+
+  const model = document.models.get(id)
+  if (model) return { ...empty, process: nameOrNull(model.names) }
+
+  let host: ArisModel | null = null
+  let occurrence: ArisObjectOccurrence | null = null
+  for (const candidate of document.models.values()) {
+    const found = candidate.occurrences.find((item) => item.id === id)
+    if (found) {
+      host = candidate
+      occurrence = found
+      break
+    }
+  }
+  if (!occurrence) {
+    // A definition used by a process: describe it through its first placement.
+    for (const candidate of document.models.values()) {
+      const found = candidate.occurrences.find((item) => item.definitionId === id)
+      if (found) {
+        host = candidate
+        occurrence = found
+        break
+      }
+    }
+  }
+  if (!occurrence || !host) {
+    return { ...empty, step: nameOrNull(document.objectDefinitions.get(id)?.names ?? document.connectionDefinitions.get(id)?.names) }
+  }
+
+  const step = nameOrNull(document.objectDefinitions.get(occurrence.definitionId)?.names)
+  const incoming = host.connectionOccurrences.find((connection) => connection.targetOccurrenceId === occurrence.id)
+  const source = incoming
+    ? host.occurrences.find((item) => item.id === incoming.sourceOccurrenceId)
+    : undefined
+  const previous = source
+    ? nameOrNull(document.objectDefinitions.get(source.definitionId)?.names)
+    : null
+  return { process: nameOrNull(host.names), step, previous }
+}
+
 const ASK_FALLBACKS: Readonly<Record<ArisChatGap['kind'], string>> = Object.freeze({
-  missingEnglishName: 'What is the English name?',
-  missingArabicName: 'What is the Arabic name?',
-  missingProcessCode: 'What is the process code?',
-  missingOwner: 'Who is responsible for it?',
-  missingInputsOutputsSystems: 'Which inputs, outputs or systems does it use? Name them.',
-  missingDecisionBasis: 'What is the basis for this decision?',
-  missingXorOutcomes: 'What are the outcomes of this decision?',
-  missingReturnTarget: 'Which step should this loop return to?',
-  missingStartOrEndEvent: 'Which start or end event is missing?',
-  invalidSequence: 'What should come after this step?',
-  danglingObjectOrConnection: 'Which object should this link to? Or should it be removed?',
-  missingLinkedModel: 'Which model should this link to?',
-  missingAttachment: 'Which document belongs here? Name it.',
-  unusedDefinition: 'Remove this unused definition?',
-  unaccountedSourceContent: 'What does this part of the source mean?'
+  missingEnglishName: '{where}{after} has no English name. What should its English name be?',
+  missingArabicName: '{where}{after} has no Arabic name. What should its Arabic name be?',
+  missingProcessCode: '{where}{after} has no process code. What is its process code?',
+  missingOwner: '{where}{after} has no owner. Which role or department is responsible for it?',
+  missingInputsOutputsSystems:
+    '{where}{after} has no input, output or system. Name the document it reads or writes, or the system it uses.',
+  missingDecisionBasis: '{where}{after} is a decision with no stated basis. What question does it decide?',
+  missingXorOutcomes:
+    '{where}{after} has unlabelled or repeated branch outcomes. Name each outcome, for example Yes and No.',
+  missingReturnTarget: '{where}{after} loops back, but no return target is set. Which earlier step should it return to?',
+  missingStartOrEndEvent: '{where} has no start or end event. Which event is missing?',
+  invalidSequence: '{where}{after} is not followed by a valid next step. Which step should come after it?',
+  danglingObjectOrConnection:
+    '{where} links to something that no longer exists. Which object should it link to, or should it be removed?',
+  missingLinkedModel: '{where} has no linked model. Which model should it link to?',
+  missingAttachment: '{where} has no attached document. Which document belongs here?',
+  unusedDefinition: '{where} is defined but not used in any process. Remove it?',
+  unaccountedSourceContent: '{where} contains source content that is not placed in the model. What does it mean?'
 })
 
-/** The one short question to put to the user for a gap. */
-export function questionAsk(question: ArisChatQuestion): string {
-  return tk(`aris.chat.ask.${question.gapKind}`, ASK_FALLBACKS[question.gapKind])
+/**
+ * The one question to put to the user for a gap, naming the process, the exact
+ * step and the step before it, so the user can tell which step is meant.
+ */
+export function questionAsk(question: ArisChatQuestion, document: ArisWorkingDocument | null = null): string {
+  const context = describeQuestionContext(document, question)
+  const where =
+    context.step !== null && context.process !== null
+      ? tk('aris.chat.where.stepInProcess', 'the step “{step}” in process “{process}”', {
+          step: context.step,
+          process: context.process
+        })
+      : context.step !== null
+        ? tk('aris.chat.where.step', 'the step “{step}”', { step: context.step })
+        : context.process !== null
+          ? tk('aris.chat.where.process', 'the process “{process}”', { process: context.process })
+          : tk('aris.chat.where.item', 'this item')
+  const after =
+    context.previous !== null && context.step !== null
+      ? tk('aris.chat.where.after', ', which comes after “{previous}”', { previous: context.previous })
+      : ''
+  const vars = { where, after, step: context.step ?? '', process: context.process ?? '', previous: context.previous ?? '' }
+  return tk(`aris.chat.ask.${question.gapKind}`, ASK_FALLBACKS[question.gapKind], vars)
 }
 
 export function isTranslationQuestion(question: ArisChatQuestion): boolean {

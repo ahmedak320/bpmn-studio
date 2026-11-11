@@ -254,11 +254,21 @@ function parsedOutput(xml: string) {
   return { tokens, semantic, document, model }
 }
 
+/** Right edge of the placed flow, nodes and labels, without the canvas margin. */
+function flowRight(nodes: readonly { readonly rect: { readonly x: number; readonly width: number }; readonly labelRect: { readonly x: number; readonly width: number } | null }[]): number {
+  return nodes.reduce((right, node) => {
+    const nodeRight = node.rect.x + node.rect.width
+    const labelRight = node.labelRect ? node.labelRect.x + node.labelRect.width : nodeRight
+    return Math.max(right, nodeRight, labelRight)
+  }, Number.NEGATIVE_INFINITY)
+}
+
 function expectedPlacement(
   blocks: readonly ExpectedLegendBlock[],
-  canvas: { readonly x: number; readonly y: number; readonly width: number }
+  canvas: { readonly x: number; readonly y: number; readonly width: number },
+  contentRight: number
 ): AmlLegendPlacement {
-  const x = Math.round(canvas.x + canvas.width) + 120
+  const x = Math.round(contentRight) + 40
   const y = Math.round(canvas.y)
   return {
     header: {
@@ -355,8 +365,11 @@ describe.each(CASES)('buildConventionAml — $name', ({ process, legendBlocks })
 
   it('emits one bilingual defaults header and one exact top-right block per default', () => {
     const { tokens, semantic } = parsedOutput(result.xml)
-    const expectedLegend = expectedPlacement(legendBlocks, expected.layout.canvas)
-    const legendX = Math.round(expected.layout.canvas.x + expected.layout.canvas.width) + 120
+    const contentRight = flowRight(expected.layout.nodes)
+    const expectedLegend = expectedPlacement(legendBlocks, expected.layout.canvas, contentRight)
+    const legendX = Math.round(contentRight) + 40
+    // The legend hugs the flow: one block gap away, not a canvas margin away.
+    expect(legendX - Math.round(contentRight)).toBe(40)
 
     expect(result.legend).toEqual(expectedLegend)
     expect(semantic.index.freeText.has('FFTextDef.legend.defaults')).toBe(true)

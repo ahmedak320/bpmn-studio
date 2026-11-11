@@ -6,6 +6,8 @@ import type { ArisWorkingDocument } from '../model/types'
 import {
   countInterviewBands,
   interviewPriorityBand,
+  describeQuestionContext,
+  questionAsk,
   questionStepLabel,
   translationSource
 } from './arisInterviewChatView'
@@ -109,5 +111,66 @@ describe('interview chat presentation', () => {
     expect(
       translationSource(document, { id: 'q', messageKey: 'k', gapKind: 'missingArabicName', targetIds: ['X'] })
     ).toBeNull()
+  })
+})
+
+describe('interview question wording', () => {
+  const en = (value: string) => ({ values: { en: value }, fallback: null })
+  const flow = {
+    models: new Map([
+      [
+        'M1',
+        {
+          id: 'M1',
+          names: en('Survey process'),
+          occurrences: [
+            { id: 'O1', definitionId: 'F1', modelId: 'M1' },
+            { id: 'O2', definitionId: 'F2', modelId: 'M1' }
+          ],
+          connectionOccurrences: [
+            { id: 'C1', definitionId: 'X1', modelId: 'M1', sourceOccurrenceId: 'O1', targetOccurrenceId: 'O2' }
+          ]
+        }
+      ]
+    ]),
+    objectDefinitions: new Map([
+      ['F1', { id: 'F1', type: 'OT_FUNC', names: en('Receive survey') }],
+      ['F2', { id: 'F2', type: 'OT_FUNC', names: en('Review answers') }]
+    ]),
+    connectionDefinitions: new Map()
+  } as unknown as ArisWorkingDocument
+
+  it('names the process, the exact step and the step before it', () => {
+    const text = questionAsk(
+      { id: 'q', messageKey: 'k', gapKind: 'missingOwner', targetIds: ['F2'] },
+      flow
+    )
+    expect(text).toContain('Review answers')
+    expect(text).toContain('Survey process')
+    expect(text).toContain('Receive survey')
+    expect(text).toContain('owner')
+  })
+
+  it('resolves an occurrence id to the same step as its definition', () => {
+    const context = describeQuestionContext(flow, {
+      id: 'q',
+      messageKey: 'k',
+      gapKind: 'missingInputsOutputsSystems',
+      targetIds: ['O2']
+    })
+    expect(context).toEqual({
+      process: 'Survey process',
+      step: 'Review answers',
+      previous: 'Receive survey'
+    })
+  })
+
+  it('asks about the process itself when the gap is on a model', () => {
+    const text = questionAsk(
+      { id: 'q', messageKey: 'k', gapKind: 'missingArabicName', targetIds: ['M1'] },
+      flow
+    )
+    expect(text).toContain('the process “Survey process”')
+    expect(text).not.toContain('step')
   })
 })

@@ -163,6 +163,29 @@ describe('authoring operations (Section 11.4)', () => {
     expect(findConnectionOccurrence(canvas.document, connectionId)?.route).toHaveLength(0)
   })
 
+  it('re-routes a connection cleanly after its target block is moved, with no diagonal', () => {
+    harness = bootCanvas()
+    const { canvas } = harness
+    const a = canvas.authoring.createObject({ objectType: 'OT_EVT', position: { x: 0, y: 0 } })
+    const b = canvas.authoring.createObject({ objectType: 'OT_FUNC', position: { x: 0, y: 300 } })
+    const connectionId = canvas.authoring.connect(a.occurrenceId, b.occurrenceId)
+
+    canvas.authoring.moveOccurrence(b.occurrenceId, { x: 420, y: 150 })
+
+    const connectionElement = canvas.elementRegistry.get(connectionId) as unknown as {
+      waypoints: { x: number; y: number }[]
+    }
+    const points = connectionElement.waypoints
+    expect(points.length).toBeGreaterThanOrEqual(2)
+    expect(points.length).toBeLessThanOrEqual(3)
+    expect(
+      points.slice(1).every((point, index) => {
+        const previous = points[index]!
+        return point.x === previous.x || point.y === previous.y
+      })
+    ).toBe(true)
+  })
+
   it('reuses one connection definition for a second occurrence of the same pair', () => {
     harness = bootCanvas()
     const { canvas } = harness

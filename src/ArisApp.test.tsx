@@ -52,6 +52,7 @@ vi.mock('./workspace/adapters/opfs', async () => {
 import ArisApp, { downloadBytes } from './ArisApp'
 import { ArisGenerationPanel } from './ArisGenerationPanel'
 import { VALID_CANONICAL_FULL } from './aris/canonical/fixtures'
+import { ArisCanvas } from './aris/canvas/ArisCanvas'
 import { buildLegacyBpmnWorkbook, buildValidFixtureWorkbook } from './aris/excel/testFixtures'
 import type { FileSnapshot, WorkspaceAdapter, WorkspaceEntry } from './workspace/adapters/types'
 
@@ -538,6 +539,25 @@ describe('ArisApp production shell', () => {
     fireEvent.click(within(explorer!).getByText('Intake process'))
     await waitFor(() => expect(canvasElement('ObjOcc.Start')).not.toBeNull())
     expect(canvasTranslation('ObjOcc.Start')).toEqual({ x: 200, y: 100 })
+  })
+
+  it('projects the Labels EN/AR button onto the open diagram', async () => {
+    const setContentLanguage = vi.spyOn(ArisCanvas.prototype, 'setContentLanguage')
+    try {
+      render(<ArisApp />)
+      await openAml()
+      await waitFor(() => expect(setContentLanguage).toHaveBeenCalledWith('en'))
+
+      const toolbar = document.querySelector<HTMLElement>('.orbitpm-aris-toolbar')!
+      fireEvent.click(toolbar.querySelector<HTMLButtonElement>('[data-orbitpm-aris-content-lang]')!)
+
+      await waitFor(() => expect(setContentLanguage).toHaveBeenLastCalledWith('ar'))
+      expect(
+        toolbar.querySelector('[data-orbitpm-aris-content-lang]')?.getAttribute('data-orbitpm-aris-content-lang')
+      ).toBe('ar')
+    } finally {
+      setContentLanguage.mockRestore()
+    }
   })
 
   it('keeps the requested controls above the diagram and drops translate, clean layout and the fix badge', async () => {

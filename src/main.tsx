@@ -10,15 +10,22 @@ import ReactDOM from 'react-dom/client'
 // desktop tree CRUD uses).
 import { PromptProvider } from '@/common/prompt'
 import ArisApp from './ArisApp'
+import { restoreDeviceKeys } from './ai/deviceKeys'
 import { applyFavicon } from './branding/icon'
 import './app.css'
 
 applyFavicon()
 
-ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
-  <React.StrictMode>
-    <PromptProvider>
-      <ArisApp />
-    </PromptProvider>
-  </React.StrictMode>
-)
+// Keys remembered on this browser load before the first render, so the AI
+// panels already see them. A failure only leaves the keys unloaded.
+void restoreDeviceKeys()
+  .catch(() => 0)
+  .then(() => {
+    ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
+      <React.StrictMode>
+        <PromptProvider>
+          <ArisApp />
+        </PromptProvider>
+      </React.StrictMode>
+    )
+  })
