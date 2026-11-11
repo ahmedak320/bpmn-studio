@@ -70,6 +70,13 @@ import {
   translationSource
 } from './arisInterviewChatView'
 import { scanArisGaps } from './arisChatHost'
+import {
+  checkInterviewAnswer,
+  describeAnswerProblem,
+  explainQuestion,
+  isClarificationRequest,
+  questionNeeds
+} from './arisChatAnswerCheck'
 import { tk } from './shellI18n'
 
 export interface ArisChatDrawerProps {
@@ -182,6 +189,10 @@ export function ArisChatDrawer({
   const [activeIndex, setActiveIndex] = useState(0)
   const [draft, setDraft] = useState('')
   const [formOpen, setFormOpen] = useState(false)
+  /** Full-window chat while completing a process, instead of the side panel. */
+  const [expanded, setExpanded] = useState(false)
+  /** Why each form answer was not used, keyed by question id. */
+  const [issues, setIssues] = useState<Record<string, string>>({})
   const [focusIds, setFocusIds] = useState<readonly string[]>([])
   const [suggestions, setSuggestions] = useState<Record<string, InterviewSuggestion>>({})
   const suggestionsRef = useRef(suggestions)
@@ -351,6 +362,28 @@ export function ArisChatDrawer({
     setIvMessages(eventsToMessages(events))
   }
 
+  /**
+   * Explains each answer that cannot be used: a clarification request gets the
+   * explanation, a bad answer gets the reason. Blank answers are skips.
+   */
+  const reviewAnswers = (
+    targets: readonly ArisChatQuestion[],
+    values: Readonly<Record<string, string>>
+  ): Record<string, string> => {
+    const found: Record<string, string> = {}
+    for (const question of targets) {
+      const value = (values[question.id] ?? '').trim()
+      if (value === '') continue
+      if (isClarificationRequest(value)) {
+        found[question.id] = explainQuestion(question, chatTarget?.host.getDocument() ?? null)
+        continue
+      }
+      const check = checkInterviewAnswer(question.gapKind, value)
+      if (!check.ok) found[question.id] = describeAnswerProblem(check.problem)
+    }
+    return found
+  }
+
   /** Submits one round of answers (blank = skipped) and reports what happened. */
   const submitRound = (roundAnswers: Readonly<Record<string, string>>): void => {
     const host = interviewHostRef.current
@@ -363,6 +396,7 @@ export function ArisChatDrawer({
     setActiveIndex(0)
     setDraft('')
     setFormOpen(false)
+    setIssues({})
     setGapVersion((current) => current + 1)
   }
 
@@ -679,6 +713,9 @@ export function ArisChatDrawer({
         <div style={BUBBLE_ASSISTANT}>
           <ContextLines context={context} />
           <div style={{ fontSize: 12.5 }}>{questionAsk(question, activeDocument)}</div>
+          <div style={{ fontSize: 12, color: 'var(--orbitpm-muted)' }}>
+            {tk('aris.chat.needsLine', 'What I need: {needs}', { needs: questionNeeds(question.gapKind) })}
+          </div>
           <div style={{ fontSize: 11, color: 'var(--orbitpm-muted)' }}>
             {tk('aris.chat.progress', 'Question {index} of {count}', { index: index + 1, count })}
           </div>
@@ -739,6 +776,25 @@ export function ArisChatDrawer({
             onSubmit={(event) => {
               event.preventDefault()
               const value = draft.trim()
+              if (value !== '' && isClarificationRequest(value)) {
+                setIvMessages((prev) => [
+                  ...prev,
+                  { role: 'user', kind: 'chat', text: value },
+                  { role: 'assistant', kind: 'chat', text: explainQuestion(question, activeDocument) }
+                ])
+                setDraft('')
+                return
+              }
+              const check = checkInterviewAnswer(question.gapKind, value)
+              if (!check.ok) {
+                // Keep the draft so the user can correct it.
+                setIvMessages((prev) => [
+                  ...prev,
+                  { role: 'user', kind: 'chat', text: value },
+                  { role: 'assistant', kind: 'chat', text: describeAnswerProblem(check.problem) }
+                ])
+                return
+              }
               answerActiveQuestion(question, value, value === '' ? tk('aris.chat.skip', 'Skip') : value, count)
             }}
           >
@@ -823,6 +879,11 @@ export function ArisChatDrawer({
           >
             {tk('aris.chat.useSuggestion', 'Use suggested translation: {text}', { text: suggestion.text })}
           </button>
+        )}
+        {issues[question.id] && (
+          <div role="alert" data-orbitpm-aris-chat-issue="" style={{ fontSize: 12.5, color: 'var(--orbitpm-muted)' }}>
+            {issues[question.id]}
+          </div>
         )}
       </>
     )
@@ -1037,7 +1098,11 @@ export function ArisChatDrawer({
               type="button"
               className="orbitpm-lite-primary"
               data-orbitpm-aris-chat-form-apply=""
-              onClick={() => submitRound(answers)}
+              onClick={() => {
+                const found = reviewAnswers(questions, answers)
+                setIssues(found)
+                if (Object.keys(found).length === 0) submitRound(answers)
+              }}
             >
               {tk('aris.chat.apply', 'Apply answers')}
             </button>
@@ -1060,16 +1125,27 @@ export function ArisChatDrawer({
         initialFocusRef={closeButtonRef}
         returnFocusRef={returnFocusTargetRef}
         backdropStyle={BACKDROP_STYLE}
-        dialogStyle={PANEL_STYLE}
+        dialogStyle={expanded ? FULL_FORM_STYLE : PANEL_STYLE}
         dir={direction}
       >
         <header style={HEADER_STYLE}>
           <strong style={{ fontSize: 13 }}>{t('assist.title')}</strong>
           <button
             type="button"
+            onClick={() => setExpanded((current) => !current)}
+            aria-pressed={expanded}
+            data-orbitpm-aris-chat-expand=""
+            style={{ ...CHIP_STYLE, marginInlineStart: 'auto' }}
+          >
+            {expanded
+              ? tk('aris.chat.dock', 'Side panel')
+              : tk('aris.chat.expand', 'Full window')}
+          </button>
+          <button
+            type="button"
             onClick={onOpenSettings}
             title={t('app.settings')}
-            style={{ ...CHIP_STYLE, marginInlineStart: 'auto' }}
+            style={CHIP_STYLE}
           >
             {t('app.settings')}
           </button>
@@ -1233,6 +1309,7 @@ const TABS_ROW_STYLE: CSSProperties = {
 }
 
 const TAB_PANEL_STYLE: CSSProperties = {
+  zoom: 1.12,
   display: 'flex',
   flex: '1 1 auto',
   flexDirection: 'column',

@@ -7,9 +7,11 @@
  * * A route only ever runs across the diagram inside a **rank gap** — the band
  *   between two rank bands, which by construction contains no shape. That is
  *   why no route can pass through an unrelated shape.
- * * A return (back) edge and a self loop leave the body entirely and travel in
- *   the nearest outside channel, i.e. a reserved corridor just beyond the
- *   control-flow bounding box on whichever side is closer.
+ * * A return (back) edge leaves the OUTER side of its source, travels up or down
+ *   the nearest outside channel (a reserved corridor just beyond the control-flow
+ *   bounding box), and enters the OUTER side of its target. A loop from the
+ *   rightmost step therefore goes out to the right, then along the outside, then
+ *   back in. A self loop keeps its bottom-exit loop.
  */
 
 import type { ArisLayoutEdgeClass, ArisLayoutEdgeInput } from './types'
@@ -415,6 +417,23 @@ export function routeReturnEdge(
   const sourceRank = placement.rankOf[source] as number
   const targetRank = placement.rankOf[target] as number
   const sign = channelCross >= (geometry.nodeCross[source] as number) ? 1 : -1
+  if (source !== target) {
+    // A loop back to an earlier step leaves the OUTER side of its source, runs
+    // up/down the outside channel, and enters the OUTER side of its target. A
+    // loop from the rightmost step therefore goes out to the right, then up.
+    const sourceSide =
+      (geometry.nodeCross[source] as number) +
+      (sign * (geometry.shapeCross[source] as number)) / 2
+    const targetSide =
+      (geometry.nodeCross[target] as number) +
+      (sign * (geometry.shapeCross[target] as number)) / 2
+    return simplifyFlowPolyline([
+      { along: geometry.nodeAlong[source] as number, cross: sourceSide },
+      { along: geometry.nodeAlong[source] as number, cross: channelCross },
+      { along: geometry.nodeAlong[target] as number, cross: channelCross },
+      { along: geometry.nodeAlong[target] as number, cross: targetSide }
+    ])
+  }
   const exitCross =
     (geometry.nodeCross[source] as number) +
     ((sign * (geometry.shapeCross[source] as number)) / 2) * 0.6

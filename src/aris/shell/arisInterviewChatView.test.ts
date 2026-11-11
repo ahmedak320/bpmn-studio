@@ -140,6 +140,48 @@ describe('interview question wording', () => {
     connectionDefinitions: new Map()
   } as unknown as ArisWorkingDocument
 
+  it('names an unnamed step by its kind, never by the process alone', () => {
+    const unnamed = {
+      models: new Map([
+        [
+          'M1',
+          {
+            id: 'M1',
+            names: en('Survey process'),
+            occurrences: [
+              { id: 'O1', definitionId: 'F1', modelId: 'M1' },
+              { id: 'O3', definitionId: 'F3', modelId: 'M1' }
+            ],
+            connectionOccurrences: [
+              { id: 'C1', definitionId: 'X1', modelId: 'M1', sourceOccurrenceId: 'O1', targetOccurrenceId: 'O3' }
+            ]
+          }
+        ]
+      ]),
+      objectDefinitions: new Map([
+        ['F1', { id: 'F1', type: 'OT_FUNC', names: en('Receive survey') }],
+        ['F3', { id: 'F3', type: 'OT_FUNC', names: { values: {}, fallback: null } }]
+      ]),
+      connectionDefinitions: new Map()
+    } as unknown as ArisWorkingDocument
+    const text = questionAsk(
+      { id: 'q', messageKey: 'k', gapKind: 'missingEnglishName', targetIds: ['F3'] },
+      unnamed
+    )
+    expect(text).toContain('unnamed function')
+    expect(text).toContain('Survey process')
+    expect(text).toContain('Receive survey')
+    expect(text).not.toMatch(/^the process/)
+  })
+
+  it('describes a link between two steps as from one step to the next', () => {
+    const text = questionAsk(
+      { id: 'q', messageKey: 'k', gapKind: 'danglingObjectOrConnection', targetIds: ['C1'] },
+      flow
+    )
+    expect(text).toContain('Receive survey → Review answers')
+  })
+
   it('names the process, the exact step and the step before it', () => {
     const text = questionAsk(
       { id: 'q', messageKey: 'k', gapKind: 'missingOwner', targetIds: ['F2'] },

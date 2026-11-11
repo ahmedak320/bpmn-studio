@@ -198,6 +198,36 @@ describe('ArisChatDrawer — library tab', () => {
   })
 })
 
+const NOT_CHAT_FILLABLE = new Set([
+  'danglingObjectOrConnection',
+  'missingXorOutcomes',
+  'missingReturnTarget',
+  'invalidSequence',
+  'missingInputsOutputsSystems',
+  'missingStartOrEndEvent',
+  'missingLinkedModel',
+  'missingAttachment',
+  'unaccountedSourceContent'
+])
+
+/** A usable answer for a gap kind, so a test round is accepted by the answer check. */
+function sampleAnswer(kind: string | null, n: number): string {
+  // Gaps the chat cannot fill are skipped: an empty answer.
+  if (kind !== null && NOT_CHAT_FILLABLE.has(kind)) return ''
+  switch (kind) {
+    case 'missingProcessCode':
+      return `CODE-${n}`
+    case 'missingArabicName':
+      return 'مراجعة'
+    case 'missingDecisionBasis':
+      return 'Survey answers are complete'
+    case 'missingOwner':
+      return `Operations section ${n}`
+    default:
+      return `Answer ${n}`
+  }
+}
+
 describe('ArisChatDrawer — interview tab', () => {
   it('asks one question at a time in the chat and applies the round after the last answer', () => {
     const doc = buildEepcWithMissingEnglishName()
@@ -216,7 +246,8 @@ describe('ArisChatDrawer — interview tab', () => {
       const input = document.querySelector<HTMLInputElement>('[data-orbitpm-aris-chat-answer]')
       if (!input) break
       expect(document.querySelectorAll('[data-orbitpm-aris-chat-answer]')).toHaveLength(1)
-      const value = `Answer ${guard + 1}`
+      const kind = document.querySelector('[data-orbitpm-aris-chat-question]:last-of-type')?.getAttribute('data-orbitpm-aris-chat-question') ?? null
+      const value = sampleAnswer(kind, guard + 1)
       answered.push(value)
       fireEvent.change(input, { target: { value } })
       fireEvent.click(document.querySelector('[data-orbitpm-aris-chat-send]')!)
@@ -244,12 +275,50 @@ describe('ArisChatDrawer — interview tab', () => {
       '[data-orbitpm-aris-chat-form-question] input[type="text"], [data-orbitpm-aris-chat-form-question] input:not([type])'
     )
     expect(formInputs.length).toBeGreaterThan(0)
-    formInputs.forEach((input) => fireEvent.change(input, { target: { value: 'Request received' } }))
+    document.querySelectorAll<HTMLElement>('[data-orbitpm-aris-chat-form-question]').forEach((block, index) => {
+      const input = block.querySelector('input')
+      const value = sampleAnswer(block.getAttribute('data-orbitpm-aris-chat-form-question'), index + 1)
+      if (input && value !== '') fireEvent.change(input, { target: { value } })
+    })
     fireEvent.click(formButton!)
 
     // Applying from the form submits the round and closes the form.
     expect(document.querySelector('[data-orbitpm-aris-chat-form-apply]')).toBeNull()
     expect(applyCalls.length + document.querySelectorAll('[data-orbitpm-aris-chat-confirm]').length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('explains a clarification request instead of storing it as an answer', () => {
+    const doc = buildEepcWithMissingEnglishName()
+    const { target, applyCalls } = createStubChatTarget(doc)
+    render(<ArisChatDrawer {...baseProps({ getActiveChatTarget: () => target })} />)
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Complete this process' }))
+    fireEvent.click(document.querySelector('[data-orbitpm-aris-chat-start]')!)
+    const input = document.querySelector<HTMLInputElement>('[data-orbitpm-aris-chat-answer]')!
+    fireEvent.change(input, { target: { value: 'What do you mean?' } })
+    fireEvent.click(document.querySelector('[data-orbitpm-aris-chat-send]')!)
+
+    expect(document.body.textContent).toContain('What I need:')
+    expect(document.body.textContent).toContain('For ')
+    // Still on the same question, and nothing was applied.
+    expect(document.querySelector('[data-orbitpm-aris-chat-answer]')).not.toBeNull()
+    expect(applyCalls).toHaveLength(0)
+  })
+
+  it('refuses an answer that does not fit its question and keeps the question open', () => {
+    const doc = buildEepcWithMissingEnglishName()
+    const { target, applyCalls } = createStubChatTarget(doc)
+    render(<ArisChatDrawer {...baseProps({ getActiveChatTarget: () => target })} />)
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Complete this process' }))
+    fireEvent.click(document.querySelector('[data-orbitpm-aris-chat-start]')!)
+    const input = document.querySelector<HTMLInputElement>('[data-orbitpm-aris-chat-answer]')!
+    fireEvent.change(input, { target: { value: 'idk' } })
+    fireEvent.click(document.querySelector('[data-orbitpm-aris-chat-send]')!)
+
+    expect(document.body.textContent).toContain('The chat cannot fill this gap yet.')
+    expect(document.querySelector('[data-orbitpm-aris-chat-answer]')).not.toBeNull()
+    expect(applyCalls).toHaveLength(0)
   })
 
   it('shows the no-target status when no ARIS model is active', () => {

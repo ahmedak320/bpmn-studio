@@ -1056,7 +1056,19 @@ describe('ArisApp production shell', () => {
         return found
       })
       answered += 1
-      fireEvent.change(input, { target: { value: `Reviewed value ${answered}` } })
+      // A value that fits the question's kind: a code has no spaces, a name uses Latin letters.
+      const kind = input.closest('[data-orbitpm-aris-chat-question]')?.getAttribute('data-orbitpm-aris-chat-question')
+      const notFillable = new Set([
+        'danglingObjectOrConnection', 'missingXorOutcomes', 'missingReturnTarget', 'invalidSequence',
+        'missingInputsOutputsSystems', 'missingStartOrEndEvent', 'missingLinkedModel',
+        'missingAttachment', 'unaccountedSourceContent'
+      ])
+      const value = notFillable.has(kind ?? '')
+        ? ''
+        : kind === 'missingProcessCode'
+          ? `CODE-${answered}`
+          : `Reviewed value ${answered}`
+      fireEvent.change(input, { target: { value } })
       fireEvent.click(rail.querySelector<HTMLButtonElement>('[data-orbitpm-aris-chat-send]')!)
     }
     expect(answered).toBe(3)

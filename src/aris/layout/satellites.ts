@@ -475,6 +475,23 @@ export function placeSatellites(
       if (oc <= 0) continue
       overlap += oa * oc
     }
+    // A control-flow route (a loop leaving this owner's side, or any connector
+    // passing its cluster) through the candidate cluster is a conflict at
+    // least as bad as a crossing: score it with the crossing weight so the
+    // cluster moves to the other side instead of sitting on the route.
+    for (const points of controlRoutes) {
+      for (let index = 0; index + 1 < points.length; index += 1) {
+        const from = points[index] as FlowPoint
+        const to = points[index + 1] as FlowPoint
+        const alongHit =
+          Math.min(clusterAlongMax, Math.max(from.along, to.along)) >=
+          Math.max(clusterAlongMin, Math.min(from.along, to.along))
+        const crossHit =
+          Math.min(clusterCrossMax, Math.max(from.cross, to.cross)) >=
+          Math.max(clusterCrossMin, Math.min(from.cross, to.cross))
+        if (alongHit && crossHit) overlap += CROSSING_WEIGHT
+      }
+    }
     if (centered) {
       for (const candidate of candidateSatelliteBoxes(owner, side)) {
         for (const placed of placedSatelliteBoxes) {

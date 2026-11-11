@@ -228,6 +228,44 @@ export function computeAmlDefaultLegend(
 }
 
 /**
+ * Right edge of the drawn content (shapes, their labels, and connector points)
+ * that overlaps the vertical band `[top, bottom)`. Falls back to the whole
+ * content when nothing sits in the band.
+ */
+function legendBandRight(
+  nodes: readonly { rect: ArisLayoutRect; labelRect: ArisLayoutRect | null }[],
+  edges: readonly { points: readonly { x: number; y: number }[] }[],
+  top: number,
+  bottom: number
+): number {
+  const inBand = (rect: ArisLayoutRect): boolean => rect.y < bottom && rect.y + rect.height > top
+  let right = Number.NEGATIVE_INFINITY
+  for (const node of nodes) {
+    for (const rect of [node.rect, node.labelRect]) {
+      if (rect && inBand(rect)) right = Math.max(right, rect.x + rect.width)
+    }
+  }
+  for (const edge of edges) {
+    for (let index = 0; index < edge.points.length; index += 1) {
+      const point = edge.points[index] as { x: number; y: number }
+      const next = edge.points[index + 1]
+      const spansBand =
+        (point.y >= top && point.y < bottom) ||
+        (next !== undefined &&
+          Math.min(point.y, next.y) < bottom &&
+          Math.max(point.y, next.y) >= top)
+      if (spansBand) right = Math.max(right, point.x, next?.x ?? point.x)
+    }
+  }
+  if (Number.isFinite(right)) return right
+  for (const node of nodes) {
+    right = Math.max(right, node.rect.x + node.rect.width)
+    if (node.labelRect) right = Math.max(right, node.labelRect.x + node.labelRect.width)
+  }
+  return right
+}
+
+/**
  * Parse, project, structurally validate, lay out, and persist a convention AML
  * document. Bad inputs return the same parse/validation envelopes as the
  * canonical headless renderer.
@@ -299,12 +337,13 @@ export async function buildConventionAml(
     )
   }
 
-  // Right edge of the placed flow (nodes and their labels), without the canvas margin.
-  const contentRight = layout.nodes.reduce((right, node) => {
-    const nodeRight = node.rect.x + node.rect.width
-    const labelRight = node.labelRect ? node.labelRect.x + node.labelRect.width : nodeRight
-    return Math.max(right, nodeRight, labelRight)
-  }, Number.NEGATIVE_INFINITY)
+  // The legend stands beside the content it sits next to: the right edge of
+  // whatever overlaps its own vertical band. A far-off satellite lower down
+  // must not push the legend away from the flow.
+  const legendBlockCount = LEGEND_ORDER.filter((kind) => defaults[kind]).length
+  const legendBandBottom =
+    layout.canvas.y + HEADER_BAND + legendBlockCount * (BLOCK_HEIGHT + BLOCK_GAP)
+  const contentRight = legendBandRight(layout.nodes, layout.edges, layout.canvas.y, legendBandBottom)
   const legend = computeAmlDefaultLegend(
     canonical,
     defaults,

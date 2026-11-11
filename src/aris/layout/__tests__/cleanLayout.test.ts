@@ -260,6 +260,26 @@ describe('a cycle with an explicit return path', () => {
     expect(nodeById(result, 'E.start').stronglyConnectedIndex).not.toBe(inCycle[0])
   })
 
+  it('leaves the outer side of its source and enters the outer side of its target', () => {
+    const back = edgeById(result, 'F.c->F.a')
+    const source = nodeById(result, 'F.c')
+    const target = nodeById(result, 'F.a')
+    const first = back.points[0] as { x: number; y: number }
+    const last = back.points[back.points.length - 1] as { x: number; y: number }
+    const exitSecond = back.points[1] as { x: number; y: number }
+    const entryPrevious = back.points[back.points.length - 2] as { x: number; y: number }
+    const onSourceSide =
+      Math.abs(first.x - source.rect.x) < 1 || Math.abs(first.x - (source.rect.x + source.rect.width)) < 1
+    const onTargetSide =
+      Math.abs(last.x - target.rect.x) < 1 || Math.abs(last.x - (target.rect.x + target.rect.width)) < 1
+    expect(onSourceSide).toBe(true)
+    expect(onTargetSide).toBe(true)
+    expect(first.y).toBeCloseTo(centerY(source), 0)
+    expect(last.y).toBeCloseTo(centerY(target), 0)
+    expect(exitSecond.y).toBeCloseTo(first.y, 0)
+    expect(entryPrevious.y).toBeCloseTo(last.y, 0)
+  })
+
   it('routes the return outside the control-flow body', () => {
     const back = edgeById(result, 'F.c->F.a')
     const bodyMin = Math.min(...result.nodes.map((node) => node.rect.x))

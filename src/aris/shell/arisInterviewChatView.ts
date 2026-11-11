@@ -79,10 +79,36 @@ function nameOrNull(value: ArisLocalizedValue | undefined): string | null {
   return localizedText(value, DEFAULT_ENGLISH_LOCALE_IDS) ?? localizedText(value, DEFAULT_ARABIC_LOCALE_IDS)
 }
 
+/** A readable kind for a step with no name yet, e.g. "function" for OT_FUNC. */
+const TYPE_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  OT_FUNC: 'function',
+  OT_EVT: 'event',
+  OT_RULE: 'rule',
+  OT_ORG_UNIT: 'organisation unit',
+  OT_POS: 'position',
+  OT_APPL_SYS: 'application system',
+  OT_INFO_CARR: 'information carrier'
+})
+
+function typeLabel(type: string | undefined): string {
+  if (!type) return 'item'
+  return TYPE_LABELS[type] ?? type.replace(/^OT_/, '').toLowerCase()
+}
+
+/**
+ * The name of a step, or, when the step has no name yet, "unnamed <kind>". A step
+ * always has a label, so a question never falls back to naming only the process.
+ */
+function stepLabelOf(document: ArisWorkingDocument, definitionId: string): string {
+  const definition = document.objectDefinitions.get(definitionId)
+  return nameOrNull(definition?.names) ?? `unnamed ${typeLabel(definition?.type)}`
+}
+
 /**
  * Resolves a question's target id (a model, object definition, occurrence,
  * connection or decision node) into the process it sits in, the step inside it,
- * and the step that flows into that step. Unknown ids resolve to nothing.
+ * and the step that flows into that step. A link between two steps is described
+ * as "A → B". Unknown ids resolve to nothing.
  */
 export function describeQuestionContext(
   document: ArisWorkingDocument | null,
@@ -94,6 +120,20 @@ export function describeQuestionContext(
 
   const model = document.models.get(id)
   if (model) return { ...empty, process: nameOrNull(model.names) }
+
+  for (const host of document.models.values()) {
+    const connection = host.connectionOccurrences.find((item) => item.id === id)
+    if (!connection) continue
+    const from = host.occurrences.find((item) => item.id === connection.sourceOccurrenceId)
+    const to = host.occurrences.find((item) => item.id === connection.targetOccurrenceId)
+    const fromName = from ? stepLabelOf(document, from.definitionId) : null
+    const toName = to ? stepLabelOf(document, to.definitionId) : null
+    return {
+      process: nameOrNull(host.names),
+      step: fromName !== null && toName !== null ? `${fromName} → ${toName}` : fromName ?? toName,
+      previous: fromName
+    }
+  }
 
   let host: ArisModel | null = null
   let occurrence: ArisObjectOccurrence | null = null
@@ -117,17 +157,18 @@ export function describeQuestionContext(
     }
   }
   if (!occurrence || !host) {
-    return { ...empty, step: nameOrNull(document.objectDefinitions.get(id)?.names ?? document.connectionDefinitions.get(id)?.names) }
+    const definition = document.objectDefinitions.get(id)
+    const connectionName = document.connectionDefinitions.get(id)?.names
+    if (definition) return { ...empty, step: stepLabelOf(document, id) }
+    return { ...empty, step: nameOrNull(connectionName) }
   }
 
-  const step = nameOrNull(document.objectDefinitions.get(occurrence.definitionId)?.names)
+  const step = stepLabelOf(document, occurrence.definitionId)
   const incoming = host.connectionOccurrences.find((connection) => connection.targetOccurrenceId === occurrence.id)
   const source = incoming
     ? host.occurrences.find((item) => item.id === incoming.sourceOccurrenceId)
     : undefined
-  const previous = source
-    ? nameOrNull(document.objectDefinitions.get(source.definitionId)?.names)
-    : null
+  const previous = source ? stepLabelOf(document, source.definitionId) : null
   return { process: nameOrNull(host.names), step, previous }
 }
 

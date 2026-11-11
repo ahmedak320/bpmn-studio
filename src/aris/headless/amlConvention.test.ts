@@ -254,13 +254,36 @@ function parsedOutput(xml: string) {
   return { tokens, semantic, document, model }
 }
 
-/** Right edge of the placed flow, nodes and labels, without the canvas margin. */
-function flowRight(nodes: readonly { readonly rect: { readonly x: number; readonly width: number }; readonly labelRect: { readonly x: number; readonly width: number } | null }[]): number {
-  return nodes.reduce((right, node) => {
-    const nodeRight = node.rect.x + node.rect.width
-    const labelRight = node.labelRect ? node.labelRect.x + node.labelRect.width : nodeRight
-    return Math.max(right, nodeRight, labelRight)
-  }, Number.NEGATIVE_INFINITY)
+/**
+ * Right edge of the placed content that overlaps the legend's vertical band
+ * `[top, bottom)`: shapes, labels and connector points. A far satellite lower
+ * down does not move the legend.
+ */
+function flowRightInBand(
+  nodes: readonly { readonly rect: { readonly x: number; readonly y: number; readonly width: number; readonly height: number }; readonly labelRect: { readonly x: number; readonly y: number; readonly width: number; readonly height: number } | null }[],
+  edges: readonly { readonly points: readonly { readonly x: number; readonly y: number }[] }[],
+  top: number,
+  bottom: number
+): number {
+  let right = Number.NEGATIVE_INFINITY
+  for (const node of nodes) {
+    for (const rect of [node.rect, node.labelRect]) {
+      if (rect && rect.y < bottom && rect.y + rect.height > top) {
+        right = Math.max(right, rect.x + rect.width)
+      }
+    }
+  }
+  for (const edge of edges) {
+    for (let index = 0; index < edge.points.length; index += 1) {
+      const point = edge.points[index] as { x: number; y: number }
+      const next = edge.points[index + 1]
+      const spansBand =
+        (point.y >= top && point.y < bottom) ||
+        (next !== undefined && Math.min(point.y, next.y) < bottom && Math.max(point.y, next.y) >= top)
+      if (spansBand) right = Math.max(right, point.x, next?.x ?? point.x)
+    }
+  }
+  return right
 }
 
 function expectedPlacement(
@@ -365,7 +388,9 @@ describe.each(CASES)('buildConventionAml — $name', ({ process, legendBlocks })
 
   it('emits one bilingual defaults header and one exact top-right block per default', () => {
     const { tokens, semantic } = parsedOutput(result.xml)
-    const contentRight = flowRight(expected.layout.nodes)
+    const top = expected.layout.canvas.y
+    const bottom = top + 56 + legendBlocks.length * 110
+    const contentRight = flowRightInBand(expected.layout.nodes, expected.layout.edges, top, bottom)
     const expectedLegend = expectedPlacement(legendBlocks, expected.layout.canvas, contentRight)
     const legendX = Math.round(contentRight) + 40
     // The legend hugs the flow: one block gap away, not a canvas margin away.
