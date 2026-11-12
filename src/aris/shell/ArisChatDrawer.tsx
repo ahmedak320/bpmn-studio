@@ -1369,12 +1369,19 @@ const BUBBLE_ASSISTANT: CSSProperties = {
 }
 
 /** Muted, italic bubble for status notes (applied/clean/no-target). */
+// Pinned to all four edges so the full window fills the viewport in either
+// direction (RTL anchors the inline edge on the other side). 100vw would count
+// a scrollbar and push the dialog past the left edge.
 const FULL_FORM_STYLE: CSSProperties = Object.freeze({
   ...PANEL_STYLE,
-  width: '100vw',
-  height: '100vh',
-  maxWidth: '100vw',
-  maxHeight: '100vh',
+  insetBlockStart: 0,
+  insetBlockEnd: 0,
+  insetInlineStart: 0,
+  insetInlineEnd: 0,
+  width: '100%',
+  height: '100%',
+  maxWidth: '100%',
+  maxHeight: '100%',
   borderRadius: 0
 }) as CSSProperties
 
