@@ -140,8 +140,11 @@ const sha256Hex = (input: string | Uint8Array): string =>
 // now stop at the target block edge, and the widened rank gap lets the marker
 // chevron sit fully visible with its tip touching the edge. Total canvas height
 // grows by ~16 × rankCount; every control-flow y coordinate shifts down.
+// Updated: the gap between a step and its supplementary blocks widened from
+// 0.7 to 1.0 of the cross gap, so the satellite clusters sit slightly further
+// from their steps. This changes the SVG bytes by design.
 const VALID_CANONICAL_FULL_SVG_SHA256 =
-  '1fd90ce8cf857209a8eeb0adeb10b4eec1c73122461e96b90388ef550acd34e3'
+  '64a88b63e5f15b9a460551e166651d37b7b3f1bb083e11de10d20987970c7701'
 
 /** Schema-valid, but its projected EEPC has no start/end event — fails the gate. */
 const STRUCTURALLY_INVALID: CanonicalProcessV1 = {

@@ -254,7 +254,7 @@ export function placeSatellites(
   // control-flow bbox in cleanLayout, so §13.2 (spine never moved by a
   // satellite) is preserved: a 0-satellite graph returns before this code runs
   // and is byte-identical.
-  const smallGap = spacing.crossGap * 0.7
+  const smallGap = spacing.crossGap * 1.0
   const satelliteGap = satelliteStackGap(spacing)
   const orderedMembersOf = (owner: number): number[] =>
     (membersOf.get(owner) as number[]).slice().sort((left, right) => left - right)
